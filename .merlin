@@ -1,0 +1,12 @@
+# Include packages
+PKG core ounit
+
+# Include source files
+S src
+S lib
+S tests
+
+# Include built files
+B _build/lib
+B _build/src
+B _build/tests
