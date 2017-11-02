@@ -1,0 +1,2 @@
+true: package(ounit), package(core)
+true: bin_annot
