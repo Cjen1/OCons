@@ -1,16 +1,8 @@
 ### Starting build.
-# Target: tests/example.ml.depends, tags: { package(core), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, debug, extension:ml, file:tests/example.ml, ocaml, ocamldep, quiet, short_paths, thread, traverse }
-ocamlfind ocamldep -package ounit -package core -ppx 'ppx-jane -as-ppx' -modules tests/example.ml > tests/example.ml.depends
-# Target: src/foo.ml.depends, tags: { package(core), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, debug, extension:ml, file:src/foo.ml, ocaml, ocamldep, quiet, short_paths, thread, traverse }
-ocamlfind ocamldep -package ounit -package core -ppx 'ppx-jane -as-ppx' -modules src/foo.ml > src/foo.ml.depends # cached
-# Target: src/foo.cmo, tags: { package(core), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, byte, compile, debug, extension:cmo, extension:ml, file:src/foo.cmo, file:src/foo.ml, implem, ocaml, quiet, short_paths, thread, traverse }
-ocamlfind ocamlc -c -w A-4-33-40-41-42-43-34-44 -strict-sequence -g -bin-annot -short-paths -thread -package ounit -package core -ppx 'ppx-jane -as-ppx' -I src -I tests -I lib -o src/foo.cmo src/foo.ml # cached
-# Target: tests/example.cmo, tags: { package(core), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, byte, compile, debug, extension:cmo, extension:ml, file:tests/example.cmo, file:tests/example.ml, implem, ocaml, quiet, short_paths, thread, traverse }
-ocamlfind ocamlc -c -w A-4-33-40-41-42-43-34-44 -strict-sequence -g -bin-annot -short-paths -thread -package ounit -package core -ppx 'ppx-jane -as-ppx' -I tests -I src -I lib -o tests/example.cmo tests/example.ml
-# Target: src/foo.cmx, tags: { package(core), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, compile, debug, extension:cmx, extension:ml, file:src/foo.cmx, file:src/foo.ml, implem, native, ocaml, quiet, short_paths, thread, traverse }
-ocamlfind ocamlopt -c -w A-4-33-40-41-42-43-34-44 -strict-sequence -g -bin-annot -short-paths -thread -package ounit -package core -ppx 'ppx-jane -as-ppx' -I src -I tests -I lib -o src/foo.cmx src/foo.ml # cached
-# Target: tests/example.cmx, tags: { package(core), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, compile, debug, extension:cmx, extension:ml, file:tests/example.cmx, file:tests/example.ml, implem, native, ocaml, quiet, short_paths, thread, traverse }
-ocamlfind ocamlopt -c -w A-4-33-40-41-42-43-34-44 -strict-sequence -g -bin-annot -short-paths -thread -package ounit -package core -ppx 'ppx-jane -as-ppx' -I tests -I src -I lib -o tests/example.cmx tests/example.ml
-# Target: tests/example.native, tags: { package(core), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, debug, dont_link_with, extension:native, file:tests/example.native, link, native, ocaml, program, quiet, short_paths, thread, traverse }
-ocamlfind ocamlopt -linkpkg -g -thread -package ounit -package core -I src -I tests src/foo.cmx tests/example.cmx -o tests/example.native # cached
+# Target: src/main.ml.depends, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, debug, extension:ml, file:src/main.ml, ocaml, ocamldep, quiet, short_paths, thread, traverse }
+ocamlfind ocamldep -package ounit -package core -package lwt.unix -package lwt -ppx 'ppx-jane -as-ppx' -modules src/main.ml > src/main.ml.depends # cached
+# Target: src/main.cmo, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, byte, compile, debug, extension:cmo, extension:ml, file:src/main.cmo, file:src/main.ml, implem, ocaml, quiet, short_paths, thread, traverse }
+ocamlfind ocamlc -c -w A-4-33-40-41-42-43-34-44 -strict-sequence -g -bin-annot -short-paths -thread -package ounit -package core -package lwt.unix -package lwt -ppx 'ppx-jane -as-ppx' -I src -I tests -I lib -o src/main.cmo src/main.ml # cached
+# Target: src/main.byte, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, byte, debug, dont_link_with, extension:byte, file:src/main.byte, link, ocaml, program, quiet, short_paths, thread, traverse }
+ocamlfind ocamlc -linkpkg -g -thread -package ounit -package core -package lwt.unix -package lwt -I src src/main.cmo -o src/main.byte
 # Compilation successful.

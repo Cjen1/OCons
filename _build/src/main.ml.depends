@@ -1,1 +1,1 @@
-src/main.ml: Core Foo
+src/main.ml: Core Lwt Lwt_io Lwt_main Lwt_unix

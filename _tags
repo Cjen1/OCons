@@ -1,2 +1,2 @@
-true: package(ounit), package(core)
+true: package(ounit), package(core), package(lwt.unix), package(lwt)
 true: bin_annot
