@@ -1,1 +1,1 @@
-src/main.ml: Core Lwt Lwt_io Lwt_main Lwt_unix
+src/main.ml: Bytes Lwt Lwt_engine Lwt_io Lwt_main Lwt_sys Lwt_unix Sys Unix

@@ -1,8 +1,8 @@
 ### Starting build.
-# Target: src/main.ml.depends, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, debug, extension:ml, file:src/main.ml, ocaml, ocamldep, quiet, short_paths, thread, traverse }
-ocamlfind ocamldep -package ounit -package core -package lwt.unix -package lwt -ppx 'ppx-jane -as-ppx' -modules src/main.ml > src/main.ml.depends # cached
-# Target: src/main.cmo, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, byte, compile, debug, extension:cmo, extension:ml, file:src/main.cmo, file:src/main.ml, implem, ocaml, quiet, short_paths, thread, traverse }
-ocamlfind ocamlc -c -w A-4-33-40-41-42-43-34-44 -strict-sequence -g -bin-annot -short-paths -thread -package ounit -package core -package lwt.unix -package lwt -ppx 'ppx-jane -as-ppx' -I src -I tests -I lib -o src/main.cmo src/main.ml # cached
-# Target: src/main.byte, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), ppx(ppx-jane -as-ppx), bin_annot, byte, debug, dont_link_with, extension:byte, file:src/main.byte, link, ocaml, program, quiet, short_paths, thread, traverse }
-ocamlfind ocamlc -linkpkg -g -thread -package ounit -package core -package lwt.unix -package lwt -I src src/main.cmo -o src/main.byte
+# Target: src/main.ml.depends, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), package(unix), ppx(ppx-jane -as-ppx), bin_annot, debug, extension:ml, file:src/main.ml, ocaml, ocamldep, quiet, short_paths, thread, traverse }
+ocamlfind ocamldep -package ounit -package core -package lwt.unix -package lwt -package unix -ppx 'ppx-jane -as-ppx' -modules src/main.ml > src/main.ml.depends # cached
+# Target: src/main.cmo, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), package(unix), ppx(ppx-jane -as-ppx), bin_annot, byte, compile, debug, extension:cmo, extension:ml, file:src/main.cmo, file:src/main.ml, implem, ocaml, quiet, short_paths, thread, traverse }
+ocamlfind ocamlc -c -w A-4-33-40-41-42-43-34-44 -strict-sequence -g -bin-annot -short-paths -thread -package ounit -package core -package lwt.unix -package lwt -package unix -ppx 'ppx-jane -as-ppx' -I src -I tests -I lib -o src/main.cmo src/main.ml # cached
+# Target: src/main.byte, tags: { package(core), package(lwt), package(lwt.unix), package(ounit), package(unix), ppx(ppx-jane -as-ppx), bin_annot, byte, debug, dont_link_with, extension:byte, file:src/main.byte, link, ocaml, program, quiet, short_paths, thread, traverse }
+ocamlfind ocamlc -linkpkg -g -thread -package ounit -package core -package lwt.unix -package lwt -package unix -I src src/main.cmo -o src/main.byte
 # Compilation successful.
