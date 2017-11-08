@@ -3,7 +3,6 @@ open Lwt_io
 open Lwt.Infix
 open Unix
 
-
 (* Simple LWT example from Mirage tutorial *)
 let start () =
   Lwt.join [
