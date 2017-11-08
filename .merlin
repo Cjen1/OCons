@@ -1,5 +1,5 @@
 # Include packages
-PKG core ounit lwt
+PKG core ounit lwt unix
 
 # Include source files
 S src
