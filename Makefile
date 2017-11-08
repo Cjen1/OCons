@@ -28,7 +28,7 @@ clean:
 
 # Check that packages can be found
 sanity:
-	ocamlfind query ounit core lwt
+	ocamlfind query ounit core lwt unix
 
 #-----------------------------------------------------------------------------
 
