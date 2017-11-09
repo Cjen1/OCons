@@ -3,4 +3,3 @@ script: bash -ex .travis-ocaml.sh
 sudo: required
 env:
   - OCAML_VERSION=4.04.0 OPAM_VERSION=1.2.2
-
