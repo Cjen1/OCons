@@ -7,11 +7,13 @@ sudo apt-get install -qq ocaml ocaml-native-compilers camlp4-extra opam
 yes | opam init https://opam.ocaml.org/1.1
 
 # Install pre-requisite packages
-opam install ${PACKAGES}
+yes | opam install ${PACKAGES}
 
+# DON'T WORRY ABOUT THIS FOR NOW
+#-------------------------------
 # Cap'n Proto installation (+ package)
-sudo apt-get install capnproto
-opam depext -i capnp-rpc-unix
+# sudo apt-get install capnproto
+#opam depext -i capnp-rpc-unix
 
 # Update all packages 
 opam update
