@@ -13,7 +13,7 @@
 FLAGS = -use-ocamlfind -I src -I lib -I tests
 
 # Corebuild is Ocamlbuild wrapper that makes it play better with Core
-OCB = corebuild $(FLAGS)
+OCB = ocamlbuild $(FLAGS)
 
 #-----------------------------------------------------------------------------
 
@@ -28,7 +28,7 @@ clean:
 
 # Check that packages can be found
 sanity:
-	ocamlfind query ounit core lwt unix
+	ocamlfind query ounit lwt unix
 
 #-----------------------------------------------------------------------------
 

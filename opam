@@ -1,0 +1,22 @@
+opam-version: "1.2"
+name: "part-ii-project"
+version: "0.0.1"
+maintainer: "Chris Jones <clj40@cam.ac.uk>"
+authors: "Chris Jones <clj40@cam.ac.uk>"
+homepage: "https://github.com/chrislomaxjones/part-ii-project"
+bug-reports: "https://github.com/chrislomaxjones/part-ii-project"
+license: "MIT"
+dev-repo: "https://github.com/chrislomaxjones/part-ii-project"
+
+build: [
+  ["./configure" "--prefix=%{prefix}%"]
+  [make]
+]
+
+install: [make "install"]
+
+remove: ["ocamlfind" "remove" "part-ii-project"]
+
+depends: [
+  "ocamlfind" {build}
+]
