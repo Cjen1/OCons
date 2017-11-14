@@ -3,21 +3,12 @@ open Lwt_io
 open Lwt.Infix
 open Unix
 
-
 (* Simple LWT example from Mirage tutorial *)
 let start () =
   Lwt.join [
     (Lwt_unix.sleep(2.) >>= fun () -> Lwt_io.printl "Tails");
     (Lwt_unix.sleep(1.) >>= fun () -> Lwt_io.printl "Heads")
   ] >>= fun () -> Lwt_io.printl "All finished"
-
-
-(* Copy one line of data from input channel to output channel *)
-let copy_data (in_chan  : Lwt_io.input_channel) 
-              (out_chan : Lwt_io.output_channel) =
-  Lwt_io.read_line in_chan >>=
-  (fun in_str -> Lwt_io.write_line out_chan in_str)
-
 
 let rec copy_blocks buffer in_chan out_chan =
   (Lwt_io.read_into in_chan buffer 0 (Bytes.length buffer)) >>= 
@@ -36,15 +27,6 @@ let run () =
                    let buffer = Bytes.create (16 * 1024) in
                     copy_blocks buffer in_chan out_chan)
   in Lwt.return server) |> ignore
-
-
-
-
-
-
-
-
-
 
 let never_terminate = fst (Lwt.wait ())
 
