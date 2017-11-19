@@ -1,6 +1,0 @@
-"Resource: /Users/chrisjones/Google Drive/University/II/Project/Practice/example-project/src/main.ml": "\146)\145\228*\197>l\246\208Sf\b\213\2460"
-"Rule: ocaml: cmo* -> byte (%=src/main )": "c,\nE\165\155\250I:Qq\180+\147\193:"
-"Rule: ocaml: ml -> cmo & cmi (%=src/main )": "K\161c\191\215\227\012\157q\241,\180\r\n\222\150"
-"Rule: ocaml: cmx* & o* -> native (%=src/main )": "jD\\B\246S\196\153\160\244\220 \165\176\002H"
-"Rule: ocaml dependencies ml (%=src/main )": "\206\192\209\018u\220\221hB_)\213\014bV*"
-"Rule: ocaml: ml & cmi -> cmx & o (%=src/main )": "T\216-\028\135\154fp\189xy)\193\017\247["

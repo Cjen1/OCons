@@ -1,4 +1,8 @@
 **.swp
+**.swo
 **.DS_Store
 
-./_build/*
+main.byte
+main.native
+
+_build/
