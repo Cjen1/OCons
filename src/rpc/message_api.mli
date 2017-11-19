@@ -20,19 +20,79 @@ module type S = sig
       module Command : sig
         type struct_t = [`Command_88cec936a5f389be]
         type t = struct_t reader_t
+        module Operation : sig
+          type struct_t = [`Operation_ecff136cfd079ec1]
+          type t = struct_t reader_t
+          module Create : sig
+            type struct_t = [`Create_f8fb6e072f043631]
+            type t = struct_t reader_t
+            val key_get : t -> int
+            val has_value : t -> bool
+            val value_get : t -> string
+            val of_message : 'cap message_t -> t
+            val of_builder : struct_t builder_t -> t
+          end
+          module Read : sig
+            type struct_t = [`Read_e749754fed837671]
+            type t = struct_t reader_t
+            val key_get : t -> int
+            val of_message : 'cap message_t -> t
+            val of_builder : struct_t builder_t -> t
+          end
+          module Update : sig
+            type struct_t = [`Update_db81e80bebc4167d]
+            type t = struct_t reader_t
+            val key_get : t -> int
+            val has_value : t -> bool
+            val value_get : t -> string
+            val of_message : 'cap message_t -> t
+            val of_builder : struct_t builder_t -> t
+          end
+          module Remove : sig
+            type struct_t = [`Remove_d9619866f34d3b0a]
+            type t = struct_t reader_t
+            val key_get : t -> int
+            val of_message : 'cap message_t -> t
+            val of_builder : struct_t builder_t -> t
+          end
+          type unnamed_union_t =
+            | Nop
+            | Create of Create.t
+            | Read of Read.t
+            | Update of Update.t
+            | Remove of Remove.t
+            | Undefined of int
+          val get : t -> unnamed_union_t
+          val of_message : 'cap message_t -> t
+          val of_builder : struct_t builder_t -> t
+        end
         val client_id_get : t -> int
         val command_id_get : t -> int
         val has_operation : t -> bool
-        val operation_get : t -> string
+        val operation_get : t -> [`Operation_ecff136cfd079ec1] reader_t
+        val operation_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Operation_ecff136cfd079ec1] MessageWrapper.StructRef.t
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
       module Response : sig
         type struct_t = [`Response_b9cca94fab9dd111]
         type t = struct_t reader_t
+        module Result : sig
+          type struct_t = [`Result_f2420edc87e976c6]
+          type t = struct_t reader_t
+          type unnamed_union_t =
+            | Success
+            | Failure
+            | Read of string
+            | Undefined of int
+          val get : t -> unnamed_union_t
+          val of_message : 'cap message_t -> t
+          val of_builder : struct_t builder_t -> t
+        end
         val command_id_get : t -> int
         val has_result : t -> bool
-        val result_get : t -> string
+        val result_get : t -> [`Result_f2420edc87e976c6] reader_t
+        val result_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Result_f2420edc87e976c6] MessageWrapper.StructRef.t
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
@@ -68,13 +128,87 @@ module type S = sig
       module Command : sig
         type struct_t = [`Command_88cec936a5f389be]
         type t = struct_t builder_t
+        module Operation : sig
+          type struct_t = [`Operation_ecff136cfd079ec1]
+          type t = struct_t builder_t
+          module Create : sig
+            type struct_t = [`Create_f8fb6e072f043631]
+            type t = struct_t builder_t
+            val key_get : t -> int
+            val key_set_exn : t -> int -> unit
+            val has_value : t -> bool
+            val value_get : t -> string
+            val value_set : t -> string -> unit
+            val of_message : rw message_t -> t
+            val to_message : t -> rw message_t
+            val to_reader : t -> struct_t reader_t
+            val init_root : ?message_size:int -> unit -> t
+            val init_pointer : pointer_t -> t
+          end
+          module Read : sig
+            type struct_t = [`Read_e749754fed837671]
+            type t = struct_t builder_t
+            val key_get : t -> int
+            val key_set_exn : t -> int -> unit
+            val of_message : rw message_t -> t
+            val to_message : t -> rw message_t
+            val to_reader : t -> struct_t reader_t
+            val init_root : ?message_size:int -> unit -> t
+            val init_pointer : pointer_t -> t
+          end
+          module Update : sig
+            type struct_t = [`Update_db81e80bebc4167d]
+            type t = struct_t builder_t
+            val key_get : t -> int
+            val key_set_exn : t -> int -> unit
+            val has_value : t -> bool
+            val value_get : t -> string
+            val value_set : t -> string -> unit
+            val of_message : rw message_t -> t
+            val to_message : t -> rw message_t
+            val to_reader : t -> struct_t reader_t
+            val init_root : ?message_size:int -> unit -> t
+            val init_pointer : pointer_t -> t
+          end
+          module Remove : sig
+            type struct_t = [`Remove_d9619866f34d3b0a]
+            type t = struct_t builder_t
+            val key_get : t -> int
+            val key_set_exn : t -> int -> unit
+            val of_message : rw message_t -> t
+            val to_message : t -> rw message_t
+            val to_reader : t -> struct_t reader_t
+            val init_root : ?message_size:int -> unit -> t
+            val init_pointer : pointer_t -> t
+          end
+          type unnamed_union_t =
+            | Nop
+            | Create of Create.t
+            | Read of Read.t
+            | Update of Update.t
+            | Remove of Remove.t
+            | Undefined of int
+          val get : t -> unnamed_union_t
+          val nop_set : t -> unit
+          val create_init : t -> Create.t
+          val read_init : t -> Read.t
+          val update_init : t -> Update.t
+          val remove_init : t -> Remove.t
+          val of_message : rw message_t -> t
+          val to_message : t -> rw message_t
+          val to_reader : t -> struct_t reader_t
+          val init_root : ?message_size:int -> unit -> t
+          val init_pointer : pointer_t -> t
+        end
         val client_id_get : t -> int
         val client_id_set_exn : t -> int -> unit
         val command_id_get : t -> int
         val command_id_set_exn : t -> int -> unit
         val has_operation : t -> bool
-        val operation_get : t -> string
-        val operation_set : t -> string -> unit
+        val operation_get : t -> [`Operation_ecff136cfd079ec1] builder_t
+        val operation_set_reader : t -> [`Operation_ecff136cfd079ec1] reader_t -> [`Operation_ecff136cfd079ec1] builder_t
+        val operation_set_builder : t -> [`Operation_ecff136cfd079ec1] builder_t -> [`Operation_ecff136cfd079ec1] builder_t
+        val operation_init : t -> [`Operation_ecff136cfd079ec1] builder_t
         val of_message : rw message_t -> t
         val to_message : t -> rw message_t
         val to_reader : t -> struct_t reader_t
@@ -84,11 +218,31 @@ module type S = sig
       module Response : sig
         type struct_t = [`Response_b9cca94fab9dd111]
         type t = struct_t builder_t
+        module Result : sig
+          type struct_t = [`Result_f2420edc87e976c6]
+          type t = struct_t builder_t
+          type unnamed_union_t =
+            | Success
+            | Failure
+            | Read of string
+            | Undefined of int
+          val get : t -> unnamed_union_t
+          val success_set : t -> unit
+          val failure_set : t -> unit
+          val read_set : t -> string -> unit
+          val of_message : rw message_t -> t
+          val to_message : t -> rw message_t
+          val to_reader : t -> struct_t reader_t
+          val init_root : ?message_size:int -> unit -> t
+          val init_pointer : pointer_t -> t
+        end
         val command_id_get : t -> int
         val command_id_set_exn : t -> int -> unit
         val has_result : t -> bool
-        val result_get : t -> string
-        val result_set : t -> string -> unit
+        val result_get : t -> [`Result_f2420edc87e976c6] builder_t
+        val result_set_reader : t -> [`Result_f2420edc87e976c6] reader_t -> [`Result_f2420edc87e976c6] builder_t
+        val result_set_builder : t -> [`Result_f2420edc87e976c6] builder_t -> [`Result_f2420edc87e976c6] builder_t
+        val result_init : t -> [`Result_f2420edc87e976c6] builder_t
         val of_message : rw message_t -> t
         val to_message : t -> rw message_t
         val to_reader : t -> struct_t reader_t

@@ -36,7 +36,7 @@ type operation = Nop                     (* Idempotent no operation *)
 *)
 type result = Success          (* Indicates operation was successfully performed by replicas *)
             | Failure          (* Indicates operation was not successfully performed by replicas *)
-            | Read of string;; (* Indicates read success with associated value *)
+            | ReadSuccess of string;; (* Indicates read success with associated value *)
 
 (* A command consists of a triple containing:
     -   The id of the client that requested the command be performed
