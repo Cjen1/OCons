@@ -18,7 +18,11 @@ module Replica = struct
   let test (cmd : command) : (command_id * result) =
     let (client_id, command_id, operation) = cmd in
     let result = match operation with
-      | _ -> Failure
+      | Nop      -> Success
+      | Create _ -> Success
+      | Read x   -> ReadSuccess("test in replica.ml line 22") (* Test ... *)
+      | Update _ -> Success
+      | Remove _ -> Success
     in (command_id, result);;
 
   (* Leave these as placeholders for now *)
