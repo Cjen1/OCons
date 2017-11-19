@@ -4,6 +4,7 @@ open Types;;
 open Capnp_rpc_lwt;;
 open Lwt.Infix;;
 
+(* Exceptions resulting in undefined values being sent in Capnp unions *)
 exception Undefined_oper;;
 exception Undefined_result;;
 

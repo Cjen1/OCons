@@ -29,7 +29,7 @@ let () =
   Lwt_main.run (
   Replica.new_replica "127.0.0.1" 7000 >>= fun replica_uri ->
   let client = Client.add_replica_uri replica_uri (Client.new_client()) in
-  (List.hd_exn (Client.send_request_message client (Remove(10)))) >>= fun (cid, result) ->
+  (List.hd_exn (Client.send_request_message client (Read(10)))) >>= fun (cid, result) ->
   match result with
   | Success -> Lwt_io.printl "Success"
   | Failure -> Lwt_io.printl "Failure"
