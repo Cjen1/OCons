@@ -11,6 +11,7 @@
 #		bin_annot.
 #
 FLAGS = -use-ocamlfind -I src -I lib -I tests -I src/rpc -I src/app -I src/replica
+
 # Corebuild is Ocamlbuild wrapper that makes it play better with Core
 OCB = corebuild $(FLAGS)
 
