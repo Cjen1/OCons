@@ -1,7 +1,16 @@
 (* types.ml *)
 
+(* Types of unique identifiers *)
+type unique_id = Core.Uuid.t;;
+
 (* Unique identifier for a given client node *)
-type client_id = int;;
+type client_id = unique_id;;
+
+(* Unique identifier for a given replica node *)
+type replica_id = unique_id;;
+
+(* Unique identifier for a given leader node *)
+type leader_id = unique_id;;
 
 (* Unique identifier for a given command issued by a client *)
 type command_id = int;;
@@ -44,3 +53,31 @@ type result = Success          (* Indicates operation was successfully performed
     -   The operation which the command will apply to the state
 *)
 type command = client_id * command_id * operation;;
+
+(* Slots identify the ordering in which a replica wishes to assign commands *)
+type slot_number = int;;
+
+(* Proposals are pairs of slot numbers and the command commited to that slot *)
+type proposal = slot_number * command;;
+
+(* Pretty-printable string for a given operation *)
+let string_of_operation oper =
+  let string_of_kv (k,v) = "(" ^ (string_of_int k) ^ "," ^ v ^ ")" in
+  match oper with
+  | Nop -> "Nop"
+  | Create (k,v) -> "Create " ^ string_of_kv (k,v)
+  | Read k -> "Read (" ^ (string_of_int k) ^ ")"
+  | Update (k,v) -> "Update " ^ string_of_kv (k,v)
+  | Remove k -> "Remove (" ^ (string_of_int k) ^ ")";;
+
+(* Pretty-printable string for a given command *)
+let string_of_command (cmd : command) = 
+  let (client_id, command_id, operation) = cmd in "<" 
+  ^ (Core.Uuid.to_string client_id) ^ ","
+  ^ (string_of_int command_id) ^ "," 
+  ^ (string_of_operation operation) ^ ">";;
+
+(* Pretty-printable string for a given proposal *)
+let string_of_proposal p =
+  let (slot_no, cmd) = p in
+  "<" ^ (string_of_int slot_no) ^ ", " ^ (string_of_command cmd) ^ ">";;

@@ -35,7 +35,7 @@ interface Message {
       }
     }
 
-    clientId @0 :UInt16;
+    clientId @0 :Data;
     # Id of the client that issued command
 
     commandId @1 :UInt16;

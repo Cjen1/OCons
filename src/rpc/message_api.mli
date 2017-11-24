@@ -66,7 +66,8 @@ module type S = sig
           val of_message : 'cap message_t -> t
           val of_builder : struct_t builder_t -> t
         end
-        val client_id_get : t -> int
+        val has_client_id : t -> bool
+        val client_id_get : t -> string
         val command_id_get : t -> int
         val has_operation : t -> bool
         val operation_get : t -> [`Operation_ecff136cfd079ec1] reader_t
@@ -200,8 +201,9 @@ module type S = sig
           val init_root : ?message_size:int -> unit -> t
           val init_pointer : pointer_t -> t
         end
-        val client_id_get : t -> int
-        val client_id_set_exn : t -> int -> unit
+        val has_client_id : t -> bool
+        val client_id_get : t -> string
+        val client_id_set : t -> string -> unit
         val command_id_get : t -> int
         val command_id_set_exn : t -> int -> unit
         val has_operation : t -> bool

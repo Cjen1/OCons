@@ -50,7 +50,7 @@ let local (f : command -> (command_id * result)) =
 
         (* Get back response for request *)
         (* Note here there is a temporay Nop passed *)
-        let (command_id', result) = f (client_id, command_id, operation) in
+        let (command_id', result) = f (Core.Uuid.of_string client_id, command_id, operation) in
       
         (* Releases capabilities, doesn't matter for us *)
         release_param_caps ();
@@ -89,7 +89,7 @@ let client_request_rpc t (cmd : Types.command) =
     
     (* Construct a command struct for Capnp from the cmd argument given *)
     let (client_id, command_id, operation) = cmd in
-      Command.client_id_set_exn cmd_rpc client_id;
+      Command.client_id_set cmd_rpc (Core.Uuid.to_string client_id);
       Command.command_id_set_exn cmd_rpc command_id;
       
       (* Construct an operation struct here *)
