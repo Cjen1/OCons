@@ -49,5 +49,5 @@ byte:
 # 	-	OR gather all tests into a test.ml file and always pass suites
 # 		to that
 test:
-	$(OCB) example.native
-	./example.native
+	$(OCB) test.native
+	./test.native
