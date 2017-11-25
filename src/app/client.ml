@@ -53,6 +53,8 @@ module Client : CLIENT = struct
     
     let replica_uris = geturis client in
     List.map replica_uris (fun uri -> 
-        Message.send_request
-          (ClientRequestMessage(client_id,command_id,operation)) uri);;
+        Message.send_request (ClientRequestMessage(client_id,command_id,operation)) uri >>=
+        function
+        | Message.ClientRequestResponse (cid, result) -> Lwt.return (cid,result)
+        | _ -> raise Message.Invalid_response);;
 end

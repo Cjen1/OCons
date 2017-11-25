@@ -117,6 +117,24 @@ module type S = sig
           val of_builder : struct_t builder_t -> t
         end
       end
+      module Decision : sig
+        module Params : sig
+          type struct_t = [`Decision_bf80e909e55ca439]
+          type t = struct_t reader_t
+          val slot_number_get : t -> int
+          val has_command : t -> bool
+          val command_get : t -> [`Command_88cec936a5f389be] reader_t
+          val command_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Command_88cec936a5f389be] MessageWrapper.StructRef.t
+          val of_message : 'cap message_t -> t
+          val of_builder : struct_t builder_t -> t
+        end
+        module Results : sig
+          type struct_t = [`Decision_879cdb3a57043d75]
+          type t = struct_t reader_t
+          val of_message : 'cap message_t -> t
+          val of_builder : struct_t builder_t -> t
+        end
+      end
     end
   end
 
@@ -281,6 +299,33 @@ module type S = sig
           val init_pointer : pointer_t -> t
         end
       end
+      module Decision : sig
+        module Params : sig
+          type struct_t = [`Decision_bf80e909e55ca439]
+          type t = struct_t builder_t
+          val slot_number_get : t -> int
+          val slot_number_set_exn : t -> int -> unit
+          val has_command : t -> bool
+          val command_get : t -> [`Command_88cec936a5f389be] builder_t
+          val command_set_reader : t -> [`Command_88cec936a5f389be] reader_t -> [`Command_88cec936a5f389be] builder_t
+          val command_set_builder : t -> [`Command_88cec936a5f389be] builder_t -> [`Command_88cec936a5f389be] builder_t
+          val command_init : t -> [`Command_88cec936a5f389be] builder_t
+          val of_message : rw message_t -> t
+          val to_message : t -> rw message_t
+          val to_reader : t -> struct_t reader_t
+          val init_root : ?message_size:int -> unit -> t
+          val init_pointer : pointer_t -> t
+        end
+        module Results : sig
+          type struct_t = [`Decision_879cdb3a57043d75]
+          type t = struct_t builder_t
+          val of_message : rw message_t -> t
+          val to_message : t -> rw message_t
+          val to_reader : t -> struct_t reader_t
+          val init_root : ?message_size:int -> unit -> t
+          val init_pointer : pointer_t -> t
+        end
+      end
     end
   end
 end
@@ -297,6 +342,11 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) : sig
         module Results = Reader.Message.ClientRequest.Results
         val method_id : (t, Params.t, Results.t) Capnp.RPC.MethodID.t
       end
+      module Decision : sig
+        module Params = Builder.Message.Decision.Params
+        module Results = Reader.Message.Decision.Results
+        val method_id : (t, Params.t, Results.t) Capnp.RPC.MethodID.t
+      end
     end
   end
 
@@ -308,9 +358,14 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) : sig
         module Params = Reader.Message.ClientRequest.Params
         module Results = Builder.Message.ClientRequest.Results
       end
+      module Decision : sig
+        module Params = Reader.Message.Decision.Params
+        module Results = Builder.Message.Decision.Results
+      end
       class virtual service : object
         inherit MessageWrapper.Untyped.generic_service
         method virtual client_request_impl : (ClientRequest.Params.t, ClientRequest.Results.t) MessageWrapper.Service.method_t
+        method virtual decision_impl : (Decision.Params.t, Decision.Results.t) MessageWrapper.Service.method_t
       end
       val local : #service -> t MessageWrapper.Capability.t
     end
