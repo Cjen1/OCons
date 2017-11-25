@@ -74,4 +74,18 @@ interface Message {
   clientRequest @0 (command :Command) -> (response :Response);
   # Method clientRequest is a message sent from the client to a replica
   # The client issues a command and blocks until receiving a response
+
+  decision @1 (slot_number :UInt16, command :Command) -> ();
+  # Replicas receive decision messages sent by a leader
+  # Consists of a command and a slot number
+  # Slot number is the place slot in which the command has been decided 
+  # to occupy by the synod protocol
+
+  # THIS IS COMMENTED OUT BECAUSE IT SHOULDN'T BE IN THIS SCHEMA
+  # NEED ANOTHER SCHEMA FOR LEADERS RECEIVING REPLICAS OFF OF CLIENTS
+  # -----------------------------------------------------------------
+  # sendProposal @2 (slot_number :UInt16, command :Command) -> ();
+  # Method sendProposal is a message sent from a replica to a leader.
+  # Proposals consists of a command and a slot for which that command
+  # is proposed.
 }

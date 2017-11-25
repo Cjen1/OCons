@@ -133,6 +133,7 @@ module Replica = struct
   let print_uri uri =
     Lwt_io.printl ("Spinning up a replica with URI: " ^ (Uri.to_string uri));;
 
+(*--------------------------------------------------------------------------*)
   (* Simple function that maps from requests to results *)
   (* Actual replica implementations will have to propose these
      for sequence slots etc.
@@ -153,13 +154,18 @@ module Replica = struct
       | Remove _ -> Success
     in (command_id, result);;
 
+  (* Another test function for decision receipt *)
+  let test2 (replica_ref : t ref) (p : proposal ) : unit =
+    Lwt.ignore_result (Lwt_io.printl ("We've received a decision " ^ (Types.string_of_proposal p)));;
+(*--------------------------------------------------------------------------*)
+
   (* Starts a server that will run the service
      This is mostly Capnproto boilerplate *)
   let start_server (replica_ref : t ref) (host : string) (port : int) =
     let listen_address = `TCP (host, port) in
     let config = Capnp_rpc_unix.Vat_config.create `Ephemeral listen_address in
     let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-    let restore = Capnp_rpc_lwt.Restorer.single service_id (Message.local (test replica_ref)) in
+    let restore = Capnp_rpc_lwt.Restorer.single service_id (Message.local (test replica_ref) (test2 replica_ref)) in
     Capnp_rpc_unix.serve config ~restore >|= fun vat ->
     Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
 
