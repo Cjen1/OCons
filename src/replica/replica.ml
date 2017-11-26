@@ -14,7 +14,7 @@ module Replica = struct
     id : Types.replica_id;
     
     (* The state of the application it is replicating *)
-    app_state : unit; (* Temporary state of application type *)
+    app_state : Types.app_state; (* Temporary state of application type *)
     
     (* The slot number for the next empty slot to which the replica
        will propose the next command *)
@@ -35,13 +35,13 @@ module Replica = struct
     decisions : Types.proposal list;
     
     (* Set of leader ids that the client has in its current configuration *)
-    leaders : Types.leader_id list; (* Temporary type *)
+    leaders : Uri.t list;
   };;
 
   (* Function new_replica returns a new replica given a list of leader ids *)
-  let initialize leader_ids (initial_state : unit) = {
+  let initialize leader_ids = {
     id = Core.Uuid.create ();
-    app_state = initial_state;
+    app_state = Types.initial_state;
     slot_in   = 1;
     slot_out  = 1;
     requests  = [];
@@ -106,14 +106,17 @@ module Replica = struct
     { replica with leaders = new_leaders };;
 
   (* Print debug information pertaining to a replica *)
+
+  let list_of_cmds cmds =
+    Lwt.return (List.iter cmds ~f:(fun cmd ->
+    Lwt.ignore_result (Lwt_io.print (" " ^ (Types.string_of_command cmd) ^ "\n"))));;
+    
+  let list_of_proposals proposals =
+    Lwt.return (List.iter proposals ~f:(fun p ->
+    Lwt.ignore_result (Lwt_io.print (" " ^ (Types.string_of_proposal p) ^ "\n"))));;
+
+
   let print_replica replica =
-    let list_of_cmds cmds =
-      Lwt.return (List.iter cmds ~f:(fun cmd ->
-      Lwt.ignore_result (Lwt_io.print (" " ^ (Types.string_of_command cmd) ^ "\n"))))
-    in let list_of_proposals proposals =
-      Lwt.return (List.iter proposals ~f:(fun p ->
-      Lwt.ignore_result (Lwt_io.print (" " ^ (Types.string_of_proposal p) ^ "\n"))))
-    in
     Lwt_io.printl ("Replica id " ^ (Core.Uuid.to_string (get_id replica))) >>= fun () ->
     Lwt_io.printl ("Slot-in: " ^
                    (string_of_int (get_slot_in replica)) ^
@@ -133,6 +136,14 @@ module Replica = struct
   let print_uri uri =
     Lwt_io.printl ("Spinning up a replica with URI: " ^ (Uri.to_string uri));;
 
+
+
+
+
+
+
+
+
 (*--------------------------------------------------------------------------*)
   (* Simple function that maps from requests to results *)
   (* Actual replica implementations will have to propose these
@@ -144,7 +155,12 @@ module Replica = struct
        This is an expensive append operation for now - perhaps change? *)
     replica := set_requests (!replica) (List.append (get_requests !replica) [cmd]);
 
-    (* Do this silly stuff that doesn't need to happen at the moment *)    
+    (* Do this silly stuff that doesn't need to happen at the moment *)
+    (* In reality this needs to block here until a decision has been committed
+       we can return 
+    
+       OR ALTERNATIVELY split client request/response into two separate
+       message schemas *)
     let (client_id, command_id, operation) = cmd in
     let result = match operation with
       | Nop      -> Success
@@ -154,18 +170,119 @@ module Replica = struct
       | Remove _ -> Success
     in (command_id, result);;
 
+  (* We won't yet worry about reconfigurations *)
+  let isreconfig op = false;;
+
+  (* Stub perform function.
+     At the moment we only want to check that each command is performed in
+     same order at all replicas. A print statement is enough to show this *)
+  let perform replica_ref c =
+    let slot_out = get_slot_out !replica_ref in
+    let (_,_,op) = c in
+    let decisions_inv = List.Assoc.inverse (get_decisions !replica_ref) in
+
+    let is_lower_slot =
+    (match List.Assoc.find decisions_inv ~equal:(fun c1 -> fun c2 -> Types.commands_equal c1 c2) c with
+    | None -> false
+    | Some s -> s < slot_out) in
+    if is_lower_slot || isreconfig op  then
+      replica_ref := set_slot_out !replica_ref (slot_out + 1) 
+    else 
+      (* ATOMIC *)
+      
+      (* Update application state *)
+      let next_state, results = Types.apply (get_app_state !replica_ref) op in
+      replica_ref := set_app_state !replica_ref (next_state);
+      replica_ref := set_slot_out !replica_ref (slot_out + 1)
+      (* END ATOMIC *)
+
+      (* Send a response message to client *)
+      
+  let rec try_execute (replica_ref : t ref) (p : proposal) =
+    (* Find a decision corresponding to <slot_out, _>
+       Such decisions are possibly ready to have their commands applied
+       (given there are no other commands proposed for slot_out) *)
+    let slot_out = get_slot_out !replica_ref in 
+    match List.Assoc.find (get_decisions !replica_ref) ~equal:(=) slot_out with
+    | None -> ()
+    | Some c' ->  (* A command c' is possibly ready *)
+      Lwt.ignore_result (Lwt_io.printl ("There is a command " ^ (Types.string_of_command c') ^ " in slot " ^ (string_of_int slot_out)));
+      
+      (* Check next if there is another command c'' that this replica has
+         proposed for slot_out. *)
+      (match List.Assoc.find (get_proposals !replica_ref) ~equal:(=) slot_out with
+       | None -> ()
+       | Some c'' ->
+          Lwt.ignore_result (Lwt_io.printl "Remove the proposal from slot");
+      
+          (* Remove the proposal <slot_out, c''> from set of proposals *)
+          let new_proposals = List.filter (get_proposals !replica_ref) 
+              ~f:(fun p' -> 
+                  Lwt.ignore_result (Lwt_io.printl ("Comparing " ^ (Types.string_of_proposal (slot_out, c'')) ^ " and " ^ (Types.string_of_proposal p')));
+                  not (Types.proposals_equal (slot_out, c'') p')
+              ) in
+
+          Lwt.ignore_result (list_of_proposals new_proposals);
+          replica_ref := set_proposals !replica_ref new_proposals;
+          Lwt.ignore_result (print_replica !replica_ref );
+          
+
+          (* If c' = c'' then we don't need to re-propose this command,
+             since we're about to commit <slot_out, c'> anyway.
+        
+             However, if c' =/= c'' then we add c'' back into the set of
+             requests so that it can be proposed again at a later time
+             by this replica *)
+          if not (Types.commands_equal c' c'') then
+            (* Add c'' to requests *)
+            replica_ref := set_requests (!replica_ref) (List.append (get_requests !replica_ref) [c''])
+          else ()); (* Do nothing *)
+
+      (* Perform the operation of command c' on the application state *)
+      perform replica_ref c';
+      
+      try_execute replica_ref p;;
+
   (* Another test function for decision receipt *)
+  (* This is where application state will be updated if decisions are received
+     etc *)
   let test2 (replica_ref : t ref) (p : proposal ) : unit =
-    Lwt.ignore_result (Lwt_io.printl ("We've received a decision " ^ (Types.string_of_proposal p)));;
+    Lwt.ignore_result (Lwt_io.printl ("Received a decision " ^ (Types.string_of_proposal p)));
+    Lwt.ignore_result (print_replica !replica_ref );
+
+    (* Append the received proposal to the set of decisions *)
+    replica_ref := set_decisions (!replica_ref) (List.append (get_decisions !replica_ref) [p]);
+
+    Lwt.ignore_result (Lwt_io.printl ("Add decision to decisions " ^ (Types.string_of_proposal p)));
+    Lwt.ignore_result (print_replica !replica_ref );
+  
+    (* Try to execute commands ... *)
+    try_execute replica_ref p;;
+  
+
+
 (*--------------------------------------------------------------------------*)
+
+
+
+
+
+
+
+
+
+
+
+
 
   (* Starts a server that will run the service
      This is mostly Capnproto boilerplate *)
   let start_server (replica_ref : t ref) (host : string) (port : int) =
     let listen_address = `TCP (host, port) in
-    let config = Capnp_rpc_unix.Vat_config.create `Ephemeral listen_address in
+    let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address  in
     let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-    let restore = Capnp_rpc_lwt.Restorer.single service_id (Message.local (test replica_ref) (test2 replica_ref)) in
+    let restore = Capnp_rpc_lwt.Restorer.single service_id 
+        (Message.local (Some (test replica_ref)) (Some (test2 replica_ref))) in
     Capnp_rpc_unix.serve config ~restore >|= fun vat ->
     Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
 
@@ -202,9 +319,13 @@ module Replica = struct
         replica_ref := set_requests (set_proposals !replica_ref new_proposals) new_requests;
 
         (* Finally broadcast a message to all of the leaders notifying them of proposal *)
-        (* ... *)
-        (* ... *)
-      | Some _ -> 
+        List.iter (get_leaders !replica_ref) ~f:(fun uri ->
+          let msg = Message.ProposalMessage (slot_in, c) in  
+          (Message.send_request msg uri >>=
+            function Message.ProposalMessageResponse -> Lwt.return_unit
+                   | _ -> raise Message.Invalid_response)
+          |> Lwt.ignore_result);
+      | Some _ ->
         (* If there is a command already committed to this slot do nothing *)
         () );
 
@@ -218,13 +339,14 @@ module Replica = struct
      This is so that as requests arrive we can attempt to propose them *)
   let rec propose_lwt (replica_ref : t ref) =
     propose replica_ref >>= fun () ->
-    Lwt_unix.sleep 1.0 >>= fun () ->           (* Put this sleep in for now *)
-    print_replica !replica_ref >>= fun () ->   (* Print replica information periodically *)
+    Lwt_unix.sleep 1.0 >>=  fun () ->           (* Put this sleep in for now *)
+    print_replica !replica_ref >>= fun () ->    (* Print replica information periodically *)
+    Lwt_io.printl (Types.string_of_state (get_app_state !replica_ref)) >>= fun () ->
     propose_lwt replica_ref;;
   
   (* Initialize a new replica and its lwt threads *)
-  let new_replica host port =  
-    let replica = ref (initialize [] ()) (* Temporary arguments *) in 
+  let new_replica host port leader_uris =  
+    let replica = ref (initialize leader_uris) in 
     Lwt.join [
       (* Start the server on the specified (host,port) pair.
          Print the URI representing the Capnp sturdy ref
