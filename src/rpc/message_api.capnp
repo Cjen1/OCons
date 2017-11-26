@@ -81,10 +81,7 @@ interface Message {
   # Slot number is the place slot in which the command has been decided 
   # to occupy by the synod protocol
 
-  # THIS IS COMMENTED OUT BECAUSE IT SHOULDN'T BE IN THIS SCHEMA
-  # NEED ANOTHER SCHEMA FOR LEADERS RECEIVING REPLICAS OFF OF CLIENTS
-  # -----------------------------------------------------------------
-  # sendProposal @2 (slot_number :UInt16, command :Command) -> ();
+  sendProposal @2 (slot_number :UInt16, command :Command) -> ();
   # Method sendProposal is a message sent from a replica to a leader.
   # Proposals consists of a command and a slot for which that command
   # is proposed.
