@@ -1,58 +1,51 @@
+(* client.ml *)
+
 open Core
 open Core.Unix
 open Lwt.Infix
-       
 open Types
 open Message
 
 module type CLIENT = sig
   type t;;
   val new_client : unit -> t;;
-  val add_replica_uri : Uri.t -> t -> t;;
-  val getid : t -> client_id;;
-  val getnextcommand : t -> command_id;;
-  val geturis : t -> Uri.t list;;  
+  val add_replica_uri : Uri.t -> t -> unit;;
   val send_request_message : t -> operation -> (command_id * Types.result) Lwt.t list;;
 end
 
 module Client : CLIENT = struct
+  (* Types of clients *)
   type t = {
     id : client_id;
     mutable next_command_id : command_id;
-    replica_uri_list : Uri.t list
+    mutable replica_uri_list : Uri.t list
   };;
-
-  let getid client = match client with
-    | { id; next_command_id; replica_uri_list } -> id;;
-
-  let getnextcommand client = match client with
-    | { id; next_command_id; replica_uri_list } -> next_command_id;;
   
-  let geturis client = match client with
-    | { id; next_command_id; replica_uri_list } -> replica_uri_list;;
-
+  (* Create a new record of client information *)
   let new_client () = {
     id = Core.Uuid.create ();
     next_command_id = 1;
     replica_uri_list = []
   };;
+  
+  (* Add a replica URI to the client's list of URIs *)
+  let add_replica_uri uri client = 
+    client.replica_uri_list <- uri :: (client.replica_uri_list);;
 
-  let add_replica_uri uri client = {
-    id = getid client;
-    next_command_id = getnextcommand client;
-    replica_uri_list = uri :: (geturis client)
-  };;
-
+  (* Send a clientrequestmessage RPC of a given operation by a given client *)
   let send_request_message client operation =
     (* Send the message to some underlying RPC subsystem. *)
-    let client_id = getid client in
-    let command_id = getnextcommand client in
-    
+    let client_id = client.id in
+    let command_id = client.next_command_id in
+
     (* Increment the command number *)
     client.next_command_id <- command_id + 1;
     
-    let replica_uris = geturis client in
-    List.map replica_uris (fun uri -> 
+    (* Map the list of clients to a list of response messages.
+       For each uri in list, send the request message to that URI and
+       bind the response, returning a (command_id, Types.result).
+    *)
+    List.map client.replica_uri_list (fun uri -> 
         Message.send_request (ClientRequestMessage(client_id,command_id,operation)) uri >>=
         function
         | Message.ClientRequestResponse (cid, result) -> Lwt.return (cid,result)

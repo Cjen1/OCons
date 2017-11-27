@@ -24,10 +24,18 @@ type command_id = int;;
   
   Note:
     -   Keys are unique in store.
-    -   If create is applied and key already present, then  ...
-    -   If read is applied and key is not present, then ...
-    -   If update is applied and key is not present, then ...
-    -   If remove is applied and key is not present, then ...
+
+    -   If create is applied and key already present, then state
+        is unaffected (and failure is returned).
+
+    -   If read is applied and key is not present, then state
+        is unaffected (and failure is returned).
+
+    -   If update is applied and key is not present, then state
+        is unaffected (and failure is returned).
+
+    -   If remove is applied and key is not present, then state
+        is unaffected (and failure is returned).
 *)
 type operation = Nop                     (* Idempotent no operation *)
                | Create of int * string  (* Add (k,v) to the store *)
@@ -43,18 +51,18 @@ type operation = Nop                     (* Idempotent no operation *)
         these commands in the sequence, it is just that the command itself
         may have failed in an application context.
 *)
-type result = Success          (* Indicates operation was successfully performed by replicas *)
-            | Failure          (* Indicates operation was not successfully performed by replicas *)
+type result = Success (* Indicates operation was successfully performed by replicas *)
+            | Failure (* Indicates operation was not successfully performed by replicas *)
             | ReadSuccess of string;; (* Indicates read success with associated value *)
 
-(* State of application is a dictionary *)
+(* State of application is a dictionary of strings keyed by integers *)
 type app_state = (int, string) Core.List.Assoc.t;;
 
 (* Initial state of application is the empty dictionary *)
 let initial_state = [];;
 
-(* Apply takes a state and an operation and performs that 
-   operation on that state, returning a result *)
+(* Apply takes a state and an operation and performs that operation on that
+   state, returning the new state and a result *)
 let apply (state : app_state) (op : operation) : (app_state * result)=
   match op with
   | Nop -> 
@@ -80,7 +88,7 @@ let apply (state : app_state) (op : operation) : (app_state * result)=
     else
       (state, Failure);;
 
-(* Pretty-printable of app state *)
+(* Pretty-printable string of application state *)
 let string_of_state (state : app_state) : string =
   "[" ^ (String.concat "," (Core.List.map state ~f:(fun (k,v) ->
       "(" ^ (string_of_int k) ^ ", " ^ v ^ ")"

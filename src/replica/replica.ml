@@ -14,28 +14,28 @@ module Replica = struct
     id : Types.replica_id;
     
     (* The state of the application it is replicating *)
-    app_state : Types.app_state; (* Temporary state of application type *)
+    mutable app_state : Types.app_state; (* Temporary state of application type *)
     
     (* The slot number for the next empty slot to which the replica
        will propose the next command *)
-    slot_in : slot_number;
+    mutable slot_in : slot_number;
     
     (* The slot number for the next slot in which a decision needs to be
        made about which command to commit to that slot before the 
        application state can be updated *)
-    slot_out : slot_number;
+    mutable slot_out : slot_number;
     
     (* Set of request commands sent to the replica *)
-    requests : Types.command list;
+    mutable requests : Types.command list;
     
     (* Set of commands proposed by the replica *)
-    proposals : Types.proposal list;
+    mutable proposals : Types.proposal list;
     
     (* Set of commands upon which a slot has been decided *)
-    decisions : Types.proposal list;
+    mutable decisions : Types.proposal list;
     
     (* Set of leader ids that the client has in its current configuration *)
-    leaders : Uri.t list;
+    mutable leaders : Uri.t list;
   };;
 
   (* Function new_replica returns a new replica given a list of leader ids *)
@@ -50,61 +50,6 @@ module Replica = struct
     leaders   = leader_ids;
   };;
 
-  (* Getter and setter functions for replica-related information *)
-
-  let get_id replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> id;;
-
-  let get_app_state replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> app_state;;
-
-  let set_app_state replica new_app_state = 
-    { replica with app_state = new_app_state };;
-
-  let get_slot_in replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> slot_in;;
-
-  let set_slot_in replica new_slot_in =
-    { replica with slot_in = new_slot_in };;
-
-  let get_slot_out replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> slot_out;;
-
-  let set_slot_out replica new_slot_out = 
-    { replica with slot_out = new_slot_out };;
-
-  let get_proposals replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> proposals;;
-
-  let set_proposals replica new_proposals =
-    { replica with proposals = new_proposals };;
- 
-  let get_requests replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> requests;;
-
-  let set_requests replica new_requests =
-    { replica with requests = new_requests };;
-
-  let get_decisions replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> decisions;;  
-
-  let set_decisions replica new_decisions = 
-    { replica with decisions = new_decisions };;
-
-  let get_leaders replica = match replica with {
-    id; app_state; slot_in; slot_out;
-    requests; proposals; decisions; leaders } -> leaders;;
-
-  let set_leaders replica new_leaders = 
-    { replica with leaders = new_leaders };;
-
   (* Print debug information pertaining to a replica *)
 
   let list_of_cmds cmds =
@@ -117,19 +62,19 @@ module Replica = struct
 
 
   let print_replica replica =
-    Lwt_io.printl ("Replica id " ^ (Core.Uuid.to_string (get_id replica))) >>= fun () ->
+    Lwt_io.printl ("Replica id " ^ (Core.Uuid.to_string replica.id)) >>= fun () ->
     Lwt_io.printl ("Slot-in: " ^
-                   (string_of_int (get_slot_in replica)) ^
+                   (string_of_int replica.slot_in) ^
                    " | Slot-out: " ^ 
-                   (string_of_int (get_slot_out replica))) >>= fun () ->
+                   (string_of_int (replica.slot_out))) >>= fun () ->
     Lwt_io.printl "Requests: [" >>= fun () -> 
-    list_of_cmds (get_requests replica) >>= fun () ->
+    list_of_cmds (replica.requests) >>= fun () ->
     Lwt_io.printl "]" >>= fun () ->
     Lwt_io.printl "Proposals: [" >>= fun () ->
-    list_of_proposals (get_proposals replica) >>= fun () ->
+    list_of_proposals (replica.proposals) >>= fun () ->
     Lwt_io.printl "]" >>= fun () ->
     Lwt_io.printl "Decisions: [" >>= fun () ->
-    list_of_proposals (get_decisions replica) >>= fun () ->
+    list_of_proposals (replica.decisions) >>= fun () ->
     Lwt_io.printl "]";;
   
   (* Print line describing URI to terminal *)
@@ -137,24 +82,17 @@ module Replica = struct
     Lwt_io.printl ("Spinning up a replica with URI: " ^ (Uri.to_string uri));;
 
 
-
-
-
-
-
-
-
+  
 (*--------------------------------------------------------------------------*)
   (* Simple function that maps from requests to results *)
   (* Actual replica implementations will have to propose these
      for sequence slots etc.
      But for now this is just to simulate message passing capability
   *)
-  let test (replica : t ref) (cmd : command)  : (command_id * Types.result) =
+  let receive_request (replica : t) (cmd : command)  : (command_id * Types.result) =
     (* Add the command to the end of set of requests.
        This is an expensive append operation for now - perhaps change? *)
-    replica := set_requests (!replica) (List.append (get_requests !replica) [cmd]);
-
+    replica.requests <- (List.append (replica.requests) [cmd]);
     (* Do this silly stuff that doesn't need to happen at the moment *)
     (* In reality this needs to block here until a decision has been committed
        we can return 
@@ -170,63 +108,60 @@ module Replica = struct
       | Remove _ -> Success
     in (command_id, result);;
 
+  (* TODO: Implement configurations *)
   (* We won't yet worry about reconfigurations *)
   let isreconfig op = false;;
-
-  (* Stub perform function.
-     At the moment we only want to check that each command is performed in
-     same order at all replicas. A print statement is enough to show this *)
-  let perform replica_ref c =
-    let slot_out = get_slot_out !replica_ref in
+  
+  (* Perform the command c on the application state of replica *)
+  let perform replica c =
+    let slot_out = replica.slot_out in
     let (_,_,op) = c in
-    let decisions_inv = List.Assoc.inverse (get_decisions !replica_ref) in
+    let decisions_inv = List.Assoc.inverse replica.decisions in
 
     let is_lower_slot =
     (match List.Assoc.find decisions_inv ~equal:(fun c1 -> fun c2 -> Types.commands_equal c1 c2) c with
     | None -> false
     | Some s -> s < slot_out) in
     if is_lower_slot || isreconfig op  then
-      replica_ref := set_slot_out !replica_ref (slot_out + 1) 
+      replica.slot_out <- replica.slot_out + 1
     else 
-      (* ATOMIC *)
-      
+      (* ATOMIC - May need to make this an atomic execution block *)
       (* Update application state *)
-      let next_state, results = Types.apply (get_app_state !replica_ref) op in
-      replica_ref := set_app_state !replica_ref (next_state);
-      replica_ref := set_slot_out !replica_ref (slot_out + 1)
+      let next_state, results = Types.apply replica.app_state op in
+      replica.app_state <- next_state;
+      replica.slot_out <- replica.slot_out + 1
       (* END ATOMIC *)
-
-      (* Send a response message to client *)
+  
+      (* Send a response message to client *);;
       
-  let rec try_execute (replica_ref : t ref) (p : proposal) =
+  let rec try_execute (replica : t) (p : proposal) =
     (* Find a decision corresponding to <slot_out, _>
        Such decisions are possibly ready to have their commands applied
        (given there are no other commands proposed for slot_out) *)
-    let slot_out = get_slot_out !replica_ref in 
-    match List.Assoc.find (get_decisions !replica_ref) ~equal:(=) slot_out with
+    let slot_out = replica.slot_out in 
+    match List.Assoc.find replica.decisions ~equal:(=) slot_out with
     | None -> ()
     | Some c' ->  (* A command c' is possibly ready *)
       Lwt.ignore_result (Lwt_io.printl ("There is a command " ^ (Types.string_of_command c') ^ " in slot " ^ (string_of_int slot_out)));
       
       (* Check next if there is another command c'' that this replica has
          proposed for slot_out. *)
-      (match List.Assoc.find (get_proposals !replica_ref) ~equal:(=) slot_out with
+      (match List.Assoc.find replica.proposals ~equal:(=) slot_out with
        | None -> ()
        | Some c'' ->
           Lwt.ignore_result (Lwt_io.printl "Remove the proposal from slot");
       
           (* Remove the proposal <slot_out, c''> from set of proposals *)
-          let new_proposals = List.filter (get_proposals !replica_ref) 
+          let new_proposals = List.filter replica.proposals 
               ~f:(fun p' -> 
                   Lwt.ignore_result (Lwt_io.printl ("Comparing " ^ (Types.string_of_proposal (slot_out, c'')) ^ " and " ^ (Types.string_of_proposal p')));
                   not (Types.proposals_equal (slot_out, c'') p')
               ) in
 
           Lwt.ignore_result (list_of_proposals new_proposals);
-          replica_ref := set_proposals !replica_ref new_proposals;
-          Lwt.ignore_result (print_replica !replica_ref );
+          replica.proposals <- new_proposals;
+          Lwt.ignore_result (print_replica replica);
           
-
           (* If c' = c'' then we don't need to re-propose this command,
              since we're about to commit <slot_out, c'> anyway.
         
@@ -235,29 +170,29 @@ module Replica = struct
              by this replica *)
           if not (Types.commands_equal c' c'') then
             (* Add c'' to requests *)
-            replica_ref := set_requests (!replica_ref) (List.append (get_requests !replica_ref) [c''])
+            replica.requests <- (List.append (replica.requests) [c''])
           else ()); (* Do nothing *)
 
       (* Perform the operation of command c' on the application state *)
-      perform replica_ref c';
+      perform replica c';
       
-      try_execute replica_ref p;;
+      try_execute replica p;;
 
   (* Another test function for decision receipt *)
   (* This is where application state will be updated if decisions are received
      etc *)
-  let test2 (replica_ref : t ref) (p : proposal ) : unit =
+  let receive_decision (replica : t) (p : proposal ) : unit =
     Lwt.ignore_result (Lwt_io.printl ("Received a decision " ^ (Types.string_of_proposal p)));
-    Lwt.ignore_result (print_replica !replica_ref );
+    Lwt.ignore_result (print_replica replica);
 
     (* Append the received proposal to the set of decisions *)
-    replica_ref := set_decisions (!replica_ref) (List.append (get_decisions !replica_ref) [p]);
+    replica.decisions <- (List.append (replica.decisions) [p]);
 
     Lwt.ignore_result (Lwt_io.printl ("Add decision to decisions " ^ (Types.string_of_proposal p)));
-    Lwt.ignore_result (print_replica !replica_ref );
+    Lwt.ignore_result (print_replica replica);
   
     (* Try to execute commands ... *)
-    try_execute replica_ref p;;
+    try_execute replica p;;
   
 
 
@@ -265,24 +200,14 @@ module Replica = struct
 
 
 
-
-
-
-
-
-
-
-
-
-
   (* Starts a server that will run the service
      This is mostly Capnproto boilerplate *)
-  let start_server (replica_ref : t ref) (host : string) (port : int) =
+  let start_server (replica : t) (host : string) (port : int) =
     let listen_address = `TCP (host, port) in
     let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address  in
     let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
     let restore = Capnp_rpc_lwt.Restorer.single service_id 
-        (Message.local (Some (test replica_ref)) (Some (test2 replica_ref))) in
+        (Message.local (Some (receive_request replica)) (Some (receive_decision replica))) in
     Capnp_rpc_unix.serve config ~restore >|= fun vat ->
     Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
 
@@ -294,32 +219,32 @@ module Replica = struct
      The command may also be a re-config command, in which case a reconfig
      is performed in which a new set of leaders is introduced.
   *)
-  let propose replica_ref =
-    let slot_in, slot_out = get_slot_in !replica_ref, get_slot_out !replica_ref in
-    if (slot_in < slot_out + window) && (not (List.is_empty (get_requests !replica_ref)))
+  let propose replica =
+    let slot_in, slot_out = replica.slot_in, replica.slot_out in
+    if (slot_in < slot_out + window) && (not (List.is_empty replica.requests))
     then
       (* Select a request *)
-      let c = List.hd_exn (get_requests !replica_ref) in
+      let c = List.hd_exn replica.requests in
       
       (* See if there is a command in the window that is a reconfig *)
       (* If there is then perform a reconfiguration *)
-
+      (* TODO: ADD SUPPORT FOR RECONFIGURATIONS *)
+      (* ... *)
+      
       (* See if there exists a command currently committed for slot_in *)
-      (match List.Assoc.find 
-              (get_decisions !replica_ref) ~equal:(=) 
-              (get_slot_in !replica_ref) with
+      (match List.Assoc.find replica.decisions ~equal:(=) slot_in with
       | None ->
         (* Remove c from the list of requests *)
-        let new_requests = List.filter (get_requests !replica_ref) ~f:(fun c' -> not (Core.phys_equal c c')) in
-
-        (* Add <slot_in,c> to the list of proposals *) 
-        let new_proposals = (get_slot_in !replica_ref, c) :: (get_proposals !replica_ref) in
-
+        let new_requests = List.filter replica.requests ~f:(fun c' -> not (Types.commands_equal c c')) in
+        
         (* Set the replica to include these updated lists *)
-        replica_ref := set_requests (set_proposals !replica_ref new_proposals) new_requests;
+        replica.requests <- new_requests;
+        
+        (* Add <slot_in,c> to the list of proposals *) 
+        replica.proposals <- (slot_in, c) :: replica.proposals;
 
         (* Finally broadcast a message to all of the leaders notifying them of proposal *)
-        List.iter (get_leaders !replica_ref) ~f:(fun uri ->
+        List.iter replica.leaders ~f:(fun uri ->
           let msg = Message.ProposalMessage (slot_in, c) in  
           (Message.send_request msg uri >>=
             function Message.ProposalMessageResponse -> Lwt.return_unit
@@ -330,23 +255,24 @@ module Replica = struct
         () );
 
       (* Increment slot_in on the replica *)
-      replica_ref := set_slot_in !replica_ref ((get_slot_in !replica_ref) + 1);
+      replica.slot_in <- replica.slot_in + 1;
+      
       Lwt.return_unit
     else
       Lwt.return_unit;;
 
   (* Repeatedly call the propose function:
      This is so that as requests arrive we can attempt to propose them *)
-  let rec propose_lwt (replica_ref : t ref) =
-    propose replica_ref >>= fun () ->
+  let rec propose_lwt replica =
+    propose replica >>= fun () ->
     Lwt_unix.sleep 1.0 >>=  fun () ->           (* Put this sleep in for now *)
-    print_replica !replica_ref >>= fun () ->    (* Print replica information periodically *)
-    Lwt_io.printl (Types.string_of_state (get_app_state !replica_ref)) >>= fun () ->
-    propose_lwt replica_ref;;
+    print_replica replica >>= fun () ->    (* Print replica information periodically *)
+    Lwt_io.printl (Types.string_of_state replica.app_state) >>= fun () ->
+    propose_lwt replica;;
   
   (* Initialize a new replica and its lwt threads *)
   let new_replica host port leader_uris =  
-    let replica = ref (initialize leader_uris) in 
+    let replica = initialize leader_uris in 
     Lwt.join [
       (* Start the server on the specified (host,port) pair.
          Print the URI representing the Capnp sturdy ref
