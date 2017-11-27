@@ -22,7 +22,7 @@ let local (some_f : (command -> (command_id * result)) option) (some_g : (propos
       let open Message.SendProposal in
       let module Params = Message.SendProposal.Params in
 
-      (* Pull out all the interesting info from params *)
+      (* Pull out all the slot number from params *)
       let slot_number = Params.slot_number_get params in
     
       (* Get an API reader for the command, since its a nested struct *)
@@ -160,7 +160,7 @@ let local (some_f : (command -> (command_id * result)) option) (some_g : (propos
 
         (* Get back response for request *)
         (* Note here there is a temporay Nop passed *)
-        (* This pattern matchins is not exhaustive but
+        (* This pattern matching is not exhaustive but
            we always want some callback f here 
 
            So it is suitable to raise an exception
@@ -341,6 +341,9 @@ type message = ClientRequestMessage of command
              | DecisionMessage of proposal;;
           (* | ... further messages will be added *) 
 
+(* Types of responses returned to a sending node
+   These do not necessarily carry any useful data 
+   (essentially just ACKs) *)
 type response = ClientRequestResponse of command_id * result
               | ProposalMessageResponse
               | DecisionMessageResponse;;
@@ -383,9 +386,8 @@ let send_request message uri =
       (* Return the response to the calling client *)
       Lwt.return (ClientRequestResponse(command_id, result))
   | DecisionMessage p ->
-    (* Perform the RPC with the given command *)
     decision_rpc service p >>= fun () -> 
-    Lwt.return DecisionMessageResponse; (* Temporary!!!! For now types don't match up *)
+    Lwt.return DecisionMessageResponse; 
   | ProposalMessage p ->
     proposal_rpc service p >>= fun () ->
     Lwt.return ProposalMessageResponse;;
