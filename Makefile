@@ -10,7 +10,7 @@
 #	-	Separate _tags file is used for package dependencies and
 #		bin_annot.
 #
-FLAGS = -use-ocamlfind -I src -I lib -I tests -I src/rpc -I src/app -I src/leader -I src/replica
+FLAGS = -use-ocamlfind -I src -I lib -I tests -I src/rpc -I src/node
 
 # Corebuild is Ocamlbuild wrapper that makes it play better with Core
 OCB = corebuild $(FLAGS)

@@ -26,7 +26,7 @@ let run_client replica_uri =
       match n with 
       | 0 -> Lwt.return_unit
       | n ->
-        Random.self_init () ;
+        Random.self_init ();
       
         let rand_cmd = (match Random.int 5 with
         | 0 -> Nop

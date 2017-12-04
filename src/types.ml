@@ -120,7 +120,7 @@ let commands_equal (c : command) (c' : command) : bool =
     (oper = oper');;
 
 let proposals_equal (p : proposal) (p' : proposal) : bool =
-  let (slot_out, c) = p' in
+  let (slot_out, c) = p in
   let (slot_out', c') = p' in
     (commands_equal c c') &&
     (slot_out = slot_out');;

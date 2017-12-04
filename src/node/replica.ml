@@ -92,7 +92,8 @@ module Replica = struct
   let receive_request (replica : t) (cmd : command)  : (command_id * Types.result) =
     (* Add the command to the end of set of requests.
        This is an expensive append operation for now - perhaps change? *)
-    replica.requests <- (List.append (replica.requests) [cmd]);
+    replica.requests <- (List.append (replica.requests) [cmd]); 
+
     (* Do this silly stuff that doesn't need to happen at the moment *)
     (* In reality this needs to block here until a decision has been committed
        we can return 
@@ -107,6 +108,16 @@ module Replica = struct
       | Update _ -> Success
       | Remove _ -> Success
     in (command_id, result);;
+
+
+
+
+
+
+
+
+
+
 
   (* TODO: Implement configurations *)
   (* We won't yet worry about reconfigurations *)
