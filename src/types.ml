@@ -4,7 +4,7 @@
 type unique_id = Core.Uuid.t;;
 
 (* Unique identifier for a given client node *)
-type client_id = unique_id;;
+type client_id = unique_id * Uri.t;;
 
 (* Unique identifier for a given replica node *)
 type replica_id = unique_id;;
@@ -108,14 +108,14 @@ type slot_number = int;;
 type proposal = slot_number * command;;
 
 (* Equality functions for commands and proposals.
-
    These are necessary because Core.phys_equal does not seem to compare
    UUIDs correctly for equality. Hence we just do an equality check
    over the structure of commands and proposals *)
 let commands_equal (c : command) (c' : command) : bool =
-  let (client_id, command_id, oper) = c in
-  let (client_id', command_id', oper') = c' in
-    (Core.Uuid.equal client_id client_id') &&
+  let ((id,uri), command_id, oper) = c in
+  let ((id',uri'), command_id', oper') = c' in
+    (Core.Uuid.equal id id') &&
+    (Uri.equal uri uri') &&
     (command_id = command_id') &&
     (oper = oper');;
 
@@ -137,8 +137,10 @@ let string_of_operation oper =
 
 (* Pretty-printable string for a given command *)
 let string_of_command (cmd : command) = 
-  let (client_id, command_id, operation) = cmd in "<" 
-  ^ (Core.Uuid.to_string client_id) ^ ","
+  let (client_id, command_id, operation) = cmd in
+  let (id,uri) = client_id in
+  "<(" ^ (Core.Uuid.to_string id) 
+  ^ "," ^ (Uri.to_string uri) ^ "),"
   ^ (string_of_int command_id) ^ "," 
   ^ (string_of_operation operation) ^ ">";;
 
