@@ -43,24 +43,9 @@ module Leader = struct
   let print_uri uri =
     Lwt_io.printl ("Spinning up a leader with URI: " ^ (Uri.to_string uri));;  
   
-  (* Initialize a server for a given leader on a given host and port
-    This is mostly just Capnp boilerplate *)
+  (* Initialize a server for a given leader on a given host and port *)
   let start_server (leader : t) (host : string) (port : int) =
-    let listen_address = `TCP (host, port) in
-    let config = Capnp_rpc_unix.Vat_config.create 
-        ~serve_tls:false ~secret_key:`Ephemeral listen_address in
-    let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-
-    (* When we pass the service to the restorer, we also given two callback
-       functions. The first is for client requests so we pass None and
-       the second is for receiving proposals and so we pass the
-       receiveProposal callback.
-    
-        Note we curry it here when we apply the leader. *)
-    let restore = Capnp_rpc_lwt.Restorer.single service_id 
-        (Message.local None (Some (receive_proposal leader))) in
-    Capnp_rpc_unix.serve config ~restore >|= fun vat ->
-    Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
+    Message.start_new_server None (Some (receive_proposal leader)) host port;;
   
   let new_leader host port = 
     (* Initialize a new leader *)    
@@ -75,3 +60,6 @@ module Leader = struct
       fun () -> fst @@ Lwt.wait ())
     ])
 end;;
+
+
+
