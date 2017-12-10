@@ -1,29 +1,25 @@
 (* main.ml *)
 
-open Lwt.Infix
-open Unix
-open Core
-open Client
-open Types
-open Replica
-open Leader.Leader;;
-open Config;;
+open Lwt.Infix;;
+open Unix;;
+open Core;;
 
-(* Sample replica code *)
-let run_replica' host port uris =
-  Lwt_main.run( Replica.new_replica host port uris );;
+open Types;;
+open Config;;
+open Client;;
+open Replica;;
+open Leader;;
 
 (* Sample client code -
+
    run ten random commands with random parameters, with a random sleep
-   time in-between *)
+   time in-between 
+*)
 let run_client' uris =
   Lwt_main.run (
     Lwt_io.printl "Spinning up a client" >>= fun () ->
     
-    let client = Client.new_client () in
-    
-    List.iter uris ~f:(fun uri ->
-        Client.add_replica_uri uri client);
+    let client = Client.new_client uris in
  
     let rec commands n = 
       match n with 
@@ -50,29 +46,14 @@ let run_client' uris =
       commands 10
 );;
 
-
-let run_leader'' host port = 
-  Lwt_main.run (
-    let (leader, l_wt) = Leader.Leader.new_leader host port in
-    Lwt.join [
-      l_wt;
-
-      (* Form a sort-of REPL loop for adding new Capnp URIs of replicas to leaders *)
-      (let rec new_uri b = match b with _ ->
-        (Lwt_io.read_line Lwt_io.stdin >>= fun line ->
-         leader.replica_uris <- (Uri.of_string line)::(leader.replica_uris);
-         new_uri true
-        )
-       in new_uri true);
-    ]);;
-
+(* Sample leader code *)
 let run_leader' host port uris =
-  Lwt_main.run(
-    let (leader, l_lwt) = Leader.Leader.new_leader host port in
-    Lwt.join [
-      l_lwt;
-      Lwt.return (leader.replica_uris <- uris)
-    ]);;
+  Leader.new_leader host port uris |> Lwt_main.run;;
+
+(* Sample replica code *)
+let run_replica' host port uris =
+  Replica.new_replica host port uris |> Lwt_main.run;;
+
 
 (* TODO To plug this all in and make it work:
    
@@ -141,17 +122,7 @@ let sanitise_port (port_string : string) : int =
     else raise (Invalid_argument "Port number must be in range 1025-65535")
   with Failure _ -> raise (Invalid_argument "Port number must be an integer");;
 
-(*
-let sanitise_host (host_string : string) : string =
-  let regex = Str.regexp 
-  "(((2[0-5][0-5])|(1[0-9][0-9])|([0-9][0-9])|[0-9])\.){3}((2[0-5][0-5])|(1[0-9][0-9])|([0-9][0-9])|[0-9])" in
-  if Str.string_match regex host_string 0 then
-    host_string
-  else
-    raise (Invalid_argument "Malformed host IP address supplied (must be IPV4)");;
-*)
-
-(* TODO: This is just temporary until the library issue with regexps is resolved *)
+(* TODO: Sanitise IP addresses *)
 let sanitise_host host_string = host_string;;
 
 (* TODO: More thorough checks on the exceptions produced and hence
