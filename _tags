@@ -1,2 +1,2 @@
-true: package(ounit), package(lwt.unix), package(lwt), package(unix), package(capnp-rpc-lwt), package(capnp-rpc-unix), package(core)
+true: package(ounit), package(lwt.unix), package(lwt), package(unix), package(capnp-rpc-lwt), package(capnp-rpc-unix), package(core), package(yojson)
 true: bin_annot

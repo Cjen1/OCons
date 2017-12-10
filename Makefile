@@ -28,7 +28,7 @@ clean:
 
 # Check that packages can be found
 sanity:
-	ocamlfind query ounit lwt unix capnp-rpc-lwt capnp-rpc-unix core
+	ocamlfind query ounit lwt unix capnp-rpc-lwt capnp-rpc-unix core yojson
 
 #-----------------------------------------------------------------------------
 
