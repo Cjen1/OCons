@@ -75,25 +75,15 @@ module type S = sig
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
-      module Response : sig
-        type struct_t = [`Response_b9cca94fab9dd111]
+      module Result : sig
+        type struct_t = [`Result_c244cbcbd9683223]
         type t = struct_t reader_t
-        module Result : sig
-          type struct_t = [`Result_f2420edc87e976c6]
-          type t = struct_t reader_t
-          type unnamed_union_t =
-            | Success
-            | Failure
-            | Read of string
-            | Undefined of int
-          val get : t -> unnamed_union_t
-          val of_message : 'cap message_t -> t
-          val of_builder : struct_t builder_t -> t
-        end
-        val command_id_get : t -> int
-        val has_result : t -> bool
-        val result_get : t -> [`Result_f2420edc87e976c6] reader_t
-        val result_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Result_f2420edc87e976c6] MessageWrapper.StructRef.t
+        type unnamed_union_t =
+          | Success
+          | Failure
+          | Read of string
+          | Undefined of int
+        val get : t -> unnamed_union_t
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
@@ -110,9 +100,6 @@ module type S = sig
         module Results : sig
           type struct_t = [`ClientRequest_e984715ac5697f94]
           type t = struct_t reader_t
-          val has_response : t -> bool
-          val response_get : t -> [`Response_b9cca94fab9dd111] reader_t
-          val response_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Response_b9cca94fab9dd111] MessageWrapper.StructRef.t
           val of_message : 'cap message_t -> t
           val of_builder : struct_t builder_t -> t
         end
@@ -253,34 +240,18 @@ module type S = sig
         val init_root : ?message_size:int -> unit -> t
         val init_pointer : pointer_t -> t
       end
-      module Response : sig
-        type struct_t = [`Response_b9cca94fab9dd111]
+      module Result : sig
+        type struct_t = [`Result_c244cbcbd9683223]
         type t = struct_t builder_t
-        module Result : sig
-          type struct_t = [`Result_f2420edc87e976c6]
-          type t = struct_t builder_t
-          type unnamed_union_t =
-            | Success
-            | Failure
-            | Read of string
-            | Undefined of int
-          val get : t -> unnamed_union_t
-          val success_set : t -> unit
-          val failure_set : t -> unit
-          val read_set : t -> string -> unit
-          val of_message : rw message_t -> t
-          val to_message : t -> rw message_t
-          val to_reader : t -> struct_t reader_t
-          val init_root : ?message_size:int -> unit -> t
-          val init_pointer : pointer_t -> t
-        end
-        val command_id_get : t -> int
-        val command_id_set_exn : t -> int -> unit
-        val has_result : t -> bool
-        val result_get : t -> [`Result_f2420edc87e976c6] builder_t
-        val result_set_reader : t -> [`Result_f2420edc87e976c6] reader_t -> [`Result_f2420edc87e976c6] builder_t
-        val result_set_builder : t -> [`Result_f2420edc87e976c6] builder_t -> [`Result_f2420edc87e976c6] builder_t
-        val result_init : t -> [`Result_f2420edc87e976c6] builder_t
+        type unnamed_union_t =
+          | Success
+          | Failure
+          | Read of string
+          | Undefined of int
+        val get : t -> unnamed_union_t
+        val success_set : t -> unit
+        val failure_set : t -> unit
+        val read_set : t -> string -> unit
         val of_message : rw message_t -> t
         val to_message : t -> rw message_t
         val to_reader : t -> struct_t reader_t
@@ -305,11 +276,6 @@ module type S = sig
         module Results : sig
           type struct_t = [`ClientRequest_e984715ac5697f94]
           type t = struct_t builder_t
-          val has_response : t -> bool
-          val response_get : t -> [`Response_b9cca94fab9dd111] builder_t
-          val response_set_reader : t -> [`Response_b9cca94fab9dd111] reader_t -> [`Response_b9cca94fab9dd111] builder_t
-          val response_set_builder : t -> [`Response_b9cca94fab9dd111] builder_t -> [`Response_b9cca94fab9dd111] builder_t
-          val response_init : t -> [`Response_b9cca94fab9dd111] builder_t
           val of_message : rw message_t -> t
           val to_message : t -> rw message_t
           val to_reader : t -> struct_t reader_t
@@ -495,40 +461,26 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
         let of_message x = RA_.get_root_struct (RA_.Message.readonly x)
         let of_builder x = Some (RA_.StructStorage.readonly x)
       end
-      module Response = struct
-        type struct_t = [`Response_b9cca94fab9dd111]
+      module Result = struct
+        type struct_t = [`Result_c244cbcbd9683223]
         type t = struct_t reader_t
-        module Result = struct
-          type struct_t = [`Result_f2420edc87e976c6]
-          type t = struct_t reader_t
-          let success_get x = ()
-          let failure_get x = ()
-          let has_read x =
-            RA_.has_field x 0
-          let read_get x =
-            RA_.get_text ~default:"" x 0
-          type unnamed_union_t =
-            | Success
-            | Failure
-            | Read of string
-            | Undefined of int
-          let get x =
-            match RA_.get_uint16 ~default:0 x 0 with
-            | 0 -> Success
-            | 1 -> Failure
-            | 2 -> Read (read_get x)
-            | v -> Undefined v
-          let of_message x = RA_.get_root_struct (RA_.Message.readonly x)
-          let of_builder x = Some (RA_.StructStorage.readonly x)
-        end
-        let command_id_get x =
-          RA_.get_uint16 ~default:0 x 0
-        let has_result x =
+        let success_get x = ()
+        let failure_get x = ()
+        let has_read x =
           RA_.has_field x 0
-        let result_get x =
-          RA_.get_struct x 0
-        let result_get_pipelined x =
-          MessageWrapper.Untyped.struct_field x 0
+        let read_get x =
+          RA_.get_text ~default:"" x 0
+        type unnamed_union_t =
+          | Success
+          | Failure
+          | Read of string
+          | Undefined of int
+        let get x =
+          match RA_.get_uint16 ~default:0 x 0 with
+          | 0 -> Success
+          | 1 -> Failure
+          | 2 -> Read (read_get x)
+          | v -> Undefined v
         let of_message x = RA_.get_root_struct (RA_.Message.readonly x)
         let of_builder x = Some (RA_.StructStorage.readonly x)
       end
@@ -548,12 +500,6 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
         module Results = struct
           type struct_t = [`ClientRequest_e984715ac5697f94]
           type t = struct_t reader_t
-          let has_response x =
-            RA_.has_field x 0
-          let response_get x =
-            RA_.get_struct x 0
-          let response_get_pipelined x =
-            MessageWrapper.Untyped.struct_field x 0
           let of_message x = RA_.get_root_struct (RA_.Message.readonly x)
           let of_builder x = Some (RA_.StructStorage.readonly x)
         end
@@ -806,57 +752,32 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
         let init_pointer ptr =
           BA_.init_struct_pointer ptr ~data_words:1 ~pointer_words:2
       end
-      module Response = struct
-        type struct_t = [`Response_b9cca94fab9dd111]
+      module Result = struct
+        type struct_t = [`Result_c244cbcbd9683223]
         type t = struct_t builder_t
-        module Result = struct
-          type struct_t = [`Result_f2420edc87e976c6]
-          type t = struct_t builder_t
-          let success_get x = ()
-          let success_set x =
-            BA_.set_void ~discr:{BA_.Discr.value=0; BA_.Discr.byte_ofs=0} x
-          let failure_get x = ()
-          let failure_set x =
-            BA_.set_void ~discr:{BA_.Discr.value=1; BA_.Discr.byte_ofs=0} x
-          let has_read x =
-            BA_.has_field x 0
-          let read_get x =
-            BA_.get_text ~default:"" x 0
-          let read_set x v =
-            BA_.set_text ~discr:{BA_.Discr.value=2; BA_.Discr.byte_ofs=0} x 0 v
-          type unnamed_union_t =
-            | Success
-            | Failure
-            | Read of string
-            | Undefined of int
-          let get x =
-            match BA_.get_uint16 ~default:0 x 0 with
-            | 0 -> Success
-            | 1 -> Failure
-            | 2 -> Read (read_get x)
-            | v -> Undefined v
-          let of_message x = BA_.get_root_struct ~data_words:1 ~pointer_words:1 x
-          let to_message x = x.BA_.NM.StructStorage.data.MessageWrapper.Slice.msg
-          let to_reader x = Some (RA_.StructStorage.readonly x)
-          let init_root ?message_size () =
-            BA_.alloc_root_struct ?message_size ~data_words:1 ~pointer_words:1 ()
-          let init_pointer ptr =
-            BA_.init_struct_pointer ptr ~data_words:1 ~pointer_words:1
-        end
-        let command_id_get x =
-          BA_.get_uint16 ~default:0 x 0
-        let command_id_set_exn x v =
-          BA_.set_uint16 ~default:0 x 0 v
-        let has_result x =
+        let success_get x = ()
+        let success_set x =
+          BA_.set_void ~discr:{BA_.Discr.value=0; BA_.Discr.byte_ofs=0} x
+        let failure_get x = ()
+        let failure_set x =
+          BA_.set_void ~discr:{BA_.Discr.value=1; BA_.Discr.byte_ofs=0} x
+        let has_read x =
           BA_.has_field x 0
-        let result_get x =
-          BA_.get_struct ~data_words:1 ~pointer_words:1 x 0
-        let result_set_reader x v =
-          BA_.set_struct ~data_words:1 ~pointer_words:1 x 0 v
-        let result_set_builder x v =
-          BA_.set_struct ~data_words:1 ~pointer_words:1 x 0 (Some v)
-        let result_init x =
-          BA_.init_struct ~data_words:1 ~pointer_words:1 x 0
+        let read_get x =
+          BA_.get_text ~default:"" x 0
+        let read_set x v =
+          BA_.set_text ~discr:{BA_.Discr.value=2; BA_.Discr.byte_ofs=0} x 0 v
+        type unnamed_union_t =
+          | Success
+          | Failure
+          | Read of string
+          | Undefined of int
+        let get x =
+          match BA_.get_uint16 ~default:0 x 0 with
+          | 0 -> Success
+          | 1 -> Failure
+          | 2 -> Read (read_get x)
+          | v -> Undefined v
         let of_message x = BA_.get_root_struct ~data_words:1 ~pointer_words:1 x
         let to_message x = x.BA_.NM.StructStorage.data.MessageWrapper.Slice.msg
         let to_reader x = Some (RA_.StructStorage.readonly x)
@@ -890,23 +811,13 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
         module Results = struct
           type struct_t = [`ClientRequest_e984715ac5697f94]
           type t = struct_t builder_t
-          let has_response x =
-            BA_.has_field x 0
-          let response_get x =
-            BA_.get_struct ~data_words:1 ~pointer_words:1 x 0
-          let response_set_reader x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:1 x 0 v
-          let response_set_builder x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:1 x 0 (Some v)
-          let response_init x =
-            BA_.init_struct ~data_words:1 ~pointer_words:1 x 0
-          let of_message x = BA_.get_root_struct ~data_words:0 ~pointer_words:1 x
+          let of_message x = BA_.get_root_struct ~data_words:0 ~pointer_words:0 x
           let to_message x = x.BA_.NM.StructStorage.data.MessageWrapper.Slice.msg
           let to_reader x = Some (RA_.StructStorage.readonly x)
           let init_root ?message_size () =
-            BA_.alloc_root_struct ?message_size ~data_words:0 ~pointer_words:1 ()
+            BA_.alloc_root_struct ?message_size ~data_words:0 ~pointer_words:0 ()
           let init_pointer ptr =
-            BA_.init_struct_pointer ptr ~data_words:0 ~pointer_words:1
+            BA_.init_struct_pointer ptr ~data_words:0 ~pointer_words:0
         end
       end
       module Decision = struct

@@ -7,13 +7,14 @@ open Lwt.Infix;;
 (* Exceptions resulting in undefined values being sent in Capnp unions *)
 exception Undefined_oper;;
 exception Undefined_result;;
+
 (* Exception arising from the wrong kind of response being received *)
 exception Invalid_response;;
 
 (* Expose the API service for the RPC system *)
 module Api = Message_api.MakeRPC(Capnp_rpc_lwt);;
 
-let local (some_f : (command -> (command_id * result)) option) (some_g : (proposal -> unit) option) =
+let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) option) =
   let module Message = Api.Service.Message in
   Message.local @@ object
     inherit Message.service
@@ -82,7 +83,6 @@ let local (some_f : (command -> (command_id * result)) option) (some_g : (propos
       (* Get an API reader for the command, since its a nested struct *)
       let cmd_reader  = Params.command_get params in
       
-
       (* Retrieve the fields from the command struct passed in decision *)
       let open Api.Reader.Message in
     
@@ -166,30 +166,14 @@ let local (some_f : (command -> (command_id * result)) option) (some_g : (propos
            So it is suitable to raise an exception
            if one is not passed in this case
         *)
-        match some_f with | Some f ->
-        let (command_id', result) = f (Core.Uuid.of_string client_id, command_id, operation) in
+        match some_f with Some f ->
+          f (Core.Uuid.of_string client_id, command_id, operation);
       
         (* Releases capabilities, doesn't matter for us *)
         release_param_caps ();
-        
-        (* Construct a response struct for the reply *)
-        let open Api.Builder.Message in
-        let response_rpc = Response.init_root () in
-          Response.command_id_set_exn response_rpc command_id';
-            
-          let result_rpc = Response.Result.init_root () in
-          
-          (match result with
-          | Success -> Response.Result.success_set result_rpc
-          | Failure -> Response.Result.failure_set result_rpc
-          | ReadSuccess v -> Response.Result.read_set result_rpc v);
-          
-          (Response.result_set_builder response_rpc result_rpc |> ignore);
 
-          (* Reply with the response *)
-          let response, results = Service.Response.create Results.init_pointer in
-          (Results.response_set_builder results response_rpc |> ignore);
-          Service.return response;
+        (* Return an empty response *)        
+        Service.return_empty ()
   end;;
 
 (*---------------------------------------------------------------------------*)
@@ -234,7 +218,7 @@ let client_request_rpc t (cmd : Types.command) =
       (Params.command_set_reader params (Command.to_reader cmd_rpc) |> ignore);
 
       (* Send the message and pull out the result *)
-      Capability.call_for_value_exn t method_id request >|= Results.response_get;;
+      Capability.call_for_unit_exn t method_id request;;
 
 let decision_rpc t (p : Types.proposal) =
   let open Api.Client.Message.Decision in
@@ -338,13 +322,6 @@ type message = ClientRequestMessage of command
              | DecisionMessage of proposal;;
           (* | ... further messages will be added *) 
 
-(* Types of responses returned to a sending node
-   These do not necessarily carry any useful data 
-   (essentially just ACKs) *)
-type response = ClientRequestResponse of command_id * result
-              | ProposalMessageResponse
-              | DecisionMessageResponse;;
-
 (* Start a new server advertised at address (host,port)
    This server does not serve with TLS and the service ID for the
    server is derived from its address *)
@@ -395,25 +372,8 @@ let send_request message uri =
   service_from_uri uri >>= fun service ->
   match message with
   | ClientRequestMessage cmd ->
-    (* Perform the RPC with the given command *)
-    client_request_rpc service cmd >>= fun response ->
-      (* Pull the (command_id, result) from the Capnp struct response *)
-      let command_id : command_id = Api.Reader.Message.Response.command_id_get response in
-      
-      (* Convert the value stored in the Result struct into a Types.Result *)
-      let open Api.Reader.Message in
-      let result_reader = Response.result_get response in 
-      let result = match Response.Result.get result_reader with
-      | Response.Result.Failure -> Types.Failure
-      | Response.Result.Success -> Types.Success
-      | Response.Result.Read x -> Types.ReadSuccess x
-      | Response.Result.Undefined _ -> raise Undefined_result in
-
-      (* Return the response to the calling client *)
-      Lwt.return (ClientRequestResponse(command_id, result))
+    client_request_rpc service cmd;
   | DecisionMessage p ->
-    decision_rpc service p >>= fun () -> 
-    Lwt.return DecisionMessageResponse; 
+    decision_rpc service p;
   | ProposalMessage p ->
-    proposal_rpc service p >>= fun () ->
-    Lwt.return ProposalMessageResponse;;
+    proposal_rpc service p;

@@ -46,34 +46,25 @@ interface Message {
     # The type of this is temporary for now
   }
   # Structure represents the command sent in RPC
-
-  struct Response {
-    struct Result {
-    # Encodes the result of performing an operation on replicas
-    # Stored as a union as only one possible result will apply.
-      union {
-        success @0 :Void;
-        # Success has one possible value, hence void
-
-        failure @1 :Void;
-        # Failure has one possible value, hence void
-
-        read @2 :Text;
-        # Read has an associated value that is returned with it
-      }
-    }
-
-    commandId @0 :UInt16;
-    # Id of the command that has been performed by replicas
-
-    result @1 :Result;
-    # Encodes the result of applying operation to app state
-    # Type is temporary for now
-  }
   
-  clientRequest @0 (command :Command) -> (response :Response);
+  struct Result {
+  # Encodes the result of performing an operation on replicas
+  # Stored as a union as only one possible result will apply.
+  union {
+    success @0 :Void;
+    # Success has one possible value, hence void
+
+    failure @1 :Void;
+    # Failure has one possible value, hence void
+
+    read @2 :Text;
+    # Read has an associated value that is returned with it
+    }
+  }  
+  
+  clientRequest @0 (command :Command) -> ();
   # Method clientRequest is a message sent from the client to a replica
-  # The client issues a command and blocks until receiving a response
+  # The client issues a command and response is returned in another message
 
   decision @1 (slot_number :UInt16, command :Command) -> ();
   # Replicas receive decision messages sent by a leader
@@ -85,4 +76,10 @@ interface Message {
   # Method sendProposal is a message sent from a replica to a leader.
   # Proposals consists of a command and a slot for which that command
   # is proposed.
+
+  # TEMPORARILY COMMENTED OUT UNTIL clientRequest(...) is implemented:
+  
+  #clientResponse @3 (commandId :UInt16, result :Result) -> ();
+  # Method clientResponse is a message sent from replica to a client
+  # Returns the id of the command and result of issuing it  
 }

@@ -87,25 +87,10 @@ let print_uri uri =
    for sequence slots etc.
    But for now this is just to simulate message passing capability
 *)
-let receive_request (replica : t) (cmd : command)  : (command_id * Types.result) =
-  (* Add the command to the end of set of requests.
+let receive_request (replica : t) (cmd : command)  : unit =
+  (* Add the command to the end of set of requests
      This is an expensive append operation for now - perhaps change? *)
-  replica.requests <- (List.append (replica.requests) [cmd]); 
-
-  (* Do this silly stuff that doesn't need to happen at the moment *)
-  (* In reality this needs to block here until a decision has been committed
-     we can return 
-  
-     OR ALTERNATIVELY split client request/response into two separate
-     message schemas *)
-  let (client_id, command_id, operation) = cmd in
-  let result = match operation with
-    | Nop      -> Success
-    | Create _ -> Success
-    | Read x   -> ReadSuccess("test in replica.ml line 22") (* Test ... *)
-    | Update _ -> Success
-    | Remove _ -> Success
-  in (command_id, result);;
+  replica.requests <- (List.append (replica.requests) [cmd]);;
 
 (* TODO: Implement configurations *)
 (* We won't yet worry about reconfigurations *)
@@ -235,10 +220,7 @@ let propose replica =
       (* Finally broadcast a message to all of the leaders notifying them of proposal *)
       List.iter replica.leaders ~f:(fun uri ->
         let msg = Message.ProposalMessage (slot_in, c) in  
-        (Message.send_request msg uri >>=
-          function Message.ProposalMessageResponse -> Lwt.return_unit
-                 | _ -> raise Message.Invalid_response)
-        |> Lwt.ignore_result);
+        Message.send_request msg uri |> Lwt.ignore_result);
     | Some _ ->
       (* If there is a command already committed to this slot do nothing *)
       () );

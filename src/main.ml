@@ -33,14 +33,8 @@ let run_client' uris =
         | 2 -> Read (Random.int 10)
         | 3 -> Update (Random.int 10, string_of_int (Random.int 10))
         | _ -> Remove (Random.int 10)) in
-
-        (List.hd_exn (Client.send_request_message client rand_cmd)) >>= fun (cid, result) ->
-
-        (match result with
-        | Success -> Lwt_io.printl "Success"
-        | Failure -> Lwt_io.printl "Failure"
-        | ReadSuccess x -> Lwt_io.printl ("Read a value " ^ x)) >>= fun () ->
-
+        
+        Client.send_request_message client rand_cmd >>= fun () ->
         Lwt_unix.sleep (float_of_int (Random.int 10)) >>= fun () -> (commands (n-1))
     in
       commands 10

@@ -75,25 +75,15 @@ module type S = sig
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
-      module Response : sig
-        type struct_t = [`Response_b9cca94fab9dd111]
+      module Result : sig
+        type struct_t = [`Result_c244cbcbd9683223]
         type t = struct_t reader_t
-        module Result : sig
-          type struct_t = [`Result_f2420edc87e976c6]
-          type t = struct_t reader_t
-          type unnamed_union_t =
-            | Success
-            | Failure
-            | Read of string
-            | Undefined of int
-          val get : t -> unnamed_union_t
-          val of_message : 'cap message_t -> t
-          val of_builder : struct_t builder_t -> t
-        end
-        val command_id_get : t -> int
-        val has_result : t -> bool
-        val result_get : t -> [`Result_f2420edc87e976c6] reader_t
-        val result_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Result_f2420edc87e976c6] MessageWrapper.StructRef.t
+        type unnamed_union_t =
+          | Success
+          | Failure
+          | Read of string
+          | Undefined of int
+        val get : t -> unnamed_union_t
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
@@ -110,9 +100,6 @@ module type S = sig
         module Results : sig
           type struct_t = [`ClientRequest_e984715ac5697f94]
           type t = struct_t reader_t
-          val has_response : t -> bool
-          val response_get : t -> [`Response_b9cca94fab9dd111] reader_t
-          val response_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Response_b9cca94fab9dd111] MessageWrapper.StructRef.t
           val of_message : 'cap message_t -> t
           val of_builder : struct_t builder_t -> t
         end
@@ -253,34 +240,18 @@ module type S = sig
         val init_root : ?message_size:int -> unit -> t
         val init_pointer : pointer_t -> t
       end
-      module Response : sig
-        type struct_t = [`Response_b9cca94fab9dd111]
+      module Result : sig
+        type struct_t = [`Result_c244cbcbd9683223]
         type t = struct_t builder_t
-        module Result : sig
-          type struct_t = [`Result_f2420edc87e976c6]
-          type t = struct_t builder_t
-          type unnamed_union_t =
-            | Success
-            | Failure
-            | Read of string
-            | Undefined of int
-          val get : t -> unnamed_union_t
-          val success_set : t -> unit
-          val failure_set : t -> unit
-          val read_set : t -> string -> unit
-          val of_message : rw message_t -> t
-          val to_message : t -> rw message_t
-          val to_reader : t -> struct_t reader_t
-          val init_root : ?message_size:int -> unit -> t
-          val init_pointer : pointer_t -> t
-        end
-        val command_id_get : t -> int
-        val command_id_set_exn : t -> int -> unit
-        val has_result : t -> bool
-        val result_get : t -> [`Result_f2420edc87e976c6] builder_t
-        val result_set_reader : t -> [`Result_f2420edc87e976c6] reader_t -> [`Result_f2420edc87e976c6] builder_t
-        val result_set_builder : t -> [`Result_f2420edc87e976c6] builder_t -> [`Result_f2420edc87e976c6] builder_t
-        val result_init : t -> [`Result_f2420edc87e976c6] builder_t
+        type unnamed_union_t =
+          | Success
+          | Failure
+          | Read of string
+          | Undefined of int
+        val get : t -> unnamed_union_t
+        val success_set : t -> unit
+        val failure_set : t -> unit
+        val read_set : t -> string -> unit
         val of_message : rw message_t -> t
         val to_message : t -> rw message_t
         val to_reader : t -> struct_t reader_t
@@ -305,11 +276,6 @@ module type S = sig
         module Results : sig
           type struct_t = [`ClientRequest_e984715ac5697f94]
           type t = struct_t builder_t
-          val has_response : t -> bool
-          val response_get : t -> [`Response_b9cca94fab9dd111] builder_t
-          val response_set_reader : t -> [`Response_b9cca94fab9dd111] reader_t -> [`Response_b9cca94fab9dd111] builder_t
-          val response_set_builder : t -> [`Response_b9cca94fab9dd111] builder_t -> [`Response_b9cca94fab9dd111] builder_t
-          val response_init : t -> [`Response_b9cca94fab9dd111] builder_t
           val of_message : rw message_t -> t
           val to_message : t -> rw message_t
           val to_reader : t -> struct_t reader_t
