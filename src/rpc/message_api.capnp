@@ -76,10 +76,8 @@ interface Message {
   # Method sendProposal is a message sent from a replica to a leader.
   # Proposals consists of a command and a slot for which that command
   # is proposed.
-
-  # TEMPORARILY COMMENTED OUT UNTIL clientRequest(...) is implemented:
   
-  #clientResponse @3 (commandId :UInt16, result :Result) -> ();
+  clientResponse @3 (commandId :UInt16, result :Result) -> ();
   # Method clientResponse is a message sent from replica to a client
   # Returns the id of the command and result of issuing it  
 }

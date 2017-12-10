@@ -33,7 +33,7 @@ type t = {
   (* Set of commands upon which a slot has been decided *)
   mutable decisions : Types.proposal list;
   
-  (* Set of leader ids that the client has in its current configuration *)
+  (* Set of leader ids that the replica has in its current configuration *)
   mutable leaders : Uri.t list;
 };;
 
@@ -116,7 +116,7 @@ let perform replica c =
     replica.slot_out <- replica.slot_out + 1
     (* END ATOMIC *)
 
-    (* Send a response message to client *);;
+    (* TODO: Send a response message to client *);;
     
 let rec try_execute (replica : t) (p : proposal) =
   (* Find a decision corresponding to <slot_out, _>
