@@ -40,7 +40,7 @@ let print_uri uri =
 
 (* Initialize a server for a given leader on a given host and port *)
 let start_server (leader : t) (host : string) (port : int) =
-  Message.start_new_server None (Some (receive_proposal leader)) host port;;
+  Message.start_new_server None (Some (receive_proposal leader)) None host port;;
 
 let new_leader host port uris = 
   (* Initialize a new leader *)

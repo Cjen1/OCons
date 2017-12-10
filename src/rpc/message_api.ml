@@ -72,6 +72,8 @@ module type S = sig
         val has_operation : t -> bool
         val operation_get : t -> [`Operation_ecff136cfd079ec1] reader_t
         val operation_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Operation_ecff136cfd079ec1] MessageWrapper.StructRef.t
+        val has_client_uri : t -> bool
+        val client_uri_get : t -> string
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
@@ -252,6 +254,9 @@ module type S = sig
         val operation_set_reader : t -> [`Operation_ecff136cfd079ec1] reader_t -> [`Operation_ecff136cfd079ec1] builder_t
         val operation_set_builder : t -> [`Operation_ecff136cfd079ec1] builder_t -> [`Operation_ecff136cfd079ec1] builder_t
         val operation_init : t -> [`Operation_ecff136cfd079ec1] builder_t
+        val has_client_uri : t -> bool
+        val client_uri_get : t -> string
+        val client_uri_set : t -> string -> unit
         val of_message : rw message_t -> t
         val to_message : t -> rw message_t
         val to_reader : t -> struct_t reader_t
@@ -503,6 +508,10 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
           RA_.get_struct x 1
         let operation_get_pipelined x =
           MessageWrapper.Untyped.struct_field x 1
+        let has_client_uri x =
+          RA_.has_field x 2
+        let client_uri_get x =
+          RA_.get_text ~default:"" x 2
         let of_message x = RA_.get_root_struct (RA_.Message.readonly x)
         let of_builder x = Some (RA_.StructStorage.readonly x)
       end
@@ -811,13 +820,19 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
           BA_.set_struct ~data_words:1 ~pointer_words:1 x 1 (Some v)
         let operation_init x =
           BA_.init_struct ~data_words:1 ~pointer_words:1 x 1
-        let of_message x = BA_.get_root_struct ~data_words:1 ~pointer_words:2 x
+        let has_client_uri x =
+          BA_.has_field x 2
+        let client_uri_get x =
+          BA_.get_text ~default:"" x 2
+        let client_uri_set x v =
+          BA_.set_text x 2 v
+        let of_message x = BA_.get_root_struct ~data_words:1 ~pointer_words:3 x
         let to_message x = x.BA_.NM.StructStorage.data.MessageWrapper.Slice.msg
         let to_reader x = Some (RA_.StructStorage.readonly x)
         let init_root ?message_size () =
-          BA_.alloc_root_struct ?message_size ~data_words:1 ~pointer_words:2 ()
+          BA_.alloc_root_struct ?message_size ~data_words:1 ~pointer_words:3 ()
         let init_pointer ptr =
-          BA_.init_struct_pointer ptr ~data_words:1 ~pointer_words:2
+          BA_.init_struct_pointer ptr ~data_words:1 ~pointer_words:3
       end
       module Result = struct
         type struct_t = [`Result_c244cbcbd9683223]
@@ -860,13 +875,13 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
           let has_command x =
             BA_.has_field x 0
           let command_get x =
-            BA_.get_struct ~data_words:1 ~pointer_words:2 x 0
+            BA_.get_struct ~data_words:1 ~pointer_words:3 x 0
           let command_set_reader x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:2 x 0 v
+            BA_.set_struct ~data_words:1 ~pointer_words:3 x 0 v
           let command_set_builder x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:2 x 0 (Some v)
+            BA_.set_struct ~data_words:1 ~pointer_words:3 x 0 (Some v)
           let command_init x =
-            BA_.init_struct ~data_words:1 ~pointer_words:2 x 0
+            BA_.init_struct ~data_words:1 ~pointer_words:3 x 0
           let of_message x = BA_.get_root_struct ~data_words:0 ~pointer_words:1 x
           let to_message x = x.BA_.NM.StructStorage.data.MessageWrapper.Slice.msg
           let to_reader x = Some (RA_.StructStorage.readonly x)
@@ -898,13 +913,13 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
           let has_command x =
             BA_.has_field x 0
           let command_get x =
-            BA_.get_struct ~data_words:1 ~pointer_words:2 x 0
+            BA_.get_struct ~data_words:1 ~pointer_words:3 x 0
           let command_set_reader x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:2 x 0 v
+            BA_.set_struct ~data_words:1 ~pointer_words:3 x 0 v
           let command_set_builder x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:2 x 0 (Some v)
+            BA_.set_struct ~data_words:1 ~pointer_words:3 x 0 (Some v)
           let command_init x =
-            BA_.init_struct ~data_words:1 ~pointer_words:2 x 0
+            BA_.init_struct ~data_words:1 ~pointer_words:3 x 0
           let of_message x = BA_.get_root_struct ~data_words:1 ~pointer_words:1 x
           let to_message x = x.BA_.NM.StructStorage.data.MessageWrapper.Slice.msg
           let to_reader x = Some (RA_.StructStorage.readonly x)
@@ -936,13 +951,13 @@ module MakeRPC(MessageWrapper : Capnp.RPC.S) = struct
           let has_command x =
             BA_.has_field x 0
           let command_get x =
-            BA_.get_struct ~data_words:1 ~pointer_words:2 x 0
+            BA_.get_struct ~data_words:1 ~pointer_words:3 x 0
           let command_set_reader x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:2 x 0 v
+            BA_.set_struct ~data_words:1 ~pointer_words:3 x 0 v
           let command_set_builder x v =
-            BA_.set_struct ~data_words:1 ~pointer_words:2 x 0 (Some v)
+            BA_.set_struct ~data_words:1 ~pointer_words:3 x 0 (Some v)
           let command_init x =
-            BA_.init_struct ~data_words:1 ~pointer_words:2 x 0
+            BA_.init_struct ~data_words:1 ~pointer_words:3 x 0
           let of_message x = BA_.get_root_struct ~data_words:1 ~pointer_words:1 x
           let to_message x = x.BA_.NM.StructStorage.data.MessageWrapper.Slice.msg
           let to_reader x = Some (RA_.StructStorage.readonly x)

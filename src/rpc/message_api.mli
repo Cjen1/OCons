@@ -72,6 +72,8 @@ module type S = sig
         val has_operation : t -> bool
         val operation_get : t -> [`Operation_ecff136cfd079ec1] reader_t
         val operation_get_pipelined : struct_t MessageWrapper.StructRef.t -> [`Operation_ecff136cfd079ec1] MessageWrapper.StructRef.t
+        val has_client_uri : t -> bool
+        val client_uri_get : t -> string
         val of_message : 'cap message_t -> t
         val of_builder : struct_t builder_t -> t
       end
@@ -252,6 +254,9 @@ module type S = sig
         val operation_set_reader : t -> [`Operation_ecff136cfd079ec1] reader_t -> [`Operation_ecff136cfd079ec1] builder_t
         val operation_set_builder : t -> [`Operation_ecff136cfd079ec1] builder_t -> [`Operation_ecff136cfd079ec1] builder_t
         val operation_init : t -> [`Operation_ecff136cfd079ec1] builder_t
+        val has_client_uri : t -> bool
+        val client_uri_get : t -> string
+        val client_uri_set : t -> string -> unit
         val of_message : rw message_t -> t
         val to_message : t -> rw message_t
         val to_reader : t -> struct_t reader_t

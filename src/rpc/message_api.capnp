@@ -44,6 +44,8 @@ interface Message {
     operation @2 :Operation;     
     # Encodes the operation that will be applied to state of application
     # The type of this is temporary for now
+
+    clientUri @3 :Text;
   }
   # Structure represents the command sent in RPC
   

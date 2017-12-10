@@ -113,15 +113,15 @@ let perform replica c =
     (* Update application state *)
     let next_state, results = Types.apply replica.app_state op in
     replica.app_state <- next_state;
-    replica.slot_out <- replica.slot_out + 1;;
+    replica.slot_out <- replica.slot_out + 1;
     (* END ATOMIC *)
-
+    
+    Lwt_io.printl ("Sending cmd " ^ Types.string_of_command c) |> Lwt.ignore_result;
+    
     (* Send a response message to the client *)
-    (*
     Message.send_request (Message.ClientResponseMessage(cid,results)) uri |>
     Lwt.ignore_result;;
-    *)
-    
+
 let rec try_execute (replica : t) (p : proposal) =
   (* Find a decision corresponding to <slot_out, _>
      Such decisions are possibly ready to have their commands applied
@@ -173,7 +173,7 @@ let receive_decision (replica : t) (p : proposal ) : unit =
 (* Starts a server that will run the service
    This is mostly Capnproto boilerplate *)
 let start_server (replica : t) (host : string) (port : int) =
-  Message.start_new_server (Some (receive_request replica)) (Some (receive_decision replica)) host port;;
+  Message.start_new_server (Some (receive_request replica)) (Some (receive_decision replica)) None host port;;
 
 (* Function attempts to take one request and propose it.
 

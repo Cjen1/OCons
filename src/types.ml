@@ -148,3 +148,10 @@ let string_of_command (cmd : command) =
 let string_of_proposal p =
   let (slot_no, cmd) = p in
   "<" ^ (string_of_int slot_no) ^ ", " ^ (string_of_command cmd) ^ ">";;
+
+(* Pretty-printable string for a given result *)
+let string_of_result result =
+  match result with
+  | Failure -> "Failure"
+  | Success -> "Success"
+  | ReadSuccess v -> "Read success, value " ^ v;;
