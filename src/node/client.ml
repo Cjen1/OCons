@@ -14,11 +14,20 @@ type t = {
 };;
   
 (* Create a new record of client information *)
-let new_client client_uri replica_uris = {
+let initialize client_uri replica_uris = {
   id = (Core.Uuid.create (), client_uri);
   next_command_id = 1;
   replica_uri_list = replica_uris
 };;
+
+
+let result_callback (response : Types.command_id * Types.result) =
+  let (cid, result) = response in
+  Lwt_io.printl ("Received response for " ^ (string_of_int cid) ^ " as " ^ (Types.string_of_result result)) |> Lwt.ignore_result;;
+
+let new_client host port replica_uris =
+  Message.start_new_server None None (Some result_callback)  host port >>= fun uri ->
+  Lwt.return (initialize uri replica_uris);;
 
 (* Send a clientrequestmessage RPC of a given operation by a given client *)
 let send_request_message client operation =

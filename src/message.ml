@@ -14,7 +14,8 @@ exception Invalid_response;;
 (* Expose the API service for the RPC system *)
 module Api = Message_api.MakeRPC(Capnp_rpc_lwt);;
 
-let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) option) =
+let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) option)
+          (some_h : ((command_id * result) -> unit) option) =
   let module Message = Api.Service.Message in
   Message.local @@ object
     inherit Message.service
@@ -22,23 +23,28 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
     method client_response_impl params release_param_caps =
       let open Message.ClientResponse in
       let module Params = Message.ClientResponse.Params in
-
+    
+      let open Api.Reader.Message in
+      
+      let result_reader = Params.result_get params in
+      
       (* Pull out all the necessary data from the params *)
-      (* ... *)
-      (* ... *)
+      let result = (match Result.get result_reader with
+      | Result.Failure -> Types.Failure
+      | Result.Success -> Types.Success
+      | Result.Read v  -> Types.ReadSuccess v
+      | Result.Undefined _ -> raise Undefined_result) in
+      
+      let command_id = Params.command_id_get params in
 
       (* Call a callback to notify client *)
-      (* ... *)
-      (* ... *)
-
-      (* DEBUG print message just to check we got this far *)
-      Lwt_io.printl "We're inside client_response_impl" |> Lwt.ignore_result;
+      match some_h with Some h -> h(command_id,result);
 
       (* Release capabilities, doesn't matter for us *)
       release_param_caps ();
 
       (* Return an empty response *)
-      Service.return_empty ();      
+      Service.return_empty ();
 
     method send_proposal_impl params release_param_caps =
       let open Message.SendProposal in
@@ -55,6 +61,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
     
       (* Retrieve the client id and command id fields from the struct *)
       let id = Command.client_id_get cmd_reader in
+      let uri = Command.client_uri_get cmd_reader in 
       let command_id = Command.command_id_get cmd_reader in
         
       (* Operation is more difficult as it is a nested struct *)
@@ -80,7 +87,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       | Command.Operation.Undefined(_) -> raise Undefined_oper) in
       
       (* Form the proposal from the message parameters *)
-      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string ""), command_id, operation)) in
+      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation)) in
       
       (* Do something with the proposal here *)
       (* This is nonsense at the moment *)
@@ -109,6 +116,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
     
       (* Retrieve the client id and command id fields from the struct *)
       let id = Command.client_id_get cmd_reader in
+      let uri = Command.client_uri_get cmd_reader in
       let command_id = Command.command_id_get cmd_reader in
         
       (* Operation is more difficult as it is a nested struct *)
@@ -134,7 +142,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       | Command.Operation.Undefined(_) -> raise Undefined_oper) in
       
       (* Form the proposal from the message parameters *)
-      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string ""), command_id, operation)) in
+      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation)) in
       
       (* Call the callback function that will process the decision *)
       (match some_g with
@@ -156,6 +164,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
         
         (* Retrieve the client id and command id fields from the struct *)
         let id = Command.client_id_get cmd_reader in
+        let uri = Command.client_uri_get cmd_reader in
         let command_id = Command.command_id_get cmd_reader in
         
         (* Operation is more difficult as it is a nested struct *)
@@ -188,7 +197,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
            if one is not passed in this case
         *) 
         match some_f with Some f ->
-        f ((Core.Uuid.of_string id,Uri.of_string ""), command_id, operation);
+        f ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation);
       
         (* Releases capabilities, doesn't matter for us *)
         release_param_caps ();
@@ -209,6 +218,7 @@ let client_request_rpc t (cmd : Types.command) =
     (* Construct a command struct for Capnp from the cmd argument given *)
     let ((id,uri), command_id, operation) = cmd in
       Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
+      Command.client_uri_set cmd_rpc (Uri.to_string uri);
       Command.command_id_set_exn cmd_rpc command_id;
       
       (* Construct an operation struct here *)
@@ -279,6 +289,7 @@ let decision_rpc t (p : Types.proposal) =
     (* Construct a command struct for Capnp from the cmd argument given *)
     let (slot_number, ((id,uri), command_id, operation)) = p in
       Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
+      Command.client_uri_set cmd_rpc (Uri.to_string uri);
       Command.command_id_set_exn cmd_rpc command_id;
       (* Construct an operation struct here *)
       let oper_rpc = (Command.Operation.init_root ()) in
@@ -323,6 +334,7 @@ let proposal_rpc t (p : Types.proposal) =
     (* Construct a command struct for Capnp from the cmd argument given *)
     let (slot_number, ((id,uri), command_id, operation)) = p in
       Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
+      Command.client_uri_set cmd_rpc (Uri.to_string uri);
       Command.command_id_set_exn cmd_rpc command_id;
       (* Construct an operation struct here *)
       let oper_rpc = (Command.Operation.init_root ()) in
@@ -371,12 +383,12 @@ type message = ClientRequestMessage of command
 (* Start a new server advertised at address (host,port)
    This server does not serve with TLS and the service ID for the
    server is derived from its address *)
-let start_new_server f g host port =
+let start_new_server f g h host port =
     let listen_address = `TCP (host, port) in
     let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address in
     (* let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in *)
     let service_id = Capnp_rpc_lwt.Restorer.Id.derived ~secret:"" (host ^ (string_of_int port)) in
-    let restore = Capnp_rpc_lwt.Restorer.single service_id (local f g) in
+    let restore = Capnp_rpc_lwt.Restorer.single service_id (local f g h) in
     Capnp_rpc_unix.serve config ~restore >|= fun vat ->
     Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
 

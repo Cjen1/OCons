@@ -19,7 +19,7 @@ let run_client' host port uris =
   Lwt_main.run (
     Lwt_io.printl "Spinning up a client" >>= fun () ->
     
-    let client = Client.new_client (Message.uri_from_address host port) uris in
+    Client.new_client host port uris >>= fun client ->
  
     let rec commands n = 
       match n with 
@@ -37,7 +37,8 @@ let run_client' host port uris =
         Client.send_request_message client rand_cmd >>= fun () ->
         Lwt_unix.sleep (float_of_int (Random.int 10)) >>= fun () -> (commands (n-1))
     in
-      commands 10
+    commands 10 >>= fun () ->
+    fst @@ Lwt.wait ()
 );;
 
 (* Sample leader code *)
