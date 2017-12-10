@@ -23,7 +23,8 @@ let read_string_lwt (path : Lwt_io.file_name) : string Lwt.t =
   Lwt_io.open_file Lwt_io.Input path >>= fun chan ->
   read_as_string "" chan;;
 
-(* ... *)
+(* read_settings takes a file path as a string and returns
+   the corresponding configuration information of the system *)
 let read_settings (path : string) : addr_info =
   let open Yojson.Basic in
 
