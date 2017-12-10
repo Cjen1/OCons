@@ -1,5 +1,5 @@
 # Include packages
-PKG ounit lwt unix capnp-rpc-lwt, capnp-rpc-unix, core
+PKG ounit lwt unix capnp-rpc-lwt, capnp-rpc-unix, core, yojson
 
 # Include source files
 S src/**
