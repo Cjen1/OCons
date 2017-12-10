@@ -18,7 +18,28 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
   let module Message = Api.Service.Message in
   Message.local @@ object
     inherit Message.service
-    
+
+    method client_response_impl params release_param_caps =
+      let open Message.ClientResponse in
+      let module Params = Message.ClientResponse.Params in
+
+      (* Pull out all the necessary data from the params *)
+      (* ... *)
+      (* ... *)
+
+      (* Call a callback to notify client *)
+      (* ... *)
+      (* ... *)
+
+      (* DEBUG print message just to check we got this far *)
+      Lwt_io.printl "We're inside client_response_impl" |> Lwt.ignore_result;
+
+      (* Release capabilities, doesn't matter for us *)
+      release_param_caps ();
+
+      (* Return an empty response *)
+      Service.return_empty ();      
+
     method send_proposal_impl params release_param_caps =
       let open Message.SendProposal in
       let module Params = Message.SendProposal.Params in
@@ -33,7 +54,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       let open Api.Reader.Message in
     
       (* Retrieve the client id and command id fields from the struct *)
-      let client_id = Command.client_id_get cmd_reader in
+      let id = Command.client_id_get cmd_reader in
       let command_id = Command.command_id_get cmd_reader in
         
       (* Operation is more difficult as it is a nested struct *)
@@ -59,7 +80,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       | Command.Operation.Undefined(_) -> raise Undefined_oper) in
       
       (* Form the proposal from the message parameters *)
-      let proposal = (slot_number, (Core.Uuid.of_string client_id, command_id, operation)) in
+      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string ""), command_id, operation)) in
       
       (* Do something with the proposal here *)
       (* This is nonsense at the moment *)
@@ -87,7 +108,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       let open Api.Reader.Message in
     
       (* Retrieve the client id and command id fields from the struct *)
-      let client_id = Command.client_id_get cmd_reader in
+      let id = Command.client_id_get cmd_reader in
       let command_id = Command.command_id_get cmd_reader in
         
       (* Operation is more difficult as it is a nested struct *)
@@ -113,7 +134,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       | Command.Operation.Undefined(_) -> raise Undefined_oper) in
       
       (* Form the proposal from the message parameters *)
-      let proposal = (slot_number, (Core.Uuid.of_string client_id, command_id, operation)) in
+      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string ""), command_id, operation)) in
       
       (* Call the callback function that will process the decision *)
       (match some_g with
@@ -134,7 +155,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
         let open Api.Reader.Message in
         
         (* Retrieve the client id and command id fields from the struct *)
-        let client_id = Command.client_id_get cmd_reader in
+        let id = Command.client_id_get cmd_reader in
         let command_id = Command.command_id_get cmd_reader in
         
         (* Operation is more difficult as it is a nested struct *)
@@ -165,9 +186,9 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
 
            So it is suitable to raise an exception
            if one is not passed in this case
-        *)
+        *) 
         match some_f with Some f ->
-          f (Core.Uuid.of_string client_id, command_id, operation);
+        f ((Core.Uuid.of_string id,Uri.of_string ""), command_id, operation);
       
         (* Releases capabilities, doesn't matter for us *)
         release_param_caps ();
@@ -186,8 +207,8 @@ let client_request_rpc t (cmd : Types.command) =
     let cmd_rpc = (Command.init_root ()) in
     
     (* Construct a command struct for Capnp from the cmd argument given *)
-    let (client_id, command_id, operation) = cmd in
-      Command.client_id_set cmd_rpc (Core.Uuid.to_string client_id);
+    let ((id,uri), command_id, operation) = cmd in
+      Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
       Command.command_id_set_exn cmd_rpc command_id;
       
       (* Construct an operation struct here *)
@@ -220,6 +241,33 @@ let client_request_rpc t (cmd : Types.command) =
       (* Send the message and pull out the result *)
       Capability.call_for_unit_exn t method_id request;;
 
+let client_response_rpc t (cid : Types.command_id) (result : Types.result) =
+  let open Api.Client.Message.ClientResponse in
+  let request, params = Capability.Request.create Params.init_pointer in
+  let open Api.Builder.Message in
+
+  (* Create an empty result type as recognised by Capnp *)
+  let result_rpc = Result.init_root () in
+  
+  (* As result is a Capnp union, match over the variant result argument
+     and set the appropriate Capnp value of result_rpc *)
+  (match result with
+  | Failure ->
+    Result.failure_set result_rpc
+  | Success ->
+    Result.success_set result_rpc
+  | ReadSuccess v ->
+    Result.read_set result_rpc v);
+
+  (* Set the reader for the results union of the parameters *)
+  Params.result_set_reader params (Result.to_reader result_rpc) |> ignore;
+
+  (* Set the command id in the parameters to argument given *)
+  Params.command_id_set_exn params cid;
+
+  (* Send the message and ignore the response *)
+  Capability.call_for_unit_exn t method_id request;;
+
 let decision_rpc t (p : Types.proposal) =
   let open Api.Client.Message.Decision in
   let request, params = Capability.Request.create Params.init_pointer in
@@ -229,10 +277,9 @@ let decision_rpc t (p : Types.proposal) =
     let cmd_rpc = Command.init_root () in
     
     (* Construct a command struct for Capnp from the cmd argument given *)
-    let (slot_number, (client_id, command_id, operation)) = p in
-      Command.client_id_set cmd_rpc (Core.Uuid.to_string client_id);
+    let (slot_number, ((id,uri), command_id, operation)) = p in
+      Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
       Command.command_id_set_exn cmd_rpc command_id;
-      
       (* Construct an operation struct here *)
       let oper_rpc = (Command.Operation.init_root ()) in
       
@@ -274,10 +321,9 @@ let proposal_rpc t (p : Types.proposal) =
     let cmd_rpc = Command.init_root () in
     
     (* Construct a command struct for Capnp from the cmd argument given *)
-    let (slot_number, (client_id, command_id, operation)) = p in
-      Command.client_id_set cmd_rpc (Core.Uuid.to_string client_id);
+    let (slot_number, ((id,uri), command_id, operation)) = p in
+      Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
       Command.command_id_set_exn cmd_rpc command_id;
-      
       (* Construct an operation struct here *)
       let oper_rpc = (Command.Operation.init_root ()) in
       
@@ -311,7 +357,6 @@ let proposal_rpc t (p : Types.proposal) =
       (* Send the message and ignore the response *)
       Capability.call_for_unit_exn t method_id request;;
 
-  
 (*---------------------------------------------------------------------------*)
 
 (* Types of message that can be passed between nodes:
@@ -319,7 +364,8 @@ let proposal_rpc t (p : Types.proposal) =
       - These can be passed to the RPC api to be prepared for transport etc. *)
 type message = ClientRequestMessage of command
              | ProposalMessage of proposal
-             | DecisionMessage of proposal;;
+             | DecisionMessage of proposal
+             | ClientResponseMessage of command_id * result;;
           (* | ... further messages will be added *) 
 
 (* Start a new server advertised at address (host,port)
@@ -377,3 +423,5 @@ let send_request message uri =
     decision_rpc service p;
   | ProposalMessage p ->
     proposal_rpc service p;
+  | ClientResponseMessage (cid, result) ->
+    client_response_rpc service cid result;;

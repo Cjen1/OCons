@@ -14,10 +14,10 @@ type t = {
 };;
   
 (* Create a new record of client information *)
-let new_client uris = {
-  id = Core.Uuid.create ();
+let new_client client_uri replica_uris = {
+  id = (Core.Uuid.create (), client_uri);
   next_command_id = 1;
-  replica_uri_list = uris
+  replica_uri_list = replica_uris
 };;
 
 (* Send a clientrequestmessage RPC of a given operation by a given client *)

@@ -99,7 +99,7 @@ let isreconfig op = false;;
 (* Perform the command c on the application state of replica *)
 let perform replica c =
   let slot_out = replica.slot_out in
-  let (_,_,op) = c in
+  let ((id,uri),cid,op) = c in
   let decisions_inv = List.Assoc.inverse replica.decisions in
 
   let is_lower_slot =
@@ -113,10 +113,14 @@ let perform replica c =
     (* Update application state *)
     let next_state, results = Types.apply replica.app_state op in
     replica.app_state <- next_state;
-    replica.slot_out <- replica.slot_out + 1
+    replica.slot_out <- replica.slot_out + 1;;
     (* END ATOMIC *)
 
-    (* TODO: Send a response message to client *);;
+    (* Send a response message to the client *)
+    (*
+    Message.send_request (Message.ClientResponseMessage(cid,results)) uri |>
+    Lwt.ignore_result;;
+    *)
     
 let rec try_execute (replica : t) (p : proposal) =
   (* Find a decision corresponding to <slot_out, _>
@@ -126,25 +130,17 @@ let rec try_execute (replica : t) (p : proposal) =
   match List.Assoc.find replica.decisions ~equal:(=) slot_out with
   | None -> ()
   | Some c' ->  (* A command c' is possibly ready *)
-    Lwt.ignore_result (Lwt_io.printl ("There is a command " ^ (Types.string_of_command c') ^ " in slot " ^ (string_of_int slot_out)));
-    
+ 
     (* Check next if there is another command c'' that this replica has
        proposed for slot_out. *)
     (match List.Assoc.find replica.proposals ~equal:(=) slot_out with
      | None -> ()
-     | Some c'' ->
-        Lwt.ignore_result (Lwt_io.printl "Remove the proposal from slot");
-    
+     | Some c'' -> 
         (* Remove the proposal <slot_out, c''> from set of proposals *)
         let new_proposals = List.filter replica.proposals 
-            ~f:(fun p' -> 
-                Lwt.ignore_result (Lwt_io.printl ("Comparing " ^ (Types.string_of_proposal (slot_out, c'')) ^ " and " ^ (Types.string_of_proposal p')));
-                not (Types.proposals_equal (slot_out, c'') p')
-            ) in
+            ~f:(fun p' -> not (Types.proposals_equal (slot_out, c'') p')) in
 
-        Lwt.ignore_result (list_of_proposals new_proposals);
         replica.proposals <- new_proposals;
-        Lwt.ignore_result (print_replica replica);
         
         (* If c' = c'' then we don't need to re-propose this command,
            since we're about to commit <slot_out, c'> anyway.
@@ -166,14 +162,8 @@ let rec try_execute (replica : t) (p : proposal) =
 (* This is where application state will be updated if decisions are received
    etc *)
 let receive_decision (replica : t) (p : proposal ) : unit =
-  Lwt.ignore_result (Lwt_io.printl ("Received a decision " ^ (Types.string_of_proposal p)));
-  Lwt.ignore_result (print_replica replica);
-
   (* Append the received proposal to the set of decisions *)
   replica.decisions <- (List.append (replica.decisions) [p]);
-
-  Lwt.ignore_result (Lwt_io.printl ("Add decision to decisions " ^ (Types.string_of_proposal p)));
-  Lwt.ignore_result (print_replica replica);
 
   (* Try to execute commands ... *)
   try_execute replica p;;
@@ -237,8 +227,8 @@ let propose replica =
 let rec propose_lwt replica =
   propose replica >>= fun () ->
   Lwt_unix.sleep 1.0 >>=  fun () ->           (* Put this sleep in for now *)
-  print_replica replica >>= fun () ->    (* Print replica information periodically *)
-  Lwt_io.printl (Types.string_of_state replica.app_state) >>= fun () ->
+  (* print_replica replica >>= fun () ->    (* Print replica information periodically *)
+  Lwt_io.printl (Types.string_of_state replica.app_state) >>= fun () -> *)
   propose_lwt replica;;
 
 (* Initialize a new replica and its lwt threads *)

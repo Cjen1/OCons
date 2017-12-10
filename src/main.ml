@@ -15,11 +15,11 @@ open Leader;;
    run ten random commands with random parameters, with a random sleep
    time in-between 
 *)
-let run_client' uris =
+let run_client' host port uris =
   Lwt_main.run (
     Lwt_io.printl "Spinning up a client" >>= fun () ->
     
-    let client = Client.new_client uris in
+    let client = Client.new_client (Message.uri_from_address host port) uris in
  
     let rec commands n = 
       match n with 
@@ -66,7 +66,7 @@ let run_replica' host port uris =
 let run_client host port config = 
   let replica_uris = List.map config.replica_addrs 
       ~f:(fun (host,port) -> Message.uri_from_address host port) in
-  run_client' replica_uris;;
+  run_client' host port replica_uris;;
 
 (* Run this application as a replica, serving over the (host,port) address
    under a global configuration given in config *)
