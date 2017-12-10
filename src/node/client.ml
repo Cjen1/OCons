@@ -33,8 +33,7 @@ let send_request_message client operation =
      For each uri in list, send the request message to that URI and
      bind the response, returning a (command_id, Types.result).
   *)
-  List.map client.replica_uri_list (fun uri -> 
-      Message.send_request (ClientRequestMessage(client_id,command_id,operation)) uri >>=
-      function
-      | Message.ClientRequestResponse (cid, result) -> Lwt.return (cid,result)
-      | _ -> raise Message.Invalid_response);;
+  Lwt_list.iter_p (fun uri -> 
+    let message = (ClientRequestMessage(client_id,command_id,operation)) in
+      Message.send_request message uri) client.replica_uri_list;;
+

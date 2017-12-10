@@ -1,6 +1,7 @@
 (* leader.ml *)
 
 open Lwt.Infix;;
+open Core;;
 
 (* Types of leaders *)
 type t = {
@@ -28,12 +29,9 @@ let receive_proposal (leader : t) (p : Types.proposal) =
     Lwt_io.printl ("Received a proposal " ^ Types.string_of_proposal p));
   
   (* Broadcast the decision to all participating replicas *)
-  Core.List.iter (leader.replica_uris) ~f:(fun uri ->
-      Lwt.ignore_result (
-        (Message.send_request (Message.DecisionMessage p) uri) >>= 
-        function Message.DecisionMessageResponse -> Lwt.return_unit
-               | _ -> raise Message.Invalid_response));;
-
+  List.iter (leader.replica_uris) ~f:(fun uri ->
+    Message.send_request (Message.DecisionMessage p) uri |>
+    Lwt.ignore_result);;
 (*---------------------------------------------------------------------------*)
 
 (* Print line describing URI to terminal *)
