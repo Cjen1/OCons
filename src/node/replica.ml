@@ -109,16 +109,6 @@ module Replica = struct
       | Remove _ -> Success
     in (command_id, result);;
 
-
-
-
-
-
-
-
-
-
-
   (* TODO: Implement configurations *)
   (* We won't yet worry about reconfigurations *)
   let isreconfig op = false;;
@@ -214,13 +204,7 @@ module Replica = struct
   (* Starts a server that will run the service
      This is mostly Capnproto boilerplate *)
   let start_server (replica : t) (host : string) (port : int) =
-    let listen_address = `TCP (host, port) in
-    let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address  in
-    let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in
-    let restore = Capnp_rpc_lwt.Restorer.single service_id 
-        (Message.local (Some (receive_request replica)) (Some (receive_decision replica))) in
-    Capnp_rpc_unix.serve config ~restore >|= fun vat ->
-    Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
+    Message.start_new_server (Some (receive_request replica)) (Some (receive_decision replica)) host port;;
 
   (* Function attempts to take one request and propose it.
 

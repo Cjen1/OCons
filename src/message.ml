@@ -184,9 +184,6 @@ let local (some_f : (command -> (command_id * result)) option) (some_g : (propos
           | Failure -> Response.Result.failure_set result_rpc
           | ReadSuccess v -> Response.Result.read_set result_rpc v);
           
-          (* Need to somehow add the result to the response struct *)
-          (* ... *)
-          (* ... *)
           (Response.result_set_builder response_rpc result_rpc |> ignore);
 
           (* Reply with the response *)
@@ -348,9 +345,29 @@ type response = ClientRequestResponse of command_id * result
               | ProposalMessageResponse
               | DecisionMessageResponse;;
 
+(* Start a new server advertised at address (host,port)
+   This server does not serve with TLS and the service ID for the
+   server is derived from its address *)
+let start_new_server f g host port =
+    let listen_address = `TCP (host, port) in
+    let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address in
+    (* let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in *)
+    let service_id = Capnp_rpc_lwt.Restorer.Id.derived ~secret:"" (host ^ (string_of_int port)) in
+    let restore = Capnp_rpc_lwt.Restorer.single service_id (local f g) in
+    Capnp_rpc_unix.serve config ~restore >|= fun vat ->
+    Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
+
+(* Resolve the URI for a given service from the host,port address pair *)
+let uri_from_address host port =
+  let service_id = Capnp_rpc_lwt.Restorer.Id.derived ~secret:"" (host ^ (string_of_int port)) in
+  let service_id_str = Capnp_rpc_lwt.Restorer.Id.to_string service_id in
+  let location = Capnp_rpc_unix.Network.Location.tcp host port in
+  let digest = Capnp_rpc_lwt.Auth.Digest.insecure in
+  Capnp_rpc_unix.Network.Address.to_uri ((location,digest),service_id_str)
+
 (* Takes a Capnp URI for a service and returns the lwt capability of that
    service *)
-(* This should probably be optimised - maybe store a reference to the
+(* TODO: This should probably be optimised - maybe store a reference to the
    instantiated service in the client once a connection has been
    established.
 
@@ -361,6 +378,15 @@ let service_from_uri uri =
   let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
   Sturdy_ref.connect_exn sr >>= fun proxy_to_service ->
   Lwt.return proxy_to_service;;
+
+(* Derive the service from an address by indirectly computing the URI.
+
+   This is mostly for legacy reasons - all of the local node code sends
+   messages based on URIs.
+
+   TODO: Modify the code so that we don't need this extra indirection *)
+let service_from_addr host port = 
+  uri_from_address host port |> service_from_uri;;
 
 (* Accepts as input a message and prepares it for RPC transport,
    given the URI of the service to which it will be sent*)

@@ -7,6 +7,7 @@ open Client
 open Types
 open Replica
 open Leader.Leader;;
+open Config;;
 
 (* Sample replica code *)
 let run_replica' host port uris =
@@ -15,13 +16,15 @@ let run_replica' host port uris =
 (* Sample client code -
    run ten random commands with random parameters, with a random sleep
    time in-between *)
-let run_client' replica_uri =
+let run_client' uris =
   Lwt_main.run (
     Lwt_io.printl "Spinning up a client" >>= fun () ->
     
     let client = Client.new_client () in
-    Client.add_replica_uri replica_uri client;
     
+    List.iter uris ~f:(fun uri ->
+        Client.add_replica_uri uri client);
+ 
     let rec commands n = 
       match n with 
       | 0 -> Lwt.return_unit
@@ -48,7 +51,7 @@ let run_client' replica_uri =
 );;
 
 
-let run_leader' host port = 
+let run_leader'' host port = 
   Lwt_main.run (
     let (leader, l_wt) = Leader.Leader.new_leader host port in
     Lwt.join [
@@ -63,15 +66,16 @@ let run_leader' host port =
        in new_uri true);
     ]);;
 
+let run_leader' host port uris =
+  Lwt_main.run(
+    let (leader, l_lwt) = Leader.Leader.new_leader host port in
+    Lwt.join [
+      l_lwt;
+      Lwt.return (leader.replica_uris <- uris)
+    ]);;
 
 (* TODO To plug this all in and make it work:
    
-      - Message.service_from_addr function so that services can be
-        established based on known host,port pairs
-        
-        (an initial first approximation to this might be a 
-         host,port <-> capnp uri translation function)
-
       - Modify the functions above so that they accept (host,port)
         pairs instead of URI lists.
 
@@ -81,20 +85,29 @@ let run_leader' host port =
 
       - Print some logging.
 *)
-(* ... *)
 
+(* Run this application as a client, serving over the (host,port) address
+   under a global configuration given in config *)
+let run_client host port config = 
+  let replica_uris = List.map config.replica_addrs 
+      ~f:(fun (host,port) -> Message.uri_from_address host port) in
+  run_client' replica_uris;;
 
 (* Run this application as a replica, serving over the (host,port) address
    under a global configuration given in config *)
-let run_client host port config = ();;
-
-(* Run this application as a replica, serving over the (host,port) address
-   under a global configuration given in config *)
-let run_replica host port config = ();;
+let run_replica host port config = 
+  (* Get a list of URIs of leaders *)
+  let leader_uris = List.map config.leader_addrs 
+      ~f:(fun (host,port) -> Message.uri_from_address host port) in
+  run_replica' host port leader_uris;;
 
 (* Run this application as a leader, serving over the (host,port) address
    under a global configuration given in config *)
-let run_leader host port config = ();;
+let run_leader host port config = 
+  (* Get a list of URIs of replicas *)
+  let replica_uris = List.map config.replica_addrs 
+      ~f:(fun (host,port) -> Message.uri_from_address host port) in
+  run_leader' host port replica_uris;;
 
 (* Function start calls the function specific to running each of the nodes.
    Each one receives the host and port it should serve on and the config
