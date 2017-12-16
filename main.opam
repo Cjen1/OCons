@@ -9,14 +9,5 @@ license: "MIT"
 dev-repo: "https://github.com/chrislomaxjones/part-ii-project"
 
 build: [
-  ["./configure" "--prefix=%{prefix}%"]
-  [make]
-]
-
-install: [make "install"]
-
-remove: ["ocamlfind" "remove" "part-ii-project"]
-
-depends: [
-  "ocamlfind" {build}
+  ["jbuilder" "build" "--only" "main" "--root" "." "-j" jobs "@install"]
 ]
