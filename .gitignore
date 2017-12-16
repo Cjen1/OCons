@@ -2,7 +2,4 @@
 **.swo
 **.DS_Store
 
-main.byte
-main.native
-
 _build/
