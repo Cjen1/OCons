@@ -1,6 +1,9 @@
 open OUnit2;;
 open Core;;
 
+
+(*
+
 open Client;;
 
 (* Check uniqueness of two client ids *)
@@ -28,3 +31,11 @@ let client_test_suite =
 (* Run the example test suite containing one test *)
 let () =
   run_test_tt_main client_test_suite
+
+*)
+
+let client_test_suite =
+  "Tests pertaining to clients and request and response messages" >::: [];;
+
+let () =
+  run_test_tt_main client_test_suite;;
