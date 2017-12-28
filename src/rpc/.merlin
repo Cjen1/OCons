@@ -1,4 +1,4 @@
-B ../_build/default/rpc
+B ../../_build/default/src/rpc
 FLG -w -40
 PKG asetmap
 PKG asn1-combinators
