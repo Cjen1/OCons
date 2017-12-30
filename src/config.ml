@@ -10,6 +10,7 @@ type addr_info = {
   client_addrs : (string * int) list;
   replica_addrs : (string * int) list;
   leader_addrs : (string * int) list;
+  acceptor_addrs : (string * int) list;
 };;
 
 (* Read all lines of a file into a single string *)
@@ -39,4 +40,5 @@ let read_settings (path : string) : addr_info =
   
   { client_addrs = get_host_port_pairs "clients";
     replica_addrs = get_host_port_pairs "replicas";
-    leader_addrs = get_host_port_pairs "leaders" };;
+    leader_addrs = get_host_port_pairs "leaders";
+    acceptor_addrs = get_host_port_pairs "acceptors" };;

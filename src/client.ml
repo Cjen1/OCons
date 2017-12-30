@@ -26,7 +26,7 @@ let result_callback (response : Types.command_id * Types.result) =
   Lwt_io.printl ("Received response for " ^ (string_of_int cid) ^ " as " ^ (Types.string_of_result result)) |> Lwt.ignore_result;;
 
 let new_client host port replica_uris =
-  Message.start_new_server None None (Some result_callback)  host port >>= fun uri ->
+  Message.start_new_server ~response_callback:result_callback  host port >>= fun uri ->
   Lwt.return (initialize uri replica_uris);;
 
 (* Send a clientrequestmessage RPC of a given operation by a given client *)

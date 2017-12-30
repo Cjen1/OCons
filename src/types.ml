@@ -3,6 +3,11 @@
 (* Types of unique identifiers *)
 type unique_id = Core.Uuid.t;;
 
+let unique_ids_equal = Core.Uuid.equal;;
+
+let string_of_id = Core.Uuid.to_string;;
+let id_of_string = Core.Uuid.of_string;;
+
 (* Unique identifier for a given client node *)
 type client_id = unique_id * Uri.t;;
 
@@ -11,6 +16,9 @@ type replica_id = unique_id;;
 
 (* Unique identifier for a given leader node *)
 type leader_id = unique_id;;
+
+(* Equality of leader ids *)
+let leader_ids_equal = unique_ids_equal;;
 
 (* Unique identifier for a given command issued by a client *)
 type command_id = int;;

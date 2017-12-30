@@ -2,5 +2,4 @@
 
 (executable
  ((name main)
-  (libraries (core lwt yojson uri capnp-rpc-lwt capnp-rpc-unix message_api))
- ))
+  (libraries (ounit core lwt yojson uri capnp-rpc-lwt capnp-rpc-unix message_api))))

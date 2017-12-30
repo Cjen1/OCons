@@ -173,7 +173,7 @@ let receive_decision (replica : t) (p : proposal ) : unit =
 (* Starts a server that will run the service
    This is mostly Capnproto boilerplate *)
 let start_server (replica : t) (host : string) (port : int) =
-  Message.start_new_server (Some (receive_request replica)) (Some (receive_decision replica)) None host port;;
+  Message.start_new_server ~request_callback:(receive_request replica) ~proposal_callback:(receive_decision replica) host port;;
 
 (* Function attempts to take one request and propose it.
 
