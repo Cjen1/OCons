@@ -62,7 +62,7 @@ interface Message {
     read @2 :Text;
     # Read has an associated value that is returned with it
     }
-  }  
+  }
   
   clientRequest @0 (command :Command) -> ();
   # Method clientRequest is a message sent from the client to a replica
@@ -81,5 +81,19 @@ interface Message {
   
   clientResponse @3 (commandId :UInt16, result :Result) -> ();
   # Method clientResponse is a message sent from replica to a client
-  # Returns the id of the command and result of issuing it  
+  # Returns the id of the command and result of issuing it
+
+  phase1 @4 (ballotNumber :Text) -> (result :Text);
+  # Method phase1 is a message sent from leader to an acceptor
+  # As an acceptor responds to each phase1 message with a reply
+  # based deterministically on the request we implement in a simple
+  # request / response format as above.
+  #
+  # Wrt arguments we have a more experimental approach:
+  #   - Instead of providing each argument as a Capnp type, instead
+  #     each argument will be provided as JSON text. This is because
+  #     the format of these messages will be optimised later (state
+  #     reduction can be performed on the pvalues we are required to
+  #     send) so no point in writing lots of serialization code when
+  #     it will change in the future anyway
 }

@@ -4,6 +4,107 @@ open Types;;
 open Capnp_rpc_lwt;;
 open Lwt.Infix;;
 
+exception DeserializationError;;
+
+let serialize_ballot (b : Ballot.t) : Yojson.Basic.json =
+  let ballot_json = match b with
+    | Ballot.Bottom -> 
+      `String "bottom"
+  | Ballot.Number(n,lid) -> 
+    `Assoc [ 
+      ("id", `Int n); 
+      ("leader_id", `String (Types.string_of_id lid))] in
+  `Assoc [ ("ballot_num", ballot_json) ];;
+
+let deserialize_ballot (ballot_json : Yojson.Basic.json) : Ballot.t =
+  match Yojson.Basic.Util.member "ballot_num" ballot_json with
+  | `String "bottom" -> 
+    Ballot.Bottom
+  | `Assoc [ ("id", `Int n); ("leader_id", `String lid)] -> 
+    Ballot.Number(n, Types.id_of_string lid)
+  | _ -> raise DeserializationError;;
+
+let serialize_command (c : Types.command) : Yojson.Basic.json =
+  let ((id,uri), cid, op) = c in
+  let client_id_json = 
+  `Assoc [ ("id", `String (Types.string_of_id id));
+           ("uri", `String (Uri.to_string uri)) ] in
+  let inner_json =
+  `Assoc [ ("client_id", client_id_json); 
+           ("command_id", `Int cid); 
+           ("operation", `String (Types.string_of_operation op)) ] in
+  `Assoc [ ("command", inner_json) ];;
+
+(* TODO: Implement this!!! *)
+(*
+let deserialize_command (cmd_json : Yojson.Basic.json) : Types.command =
+  let inner_json = Yojson.Basic.Util.member "command" cmd_json in
+  let command_id_json = Yojson.Basic.Util.member "command_id" inner_json in
+  let operation_json = Yojson.Basic.Util.member "operation" inner_json in
+  (client_id_json,
+   Yojson.Basic.Util.to_int command_id_json,
+   operation_json |> Yojson.Basic.Util.to_string |> Types.operation_from_string);;
+*)
+(* Stub implementation of deserialize command *)
+let deserialize_command (cmd_json : Yojson.Basic.json) : Types.command = 
+  ((Core.Uuid.create (), Uri.of_string ""), 0, Types.Nop);;
+
+let serialize_pvalue (pval : Ballot.pvalue) : Yojson.Basic.json =
+  let (b, s, c) = pval in
+  let ballot_json = Yojson.Basic.Util.to_assoc (serialize_ballot b) in
+  let command_json = Yojson.Basic.Util.to_assoc (serialize_command c) in 
+  let pvalue_json = `Assoc (Core.List.concat [ballot_json; [("slot_number", `Int s)]; command_json])
+  in `Assoc [ ("pvalue", pvalue_json) ];;
+
+let deserialize_pvalue (pvalue_json : Yojson.Basic.json) : Ballot.pvalue =
+  let inner_json = Yojson.Basic.Util.member "pvalue" pvalue_json in
+  let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in
+  let slot_number = Yojson.Basic.Util.member "slot_number" inner_json in
+  let command_json = Yojson.Basic.Util.member "command" inner_json in
+  (deserialize_ballot (`Assoc [("ballot_num",ballot_number_json)]),
+   Yojson.Basic.Util.to_int slot_number,
+   deserialize_command command_json);;
+
+let serialize_pvalue_list (pvals : Ballot.pvalue list) : Yojson.Basic.json =
+  `List (Core.List.map pvals ~f:serialize_pvalue);;
+
+let deserialize_pvalue_list (pvals_json : Yojson.Basic.json) : Ballot.pvalue list = 
+  match pvals_json with
+  | `List ls -> Core.List.map ls ~f:deserialize_pvalue
+  | _ -> raise DeserializationError;;
+
+let serialize_phase1_response acceptor_id ballot_num accepted : Yojson.Basic.json =
+  let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in
+  let ballot_json = Yojson.Basic.Util.to_assoc (serialize_ballot ballot_num) in
+  let pvalues_json = Yojson.Basic.Util.to_assoc ( (`Assoc [("pvalues", serialize_pvalue_list accepted)])) in
+  let response_json = `Assoc ( acceptor_id :: (Core.List.concat [ballot_json; pvalues_json]) ) in  
+  `Assoc [ ("response", response_json )];;
+
+let deserialize_phase1_response (response_json : Yojson.Basic.json) =
+  let inner_json = Yojson.Basic.Util.member "response" response_json in
+  let acceptor_id_json = Yojson.Basic.Util.member "acceptor_id" inner_json in
+  let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in  
+  let pvalues_json = Yojson.Basic.Util.member "pvalues" inner_json in
+  (acceptor_id_json |> Yojson.Basic.Util.to_string |> Types.id_of_string,
+   deserialize_ballot (`Assoc [("ballot_num",ballot_number_json)]),
+   deserialize_pvalue_list pvalues_json);;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 (* Exceptions resulting in undefined values being sent in Capnp unions *)
 exception Undefined_oper;;
 exception Undefined_result;;
@@ -14,11 +115,37 @@ exception Invalid_response;;
 (* Expose the API service for the RPC system *)
 module Api = Message_api.MakeRPC(Capnp_rpc_lwt);;
 
-let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) option)
-          (some_h : ((command_id * result) -> unit) option) =
+let local ?(request_callback : (command -> unit) option) 
+          ?(proposal_callback : (proposal -> unit) option)
+          ?(response_callback : ((command_id * result) -> unit) option)
+          ?(phase1_callback : (Ballot.t -> (Types.unique_id * Ballot.t * Ballot.pvalue list)) option)
+          () =
+
   let module Message = Api.Service.Message in
   Message.local @@ object
     inherit Message.service
+
+    method phase1_impl params release_param_caps =
+      let open Message.Phase1 in
+      let module Params = Message.Phase1.Params in
+
+      Lwt_io.printl "Acceptor got something!" |> Lwt.ignore_result;
+
+      let ballot_number = Params.ballot_number_get params 
+                              |> Yojson.Basic.from_string 
+                              |> deserialize_ballot in
+      
+      release_param_caps ();
+
+      match phase1_callback with Some f ->
+      
+      let (acceptor_id, ballot_num', pvalues)  = f(ballot_number) in
+      let json = serialize_phase1_response acceptor_id ballot_num' pvalues in
+      let result_str = Yojson.Basic.to_string json in
+       
+      let response, results = Service.Response.create Results.init_pointer in
+      Results.result_set results result_str;
+      Service.return response;
 
     method client_response_impl params release_param_caps =
       let open Message.ClientResponse in
@@ -38,7 +165,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       let command_id = Params.command_id_get params in
 
       (* Call a callback to notify client *)
-      match some_h with Some h -> h(command_id,result);
+      match response_callback with Some h -> h(command_id,result);
 
       (* Release capabilities, doesn't matter for us *)
       release_param_caps ();
@@ -91,7 +218,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       
       (* Do something with the proposal here *)
       (* This is nonsense at the moment *)
-      (match some_g with
+      (match proposal_callback with
       | None -> ()
       | Some g -> g(proposal) );
       
@@ -145,7 +272,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
       let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation)) in
       
       (* Call the callback function that will process the decision *)
-      (match some_g with
+      (match proposal_callback with
       | None -> ()
       | Some g -> g(proposal) );
  
@@ -196,7 +323,7 @@ let local (some_f : (command -> unit) option) (some_g : (proposal -> unit) optio
            So it is suitable to raise an exception
            if one is not passed in this case
         *) 
-        match some_f with Some f ->
+        match request_callback with Some f ->
         f ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation);
       
         (* Releases capabilities, doesn't matter for us *)
@@ -377,18 +504,18 @@ let proposal_rpc t (p : Types.proposal) =
 type message = ClientRequestMessage of command
              | ProposalMessage of proposal
              | DecisionMessage of proposal
-             | ClientResponseMessage of command_id * result;;
+             | ClientResponseMessage of command_id * result
           (* | ... further messages will be added *) 
 
 (* Start a new server advertised at address (host,port)
    This server does not serve with TLS and the service ID for the
    server is derived from its address *)
-let start_new_server f g h host port =
+let start_new_server ?request_callback ?proposal_callback ?response_callback ?phase1_callback host port =
     let listen_address = `TCP (host, port) in
     let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address in
     (* let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in *)
     let service_id = Capnp_rpc_lwt.Restorer.Id.derived ~secret:"" (host ^ (string_of_int port)) in
-    let restore = Capnp_rpc_lwt.Restorer.single service_id (local f g h) in
+    let restore = Capnp_rpc_lwt.Restorer.single service_id (local ?request_callback ?proposal_callback ?response_callback ?phase1_callback () ) in
     Capnp_rpc_unix.serve config ~restore >|= fun vat ->
     Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
 
@@ -437,3 +564,39 @@ let send_request message uri =
     proposal_rpc service p;
   | ClientResponseMessage (cid, result) ->
     client_response_rpc service cid result;;
+
+(*---------------------------------------------------------------------------*)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+let phase1_rpc t (b : Ballot.t) =
+  let open Api.Client.Message.Phase1 in
+  let request, params = Capability.Request.create Params.init_pointer in
+  let open Api.Builder.Message in
+  
+  Params.ballot_number_set params (b |> serialize_ballot |> Yojson.Basic.to_string);
+  
+  Capability.call_for_value_exn t method_id request >|=
+  Results.result_get >|=
+  Yojson.Basic.from_string >|=
+  deserialize_phase1_response;;
+
+let send_phase1_message (b : Ballot.t) uri = 
+  service_from_uri uri >>= fun service ->
+  phase1_rpc service b;;

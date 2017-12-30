@@ -42,13 +42,16 @@ let run_client' host port uris =
 );;
 
 (* Sample leader code *)
-let run_leader' host port uris =
-  Leader.new_leader host port uris |> Lwt_main.run;;
+let run_leader' host port replica_uris acceptor_uris =
+  Leader.new_leader host port replica_uris acceptor_uris |> Lwt_main.run;;
 
 (* Sample replica code *)
 let run_replica' host port uris =
   Replica.new_replica host port uris |> Lwt_main.run;;
 
+(* Sample acceptor code *)
+let run_acceptor' host port =
+  Acceptor.new_acceptor host port |> Lwt_main.run;;
 
 (* TODO To plug this all in and make it work:
    
@@ -83,7 +86,14 @@ let run_leader host port config =
   (* Get a list of URIs of replicas *)
   let replica_uris = List.map config.replica_addrs 
       ~f:(fun (host,port) -> Message.uri_from_address host port) in
-  run_leader' host port replica_uris;;
+  let acceptor_uris = List.map config.acceptor_addrs 
+      ~f:(fun (host,port) -> Message.uri_from_address host port) in
+  run_leader' host port replica_uris acceptor_uris;;
+
+(* Run this application as an acceptor, serving over the (host,port) address
+   under a global configuration given in config *)
+let run_acceptor host port config =
+  run_acceptor' host port;;       
 
 (* Function start calls the function specific to running each of the nodes.
    Each one receives the host and port it should serve on and the config
@@ -101,6 +111,8 @@ let start node host port config =
     run_replica host port config
   | "leader" ->
     run_leader host port config
+  | "acceptor" ->
+    run_acceptor host port config
   | _ -> ();;
 
 let sanitise_node (node_string : string) : string =
@@ -108,6 +120,7 @@ let sanitise_node (node_string : string) : string =
   | "client"  -> node_string
   | "replica" -> node_string
   | "leader"  -> node_string
+  | "acceptor" -> node_string
   | _         -> raise (Invalid_argument "Invalid type of node given");;
 
 let sanitise_port (port_string : string) : int =
@@ -121,7 +134,8 @@ let sanitise_port (port_string : string) : int =
 let sanitise_host host_string = host_string;;
 
 (* TODO: More thorough checks on the exceptions produced and hence
-   a more detailed error message *)
+   a more deta
+   iled error message *)
 let sanitise_config (config_path : string) : Config.addr_info = 
   try Config.read_settings config_path
   with _ -> raise (Invalid_argument "Malformed path / JSON file");;
