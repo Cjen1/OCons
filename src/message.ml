@@ -128,9 +128,7 @@ let local ?(request_callback : (command -> unit) option)
     method phase1_impl params release_param_caps =
       let open Message.Phase1 in
       let module Params = Message.Phase1.Params in
-
-      Lwt_io.printl "Acceptor got something!" |> Lwt.ignore_result;
-
+      
       let ballot_number = Params.ballot_number_get params 
                               |> Yojson.Basic.from_string 
                               |> deserialize_ballot in

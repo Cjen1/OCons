@@ -13,10 +13,10 @@ module type LOGGER = sig
            ?info_chan:Lwt_io.output_channel ->
            ?debug_chan:Lwt_io.output_channel ->
            ?trace_chan:Lwt_io.output_channel -> unit -> unit
-
   val initialize_default : string -> unit Lwt.t
 
   val write_to_log : level -> string -> unit Lwt.t
+  val write_with_timestamp : level -> string -> unit Lwt.t
 end
 
 module Logger : LOGGER = struct
@@ -56,8 +56,7 @@ module Logger : LOGGER = struct
     Lwt_io.open_file Lwt_io.Output ("logs/" ^ prefix ^ "-debug.log") >>= fun debug_chan -> 
     Lwt_io.open_file Lwt_io.Output ("logs/" ^ prefix ^ "-trace.log") >>= fun trace_chan -> 
     Lwt. return (initialize_logs ~err_chan:Lwt_io.stderr ~warn_chan:Lwt_io.stdout
-                                 ~info_chan ~debug_chan ~trace_chan () )
-
+                                 ~info_chan ~debug_chan ~trace_chan () ) 
   let write_to_log level line =
     let chan_opt = (match level with
     | ERROR -> !log_channels.err_chan
@@ -68,5 +67,9 @@ module Logger : LOGGER = struct
       match chan_opt with
       | None      -> Lwt.return_unit
       | Some chan -> Lwt_io.write_line chan line
+
+  let write_with_timestamp level line = 
+    let time = Core.Time.to_string (Core.Time.now ()) in
+    write_to_log level (time ^ ":\t" ^ line)
 end
 

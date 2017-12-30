@@ -1,6 +1,7 @@
 (* acceptor.ml *)
 
 open Lwt.Infix
+open Log.Logger
 
 (* Types of acceptors *)
 type t = {
@@ -29,11 +30,15 @@ let initialize () = {
    In either case, the acceptor replies with its current state (this
    may be the new ballot number it has adopted) *)
 let phase1_callback (a : t) (b : Ballot.t) =
-  if a.ballot_num < b then a.ballot_num <- b;
+  Lwt.ignore_result (write_with_timestamp INFO ("Receive phase1 message with ballot " ^ (Ballot.to_string b)));
+  if a.ballot_num < b then 
+    Lwt.ignore_result (write_with_timestamp INFO ("Adopt ballot number " ^ (Ballot.to_string b)));
+    a.ballot_num <- b;
+  Lwt.ignore_result (write_with_timestamp INFO ("Reply to phase1 message with:" ^ (Ballot.to_string b) ^ " and "));
+  Core.List.iter a.accepted ~f:(fun pval -> Lwt.ignore_result (write_to_log INFO ("\t\t\t\t" ^ Ballot.pvalue_to_string pval)));
   (a.id, a.ballot_num, a.accepted)
 
 (* This callback occurs when an acceptor receives a phase2 message
-
    ... *)
 let phase2_callback (a : t) (p : Ballot.pvalue) =
   let (b,_,_) = p in
@@ -51,6 +56,5 @@ let start_server (acceptor : t) (host : string) (port : int) =
 let new_acceptor host port = 
   let acceptor = initialize () in
   start_server acceptor host port >>= fun uri ->
-  (* Print a message on initialisation *)
-  Lwt_io.printl ("Spinning up an acceptor with uri " ^ (Uri.to_string uri)) >>= fun () ->
+  write_to_log INFO ("Initializing new acceptor: \n\tURI " ^ (Uri.to_string uri)) >>= fun () ->
   Lwt.wait () |> fst

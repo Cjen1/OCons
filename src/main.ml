@@ -10,6 +10,8 @@ open Client;;
 open Replica;;
 open Leader;;
 
+open Log
+
 (* Sample client code -
 
    run ten random commands with random parameters, with a random sleep
@@ -37,21 +39,30 @@ let run_client' host port uris =
         Client.send_request_message client rand_cmd >>= fun () ->
         Lwt_unix.sleep (float_of_int (Random.int 10)) >>= fun () -> (commands (n-1))
     in
-    commands 10 >>= fun () ->
+    commands 1 >>= fun () ->
     fst @@ Lwt.wait ()
 );;
 
 (* Sample leader code *)
 let run_leader' host port replica_uris acceptor_uris =
-  Leader.new_leader host port replica_uris acceptor_uris |> Lwt_main.run;;
+  let log_directory = "leader-" ^ host ^ "-" ^ (string_of_int port) in
+  Lwt_main.run (
+    Logger.initialize_default log_directory >>= fun () ->
+    Leader.new_leader host port replica_uris acceptor_uris)
 
 (* Sample replica code *)
 let run_replica' host port uris =
-  Replica.new_replica host port uris |> Lwt_main.run;;
+  let log_directory = "replica-" ^ host ^ "-" ^ (string_of_int port) in
+  Lwt_main.run (
+    Logger.initialize_default log_directory >>= fun () ->  
+    Replica.new_replica host port uris )
 
 (* Sample acceptor code *)
 let run_acceptor' host port =
-  Acceptor.new_acceptor host port |> Lwt_main.run;;
+  let log_directory = "acceptor-" ^ host ^ "-" ^ (string_of_int port) in
+  Lwt_main.run (
+    Logger.initialize_default log_directory >>= fun () ->
+    Acceptor.new_acceptor host port)
 
 (* TODO To plug this all in and make it work:
    
@@ -155,18 +166,18 @@ let command =
       +> flag "--config" (optional string) ~doc:""
     )
     (fun some_node_string some_host_string some_port_string some_config_path () ->
-  match some_node_string with
-  | None -> raise (Invalid_argument "No node type supplied")
-  | Some node_string ->
-    match some_config_path with
-    | None -> raise (Invalid_argument "No path to config file supplied")
-    | Some config_path ->
-      match some_host_string, some_port_string with
-      | (Some host_string, Some port_string) ->
-        start (sanitise_node node_string)
-          (sanitise_host host_string)
-          (sanitise_port port_string)
-          (sanitise_config config_path)
-      | (_, _) -> raise (Invalid_argument "Host / port not supplied"));;
+    match some_node_string with
+    | None -> raise (Invalid_argument "No node type supplied")
+    | Some node_string ->
+      match some_config_path with
+      | None -> raise (Invalid_argument "No path to config file supplied")
+      | Some config_path ->
+        match some_host_string, some_port_string with
+        | (Some host_string, Some port_string) ->
+          start (sanitise_node node_string)
+            (sanitise_host host_string)
+            (sanitise_port port_string)
+            (sanitise_config config_path)
+        | (_, _) -> raise (Invalid_argument "Host / port not supplied"))
 
-let () = Command.run command;;
+let () = Command.run command

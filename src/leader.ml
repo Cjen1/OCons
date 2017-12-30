@@ -2,7 +2,9 @@
 
 open Lwt.Infix;;
 open Core;;
+
 open Acceptor;;
+open Log.Logger;;
 
 (* Types of leaders *)
 type t = {
@@ -24,21 +26,28 @@ let initialize replica_uris acceptor_uris = {
  TO RECEIVE PROPOSALS AND SEND DECISIONS.
 
  THE FULL IMPLEMENTATION COMES WITH THE IMPLEMENTATION OF THE SYNOD 
- PROTOCOL *)
+   PROTOCOL *)
+
+
+let n = ref 0
 
 (* Test to signify we have received a proposal message at leader *)
 let receive_proposal (leader : t) (p : Types.proposal) =
-  Lwt.ignore_result (
-    Lwt_io.printl ("Received a proposal " ^ Types.string_of_proposal p));
-  
+
+  Lwt.ignore_result ( write_with_timestamp INFO ("Receive proposal " ^ Types.string_of_proposal p) );
+
   (* Broadcast the decision to all participating replicas *)
+  (*
   List.iter (leader.replica_uris) ~f:(fun uri ->
     Message.send_request (Message.DecisionMessage p) uri |>
     Lwt.ignore_result);
+  *)
+  
+  n := !n + 1;
 
   (* As a test, broadcast decision to the acceptors *)
   List.iter (leader.acceptor_uris) ~f:(fun uri ->
-    Message.send_phase1_message Ballot.Bottom uri |>
+      Message.send_phase1_message (Ballot.Number(!n, leader.id)) uri |>
     Lwt.ignore_result);;
 
 (*---------------------------------------------------------------------------*)
