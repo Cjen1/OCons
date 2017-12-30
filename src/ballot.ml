@@ -29,6 +29,10 @@ let less_than b1 b2 =
   | _, Bottom -> false
   | Number(n,lid), Number(n',lid') -> if n = n' then lid < lid' else n < n'
 
+let to_string = function
+  | Bottom -> "Bottom"
+  | Number(n,lid) -> "Number(" ^ (string_of_int n) ^ "," ^ (Types.string_of_id lid) ^ ")"
+
 (* We also include pvalues here, these are triples consisting of a ballot
    number, a slot number and a command.
 
@@ -36,6 +40,11 @@ let less_than b1 b2 =
    a ballot number. The ballot number is necessary to ensure that a leader
    has secured a majority quorum on committing this command to this slot *)
 type pvalue = t * Types.slot_number * Types.command
+
+let pvalue_to_string pval =
+  let (b,s,c) = pval in
+  "<" ^ (to_string b) ^ ", " ^ (string_of_int s) ^ 
+  ", " ^ (Types.string_of_command c) ^ ">"
 
 (* TODO: *)
 (* ...A quorum is a collection of acceptors... *)

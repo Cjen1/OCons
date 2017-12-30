@@ -4,6 +4,8 @@ open Types;;
 open Core;;
 open Lwt.Infix;;
 
+open Log.Logger
+
 (* Size of reconfiguration window *)
 let window = 5;;
 
@@ -88,6 +90,8 @@ let print_uri uri =
    But for now this is just to simulate message passing capability
 *)
 let receive_request (replica : t) (cmd : command)  : unit =
+  Lwt.ignore_result (
+    write_with_timestamp INFO ("Receive client request, command " ^ (Types.string_of_command cmd)));
   (* Add the command to the end of set of requests
      This is an expensive append operation for now - perhaps change? *)
   replica.requests <- (List.append (replica.requests) [cmd]);;
@@ -113,11 +117,16 @@ let perform replica c =
     (* Update application state *)
     let next_state, results = Types.apply replica.app_state op in
     replica.app_state <- next_state;
+
+    Lwt.ignore_result (
+      write_with_timestamp INFO ("Update application state to " ^ Types.string_of_state next_state));
+
     replica.slot_out <- replica.slot_out + 1;
     (* END ATOMIC *)
-    
-    Lwt_io.printl ("Sending cmd " ^ Types.string_of_command c) |> Lwt.ignore_result;
-    
+
+    Lwt.ignore_result (
+      write_with_timestamp INFO ("Send response message (" ^ (string_of_int cid) ^ ", " ^ (Types.string_of_result results) ^ ") to " ^ (Uri.to_string uri)));
+     
     (* Send a response message to the client *)
     Message.send_request (Message.ClientResponseMessage(cid,results)) uri |>
     Lwt.ignore_result;;
@@ -162,6 +171,10 @@ let rec try_execute (replica : t) (p : proposal) =
 (* This is where application state will be updated if decisions are received
    etc *)
 let receive_decision (replica : t) (p : proposal ) : unit =
+
+  Lwt.ignore_result (
+    write_with_timestamp INFO ("Receive decision for " ^ (Types.string_of_proposal p)));
+
   (* Append the received proposal to the set of decisions *)
   replica.decisions <- (List.append (replica.decisions) [p]);
 
@@ -206,6 +219,9 @@ let propose replica =
       
       (* Add <slot_in,c> to the list of proposals *) 
       replica.proposals <- (slot_in, c) :: replica.proposals;
+      
+      Lwt.ignore_result (
+        write_with_timestamp INFO ("Propose " ^ (Types.string_of_proposal (slot_in,c))));
 
       (* Finally broadcast a message to all of the leaders notifying them of proposal *)
       List.iter replica.leaders ~f:(fun uri ->
