@@ -29,6 +29,22 @@ let less_than b1 b2 =
   | _, Bottom -> false
   | Number(n,lid), Number(n',lid') -> if n = n' then lid < lid' else n < n'
 
+(* For reference, from Real World OCaml...
+   
+   compare x y < 0     (* x < y *)
+   compare x y = 0     (* x = y *)
+   compare x y > 0     (* x > y *)
+*)
+let compare b1 b2 =
+  match b1, b2 with
+  | Bottom, Bottom -> 0
+  | Bottom, _ -> - 1
+  | _, Bottom -> 1
+  | Number(n,lid), Number(n',lid') -> 
+    let int_comp = Core.Int.compare n n' in
+    if int_comp = 0 then Core.Uuid.compare lid lid'
+    else int_comp
+
 let to_string = function
   | Bottom -> "Bottom"
   | Number(n,lid) -> "Number(" ^ (string_of_int n) ^ "," ^ (Types.string_of_id lid) ^ ")"
@@ -46,12 +62,6 @@ let pvalue_to_string pval =
   "<" ^ (to_string b) ^ ", " ^ (string_of_int s) ^ 
   ", " ^ (Types.string_of_command c) ^ ">"
 
-(* TODO: *)
-(* ...A quorum is a collection of acceptors... *)
-module Quorum = struct
-  (* Let quorums be a list of the ids of the acceptors *)
-  type t = Types.unique_id list
-  
-  (* Placeholder *)
-  let is_majority (q : t) : bool = false
-end
+let pvalue_equal p p' =
+  let (b,s,c) = p and (b',s',c') = p' in
+  (equal b b') && (s=s') && (Types.commands_equal c c')

@@ -89,7 +89,13 @@ interface Message {
   # based deterministically on the request we implement in a simple
   # request / response format as above.
   #
-  # Wrt arguments we have a more experimental approach:
+
+  phase2 @5 (pvalue :Text) -> (result :Text);
+  # ...
+  # ...
+  # ...
+
+  # Wrt arguments of the last two messages we have a more experimental approach:
   #   - Instead of providing each argument as a Capnp type, instead
   #     each argument will be provided as JSON text. This is because
   #     the format of these messages will be optimised later (state
