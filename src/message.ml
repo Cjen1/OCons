@@ -1,11 +1,29 @@
 (* message.ml *)
 
-open Types;;
-open Capnp_rpc_lwt;;
-open Lwt.Infix;;
+open Types
+open Capnp_rpc_lwt
+open Lwt.Infix
 
-exception DeserializationError;;
+exception DeserializationError
 
+
+let serialize_operation op = 
+  match op with
+  | Nop -> `Assoc [("type", `String "nop")]
+  | Read(k) -> `Assoc [("type", `String "read"); ("key", `Int k)]
+  | Create(k,v) -> `Assoc [("type", `String "create"); ("key", `Int k); ("value", `String v)]
+  | Update(k,v) -> `Assoc [("type", `String "update"); ("key", `Int k); ("value", `String v)] 
+  | Remove(k) -> `Assoc [("type", `String "remove"); ("key", `Int k)]
+
+let deserialize_operation op_json = 
+  match op_json with
+  | `Assoc [("type", `String "nop")] -> Nop
+  | `Assoc [("type", `String "read"); ("key", `Int k)] -> Read(k)
+  | `Assoc [("type", `String "create"); ("key", `Int k); ("value", `String v)] -> Create(k,v)
+  | `Assoc [("type", `String "update"); ("key", `Int k); ("value", `String v)] -> Update(k,v)
+  | `Assoc [("type", `String "remove"); ("key", `Int k)] -> Remove(k)
+  | _ -> raise DeserializationError
+  
 let serialize_ballot (b : Ballot.t) : Yojson.Basic.json =
   let ballot_json = match b with
     | Ballot.Bottom -> 
@@ -14,7 +32,7 @@ let serialize_ballot (b : Ballot.t) : Yojson.Basic.json =
     `Assoc [ 
       ("id", `Int n); 
       ("leader_id", `String (Types.string_of_id lid))] in
-  `Assoc [ ("ballot_num", ballot_json) ];;
+  `Assoc [ ("ballot_num", ballot_json) ]
 
 let deserialize_ballot (ballot_json : Yojson.Basic.json) : Ballot.t =
   match Yojson.Basic.Util.member "ballot_num" ballot_json with
@@ -22,7 +40,7 @@ let deserialize_ballot (ballot_json : Yojson.Basic.json) : Ballot.t =
     Ballot.Bottom
   | `Assoc [ ("id", `Int n); ("leader_id", `String lid)] -> 
     Ballot.Number(n, Types.id_of_string lid)
-  | _ -> raise DeserializationError;;
+  | _ -> raise DeserializationError
 
 let serialize_command (c : Types.command) : Yojson.Basic.json =
   let ((id,uri), cid, op) = c in
@@ -32,29 +50,34 @@ let serialize_command (c : Types.command) : Yojson.Basic.json =
   let inner_json =
   `Assoc [ ("client_id", client_id_json); 
            ("command_id", `Int cid); 
-           ("operation", `String (Types.string_of_operation op)) ] in
-  `Assoc [ ("command", inner_json) ];;
+           ("operation", (serialize_operation op)) ] in
+  `Assoc [ ("command", inner_json) ]
 
-(* TODO: Implement this!!! *)
-(*
+
 let deserialize_command (cmd_json : Yojson.Basic.json) : Types.command =
-  let inner_json = Yojson.Basic.Util.member "command" cmd_json in
+  let inner_json = cmd_json in
+  let client_id_json = Yojson.Basic.Util.member "client_id" inner_json in
+  let id_json = Yojson.Basic.Util.member "id" client_id_json in
+  let uri_json = Yojson.Basic.Util.member "uri" client_id_json in
   let command_id_json = Yojson.Basic.Util.member "command_id" inner_json in
   let operation_json = Yojson.Basic.Util.member "operation" inner_json in
-  (client_id_json,
+  
+  (* We need to include these helpers to remove quotation marks and a %22 character
+     from the deserialized strings. This seems like a very fragile way of doing this
+     but hopefully will be rectified when much of this serialization is moved to
+     Capnproto *)
+  let stringify_id s = Core.String.drop_prefix (Core.String.drop_suffix s 1) 1 in
+  let stringify_uri s =  Core.String.drop_prefix (Core.String.drop_suffix s 1) 1 in
+  ((id_json |> Yojson.Basic.to_string |> stringify_id |> Types.id_of_string, uri_json |> Yojson.Basic.to_string |> stringify_uri |> Uri.of_string),
    Yojson.Basic.Util.to_int command_id_json,
-   operation_json |> Yojson.Basic.Util.to_string |> Types.operation_from_string);;
-*)
-(* Stub implementation of deserialize command *)
-let deserialize_command (cmd_json : Yojson.Basic.json) : Types.command = 
-  ((Core.Uuid.create (), Uri.of_string ""), 0, Types.Nop);;
+   operation_json |> deserialize_operation)
 
 let serialize_pvalue (pval : Ballot.pvalue) : Yojson.Basic.json =
   let (b, s, c) = pval in
   let ballot_json = Yojson.Basic.Util.to_assoc (serialize_ballot b) in
   let command_json = Yojson.Basic.Util.to_assoc (serialize_command c) in 
   let pvalue_json = `Assoc (Core.List.concat [ballot_json; [("slot_number", `Int s)]; command_json])
-  in `Assoc [ ("pvalue", pvalue_json) ];;
+  in `Assoc [ ("pvalue", pvalue_json) ]
 
 let deserialize_pvalue (pvalue_json : Yojson.Basic.json) : Ballot.pvalue =
   let inner_json = Yojson.Basic.Util.member "pvalue" pvalue_json in
@@ -63,22 +86,22 @@ let deserialize_pvalue (pvalue_json : Yojson.Basic.json) : Ballot.pvalue =
   let command_json = Yojson.Basic.Util.member "command" inner_json in
   (deserialize_ballot (`Assoc [("ballot_num",ballot_number_json)]),
    Yojson.Basic.Util.to_int slot_number,
-   deserialize_command command_json);;
+   deserialize_command command_json)
 
 let serialize_pvalue_list (pvals : Ballot.pvalue list) : Yojson.Basic.json =
-  `List (Core.List.map pvals ~f:serialize_pvalue);;
+  `List (Core.List.map pvals ~f:serialize_pvalue)
 
 let deserialize_pvalue_list (pvals_json : Yojson.Basic.json) : Ballot.pvalue list = 
   match pvals_json with
   | `List ls -> Core.List.map ls ~f:deserialize_pvalue
-  | _ -> raise DeserializationError;;
+  | _ -> raise DeserializationError
 
 let serialize_phase1_response acceptor_id ballot_num accepted : Yojson.Basic.json =
   let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in
   let ballot_json = Yojson.Basic.Util.to_assoc (serialize_ballot ballot_num) in
   let pvalues_json = Yojson.Basic.Util.to_assoc ( (`Assoc [("pvalues", serialize_pvalue_list accepted)])) in
   let response_json = `Assoc ( acceptor_id :: (Core.List.concat [ballot_json; pvalues_json]) ) in  
-  `Assoc [ ("response", response_json )];;
+  `Assoc [ ("response", response_json )]
 
 let deserialize_phase1_response (response_json : Yojson.Basic.json) =
   let inner_json = Yojson.Basic.Util.member "response" response_json in
@@ -87,8 +110,19 @@ let deserialize_phase1_response (response_json : Yojson.Basic.json) =
   let pvalues_json = Yojson.Basic.Util.member "pvalues" inner_json in
   (acceptor_id_json |> Yojson.Basic.Util.to_string |> Types.id_of_string,
    deserialize_ballot (`Assoc [("ballot_num",ballot_number_json)]),
-   deserialize_pvalue_list pvalues_json);;
+   deserialize_pvalue_list pvalues_json)
 
+let serialize_phase2_response acceptor_id ballot_num : Yojson.Basic.json =
+  let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in  
+  let ballot_json = Yojson.Basic.Util.to_assoc (serialize_ballot ballot_num) in
+  `Assoc [ ("response", `Assoc ( acceptor_id :: ballot_json ) ) ]
+
+let deserialize_phase2_response (response_json : Yojson.Basic.json) =
+  let inner_json = Yojson.Basic.Util.member "response" response_json in
+  let acceptor_id_json = Yojson.Basic.Util.member "acceptor_id" inner_json in
+  let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in  
+  (acceptor_id_json |> Yojson.Basic.Util.to_string |> Types.id_of_string,
+   deserialize_ballot (`Assoc [ ("ballot_num", ballot_number_json) ]))
 
 
 
@@ -119,28 +153,39 @@ let local ?(request_callback : (command -> unit) option)
           ?(proposal_callback : (proposal -> unit) option)
           ?(response_callback : ((command_id * result) -> unit) option)
           ?(phase1_callback : (Ballot.t -> (Types.unique_id * Ballot.t * Ballot.pvalue list)) option)
+          ?(phase2_callback : (Ballot.pvalue -> (Types.unique_id * Ballot.t)) option)
           () =
 
   let module Message = Api.Service.Message in
   Message.local @@ object
     inherit Message.service
+  
+    method phase2_impl params release_param_caps =
+      let open Message.Phase2 in
+      let module Params = Message.Phase2.Params in
+      let pvalue = Params.pvalue_get params
+                   |> Yojson.Basic.from_string
+                   |> deserialize_pvalue in
+      release_param_caps ();
+      match phase2_callback with Some f ->
+      let (acceptor_id, ballot_num) = f(pvalue) in
+      let json = serialize_phase2_response acceptor_id ballot_num in
+      let result_str = Yojson.Basic.to_string json in
+      let response,results = Service.Response.create Results.init_pointer in
+      Results.result_set results result_str;
+      Service.return response;
 
     method phase1_impl params release_param_caps =
       let open Message.Phase1 in
       let module Params = Message.Phase1.Params in
-      
       let ballot_number = Params.ballot_number_get params 
                               |> Yojson.Basic.from_string 
                               |> deserialize_ballot in
-      
       release_param_caps ();
-
       match phase1_callback with Some f ->
-      
       let (acceptor_id, ballot_num', pvalues)  = f(ballot_number) in
       let json = serialize_phase1_response acceptor_id ballot_num' pvalues in
       let result_str = Yojson.Basic.to_string json in
-       
       let response, results = Service.Response.create Results.init_pointer in
       Results.result_set results result_str;
       Service.return response;
@@ -508,12 +553,12 @@ type message = ClientRequestMessage of command
 (* Start a new server advertised at address (host,port)
    This server does not serve with TLS and the service ID for the
    server is derived from its address *)
-let start_new_server ?request_callback ?proposal_callback ?response_callback ?phase1_callback host port =
+let start_new_server ?request_callback ?proposal_callback ?response_callback ?phase1_callback ?phase2_callback host port =
     let listen_address = `TCP (host, port) in
     let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address in
     (* let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in *)
     let service_id = Capnp_rpc_lwt.Restorer.Id.derived ~secret:"" (host ^ (string_of_int port)) in
-    let restore = Capnp_rpc_lwt.Restorer.single service_id (local ?request_callback ?proposal_callback ?response_callback ?phase1_callback () ) in
+    let restore = Capnp_rpc_lwt.Restorer.single service_id (local ?request_callback ?proposal_callback ?response_callback ?phase1_callback ?phase2_callback () ) in
     Capnp_rpc_unix.serve config ~restore >|= fun vat ->
     Capnp_rpc_unix.Vat.sturdy_uri vat service_id;;
 
@@ -530,7 +575,7 @@ let uri_from_address host port =
 (* TODO: This should probably be optimised - maybe store a reference to the
    instantiated service in the client once a connection has been
    established.
-
+   
    This may even be necessary in order to preserve the ordering semantics
    we want with RPC delivery *)
 let service_from_uri uri =
@@ -587,14 +632,26 @@ let phase1_rpc t (b : Ballot.t) =
   let open Api.Client.Message.Phase1 in
   let request, params = Capability.Request.create Params.init_pointer in
   let open Api.Builder.Message in
-  
-  Params.ballot_number_set params (b |> serialize_ballot |> Yojson.Basic.to_string);
-  
+  Params.ballot_number_set params (b |> serialize_ballot |> Yojson.Basic.to_string);  
   Capability.call_for_value_exn t method_id request >|=
   Results.result_get >|=
   Yojson.Basic.from_string >|=
-  deserialize_phase1_response;;
+  deserialize_phase1_response
 
 let send_phase1_message (b : Ballot.t) uri = 
   service_from_uri uri >>= fun service ->
   phase1_rpc service b;;
+
+let phase2_rpc t (pval : Ballot.pvalue) =
+  let open Api.Client.Message.Phase2 in
+  let request, params = Capability.Request.create Params.init_pointer in
+  let open Api.Builder.Message in
+  Params.pvalue_set params (pval |> serialize_pvalue |> Yojson.Basic.to_string);
+  Capability.call_for_value_exn t method_id request >|=
+  Results.result_get >|=
+  Yojson.Basic.from_string >|=
+  deserialize_phase2_response
+
+let send_phase2_message (pval : Ballot.pvalue) uri =
+  service_from_uri uri >>= fun service ->
+  phase2_rpc service pval

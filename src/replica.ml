@@ -115,8 +115,15 @@ let perform replica c =
   else 
     (* ATOMIC - May need to make this an atomic execution block *)
     (* Update application state *)
+
+    Lwt.ignore_result(
+      write_to_log TRACE (Types.string_of_command c));
+
     let next_state, results = Types.apply replica.app_state op in
     replica.app_state <- next_state;
+
+    Lwt.ignore_result(
+      write_to_log TRACE (Types.string_of_state replica.app_state));    
 
     Lwt.ignore_result (
       write_with_timestamp INFO ("Update application state to " ^ Types.string_of_state next_state));
@@ -132,6 +139,13 @@ let perform replica c =
     Lwt.ignore_result;;
 
 let rec try_execute (replica : t) (p : proposal) =
+  let (s,c) = p in
+  if (List.mem replica.requests c ~equal:Types.commands_equal) &&
+     (replica.slot_in = s) then
+    Lwt.ignore_result (write_with_timestamp INFO "this command is already in the requests")
+  else
+    Lwt.ignore_result (write_with_timestamp INFO "this command is not already in the requests");
+
   (* Find a decision corresponding to <slot_out, _>
      Such decisions are possibly ready to have their commands applied
      (given there are no other commands proposed for slot_out) *)
@@ -173,7 +187,7 @@ let rec try_execute (replica : t) (p : proposal) =
 let receive_decision (replica : t) (p : proposal ) : unit =
 
   Lwt.ignore_result (
-    write_with_timestamp INFO ("Receive decision for " ^ (Types.string_of_proposal p)));
+    write_with_timestamp INFO ("Receive decision for " ^ (Types.string_of_proposal p) ^ ", slot_out = " ^ (string_of_int replica.slot_out) ^ ", slot_in = " ^ (string_of_int replica.slot_in)));
 
   (* Append the received proposal to the set of decisions *)
   replica.decisions <- (List.append (replica.decisions) [p]);
@@ -187,6 +201,31 @@ let receive_decision (replica : t) (p : proposal ) : unit =
    This is mostly Capnproto boilerplate *)
 let start_server (replica : t) (host : string) (port : int) =
   Message.start_new_server ~request_callback:(receive_request replica) ~proposal_callback:(receive_decision replica) host port;;
+
+
+
+
+let do_proposal (c : Types.command) (replica : t) = 
+  Lwt.ignore_result (
+    write_with_timestamp INFO ("There is no command yet committed to slot " ^ (string_of_int replica.slot_in)));
+
+  (* Remove c from the list of requests *)
+  let new_requests = List.filter replica.requests ~f:(fun c' -> not (Types.commands_equal c c')) in
+      
+  (* Set the replica to include these updated lists *)
+  replica.requests <- new_requests;
+      
+  (* Add <slot_in,c> to the list of proposals *) 
+  replica.proposals <- (replica.slot_in, c) :: replica.proposals;
+      
+  Lwt.ignore_result (
+    write_with_timestamp INFO ("Propose " ^ (Types.string_of_proposal (replica.slot_in,c))));
+
+  (* Finally broadcast a message to all of the leaders notifying them of proposal *)
+  List.iter replica.leaders ~f:(fun uri ->
+    let msg = Message.ProposalMessage (replica.slot_in, c) in  
+    Message.send_request msg uri |> Lwt.ignore_result)
+
 
 (* Function attempts to take one request and propose it.
 
@@ -210,29 +249,18 @@ let propose replica =
     
     (* See if there exists a command currently committed for slot_in *)
     (match List.Assoc.find replica.decisions ~equal:(=) slot_in with
-    | None ->
-      (* Remove c from the list of requests *)
-      let new_requests = List.filter replica.requests ~f:(fun c' -> not (Types.commands_equal c c')) in
-      
-      (* Set the replica to include these updated lists *)
-      replica.requests <- new_requests;
-      
-      (* Add <slot_in,c> to the list of proposals *) 
-      replica.proposals <- (slot_in, c) :: replica.proposals;
-      
-      Lwt.ignore_result (
-        write_with_timestamp INFO ("Propose " ^ (Types.string_of_proposal (slot_in,c))));
-
-      (* Finally broadcast a message to all of the leaders notifying them of proposal *)
-      List.iter replica.leaders ~f:(fun uri ->
-        let msg = Message.ProposalMessage (slot_in, c) in  
-        Message.send_request msg uri |> Lwt.ignore_result);
-    | Some _ ->
-      (* If there is a command already committed to this slot do nothing *)
-      () );
+     | None ->
+        do_proposal c replica   
+     | Some c' when Types.commands_equal c c' -> 
+        do_proposal c replica
+     | Some _ ->
+        (* If there is a command already committed to this slot do nothing *)
+        () );
 
     (* Increment slot_in on the replica *)
     replica.slot_in <- replica.slot_in + 1;
+    Lwt.ignore_result (
+      write_with_timestamp INFO ("Increment slot_in to " ^ (string_of_int replica.slot_in)));
     
     Lwt.return_unit
   else
@@ -242,9 +270,7 @@ let propose replica =
    This is so that as requests arrive we can attempt to propose them *)
 let rec propose_lwt replica =
   propose replica >>= fun () ->
-  Lwt_unix.sleep 1.0 >>=  fun () ->           (* Put this sleep in for now *)
-  (* print_replica replica >>= fun () ->    (* Print replica information periodically *)
-  Lwt_io.printl (Types.string_of_state replica.app_state) >>= fun () -> *)
+  Lwt_unix.sleep 0.00001 >>= fun () -> (* This is necessary for some reason *)
   propose_lwt replica;;
 
 (* Initialize a new replica and its lwt threads *)

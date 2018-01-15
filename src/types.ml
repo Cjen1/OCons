@@ -3,22 +3,26 @@
 (* Types of unique identifiers *)
 type unique_id = Core.Uuid.t;;
 
-let unique_ids_equal = Core.Uuid.equal;;
+let unique_ids_equal = Core.Uuid.equal
+let string_of_id = Core.Uuid.to_string
+let id_of_string = Core.Uuid.of_string
+let create_id = Core.Uuid.create
 
-let string_of_id = Core.Uuid.to_string;;
-let id_of_string = Core.Uuid.of_string;;
-
-(* Unique identifier for a given client node *)
-type client_id = unique_id * Uri.t;;
+(* Unique identifier for a given client node
+    
+   This is different to other nodes because replicas need to reply to a client based upon 
+   the id of the client that issued the command, so the ID needs include the address to 
+   which the response is sent *)
+type client_id = unique_id * Uri.t
 
 (* Unique identifier for a given replica node *)
-type replica_id = unique_id;;
+type replica_id = unique_id
 
 (* Unique identifier for a given leader node *)
-type leader_id = unique_id;;
+type leader_id = unique_id
 
 (* Equality of leader ids *)
-let leader_ids_equal = unique_ids_equal;;
+let leader_ids_equal = unique_ids_equal
 
 (* Unique identifier for a given command issued by a client *)
 type command_id = int;;

@@ -39,7 +39,7 @@ let run_client' host port uris =
         Client.send_request_message client rand_cmd >>= fun () ->
         Lwt_unix.sleep (float_of_int (Random.int 10)) >>= fun () -> (commands (n-1))
     in
-    commands 1 >>= fun () ->
+    commands 4 >>= fun () ->
     fst @@ Lwt.wait ()
 );;
 
@@ -180,4 +180,20 @@ let command =
             (sanitise_config config_path)
         | (_, _) -> raise (Invalid_argument "Host / port not supplied"))
 
-let () = Command.run command
+ let () = Command.run command
+
+(*
+let () =
+  let json = Message.serialize_command ((Core.Uuid.create (), Uri.of_string "capnp://127.0.0.1:7000"),0,Types.Update(10,"k")) in
+  Lwt_main.run (
+    Lwt_io.printl (Yojson.Basic.pretty_to_string json) >>= fun () ->
+    let c = Message.deserialize_command json in
+    Lwt_io.printl (Types.string_of_command c))
+
+let () =
+  let json = Message.serialize_operation (Types.Remove(10)) in
+  Lwt_main.run (
+    Lwt_io.printl (Yojson.Basic.pretty_to_string json) >>= fun () ->
+    let op = Message.deserialize_operation json in 
+    Lwt_io.printl (Types.string_of_operation op))
+*)
