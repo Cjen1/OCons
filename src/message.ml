@@ -67,7 +67,8 @@ let deserialize_command (cmd_json : Yojson.Basic.json) : Types.command =
      but hopefully will be rectified when much of this serialization is moved to
      Capnproto *)
   let stringify_id s = Core.String.drop_prefix (Core.String.drop_suffix s 1) 1 in
-  let stringify_uri s =  Core.String.drop_prefix (Core.String.drop_suffix s 1) 1 in
+  let stringify_uri s = Core.String.drop_prefix (Core.String.drop_suffix s 1) 1 in
+  
   ((id_json |> Yojson.Basic.to_string |> stringify_id |> Types.id_of_string, uri_json |> Yojson.Basic.to_string |> stringify_uri |> Uri.of_string),
    Yojson.Basic.Util.to_int command_id_json,
    operation_json |> deserialize_operation)
@@ -578,11 +579,25 @@ let uri_from_address host port =
    
    This may even be necessary in order to preserve the ordering semantics
    we want with RPC delivery *)
+
+
+let sturdy_refs = Hashtbl.create 10
+let service_from_uri uri =
+  (try Hashtbl.find sturdy_refs uri
+    with Not_found -> 
+    let client_vat = Capnp_rpc_unix.client_only_vat () in
+    let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
+    let capability = Sturdy_ref.connect_exn sr in
+    Hashtbl.add sturdy_refs uri capability; 
+    capability)
+
+(*
 let service_from_uri uri =
   let client_vat = Capnp_rpc_unix.client_only_vat () in
   let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
   Sturdy_ref.connect_exn sr >>= fun proxy_to_service ->
   Lwt.return proxy_to_service;;
+*)
 
 (* Derive the service from an address by indirectly computing the URI.
 
