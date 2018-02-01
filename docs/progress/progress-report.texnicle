@@ -106,12 +106,12 @@
     </object>
     <object type="TEXFILE" id="z106">
         <attribute name="wasopen" type="bool">0</attribute>
-        <attribute name="visiblerect" type="string">{{0, 629}, {691, 714}}</attribute>
+        <attribute name="visiblerect" type="string">{{0, 752}, {691, 714}}</attribute>
         <attribute name="lasteditdate" type="date">539206125.67946600914001464844</attribute>
         <attribute name="istext" type="bool">1</attribute>
         <attribute name="fileloaddate" type="date">539206126.18291199207305908203</attribute>
         <attribute name="extension" type="string">tex</attribute>
-        <attribute name="cursor" type="string">{2483, 0}</attribute>
+        <attribute name="cursor" type="string">{2873, 0}</attribute>
         <attribute name="sortindex" type="int32">0</attribute>
         <attribute name="name" type="string">progress-report_main.tex</attribute>
         <attribute name="isexpanded" type="bool">0</attribute>
