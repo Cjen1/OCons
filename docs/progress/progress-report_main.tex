@@ -58,7 +58,7 @@
 
 The implementation of Mutli Paxos has been completed such that a number of processes can participate with nominated roles. The messaging system, leveraging the Cap'n Proto RPC library, was completed first, and extended as necessary throughout development.
 
-Both phases of the algorithm have been implemented. The first phase allows for clients to submit requests to replicas, whom perform de-duplication and serialization before proposing requests to Leaders. Leaders then participate in the Synod Protocol with Acceptors. They ensure that a majority consnesus is achieved on how the requests are serialized, providing the fault-tolerant memory of Paxos.
+Both phases of the algorithm have been implemented. The first phase allows for clients to submit requests to replicas, which perform de-duplication and serialization before proposing requests to Leaders. Leaders then participate in the Synod Protocol with Acceptors. They ensure that a majority consnesus is achieved on how the requests are serialized, providing the fault-tolerant memory of Paxos.
 
 Evalution has begun and involves the writing of scripts for simulation on Mininet, the network simulator used for testing and evaluation. Currently the scripts support the required setup, logging and teardown of simulated networks and a simple experimental setup for collecting latency data.
 
