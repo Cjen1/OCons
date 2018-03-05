@@ -1,16 +1,15 @@
 (* main.ml *)
 
-open Lwt.Infix;;
-open Unix;;
-open Core;;
-
-open Types;;
-open Config;;
-open Client;;
-open Replica;;
-open Leader;;
-
+open Lwt.Infix
+open Unix
+open Core
+open Types
+open Config
+open Client
+open Replica
+open Leader
 open Log
+open OUnit
 
 (* Sample client code -
 
@@ -18,7 +17,9 @@ open Log
    time in-between 
 *)
 let run_client' host port uris =
-  Lwt_main.run (
+  let log_directory = "client-" ^ host ^ "-" ^ (string_of_int port) in  
+  Lwt_main.run begin
+    Logger.initialize_default log_directory >>= fun () ->  
     Lwt_io.printl "Spinning up a client" >>= fun () ->
     
     Client.new_client host port uris >>= fun client ->
@@ -36,12 +37,31 @@ let run_client' host port uris =
         | 3 -> Update (Random.int 10, string_of_int (Random.int 10))
         | _ -> Remove (Random.int 10)) in
         
-        Client.send_request_message client rand_cmd >>= fun () ->
-        Lwt_unix.sleep (float_of_int (Random.int 10)) >>= fun () -> (commands (n-1))
+        Client.send_request_message client rand_cmd >>= fun () -> (commands (n-1))
     in
-    commands 4 >>= fun () ->
+    commands 5 >>= fun () ->
     fst @@ Lwt.wait ()
-);;
+  end
+
+(* Run the trace client program, sending n Nop commands and measuring the latency in
+   receiving a response *)
+let run_trace_client' host port uris n =
+  let log_directory = "client-" ^ host ^ "-" ^ (string_of_int port) in  
+  Lwt_main.run begin
+    Logger.initialize_default log_directory >>= fun () ->  
+    Lwt_io.printl "Spinning up a client" >>= fun () ->
+    let (waiter, wakeup) = Lwt.wait () in    
+    Client.new_client host port uris >>= fun client ->
+    let rec commands m = 
+      match m with
+      | 0  -> Lwt.return_unit
+      | m' -> Client.send_timed_request client (n + 1 - m') >>= fun () ->
+              Lwt_unix.sleep 0.5 >>= fun () ->
+              commands (m'-1) 
+    in
+    commands n >>= fun () ->
+    waiter
+  end
 
 (* Sample leader code *)
 let run_leader' host port replica_uris acceptor_uris =
@@ -64,24 +84,19 @@ let run_acceptor' host port =
     Logger.initialize_default log_directory >>= fun () ->
     Acceptor.new_acceptor host port)
 
-(* TODO To plug this all in and make it work:
-   
-      - Modify the functions above so that they accept (host,port)
-        pairs instead of URI lists.
-
-      - Modify the actual new_leader / new_replica / etc functions
-        so they accept host, port pairs and then establish their
-        services based on them.
-
-      - Print some logging.
-*)
-
 (* Run this application as a client, serving over the (host,port) address
    under a global configuration given in config *)
 let run_client host port config = 
   let replica_uris = List.map config.replica_addrs 
       ~f:(fun (host,port) -> Message.uri_from_address host port) in
-  run_client' host port replica_uris;;
+  run_client' host port replica_uris
+
+(* Run this application as a client, serving over the (host,port) address
+   under a global configuration given in config *)
+let run_trace_client host port config n = 
+  let replica_uris = List.map config.replica_addrs 
+      ~f:(fun (host,port) -> Message.uri_from_address host port) in
+  run_trace_client' host port replica_uris n
 
 (* Run this application as a replica, serving over the (host,port) address
    under a global configuration given in config *)
@@ -114,10 +129,12 @@ let run_acceptor host port config =
    know replica addresses and a leader needs only know replica addresses.
    And no node need know the addresses of the nodes of the same type.
 *)
-let start node host port config =
+let start ?trace node host port config =
   match node with
   | "client" ->
-    run_client host port config
+    (match trace with
+    | None -> run_client host port config
+    | Some n -> run_trace_client host port config n)
   | "replica" ->
     run_replica host port config
   | "leader" ->
@@ -164,8 +181,13 @@ let command =
       +> flag "--host" (optional string) ~doc:""
       +> flag "--port" (optional string) ~doc:""
       +> flag "--config" (optional string) ~doc:""
+      +> flag "--trace" (optional int) ~doc:"Please supply an int"
     )
-    (fun some_node_string some_host_string some_port_string some_config_path () ->
+    (fun some_node_string 
+         some_host_string 
+         some_port_string 
+         some_config_path
+         some_trace_num () ->
     match some_node_string with
     | None -> raise (Invalid_argument "No node type supplied")
     | Some node_string ->
@@ -174,26 +196,21 @@ let command =
       | Some config_path ->
         match some_host_string, some_port_string with
         | (Some host_string, Some port_string) ->
-          start (sanitise_node node_string)
-            (sanitise_host host_string)
-            (sanitise_port port_string)
-            (sanitise_config config_path)
-        | (_, _) -> raise (Invalid_argument "Host / port not supplied"))
+          (match some_trace_num with
+          | Some n ->
+            start ~trace:n
+                  (sanitise_node node_string)
+                  (sanitise_host host_string)
+                  (sanitise_port port_string)
+                  (sanitise_config config_path)
+          | None ->
+            start (sanitise_node node_string)
+                  (sanitise_host host_string)
+                  (sanitise_port port_string)
+                  (sanitise_config config_path))
+        | (_, _) -> raise (Invalid_argument "Host / port not supplied")
+    )
 
- let () = Command.run command
-
-(*
 let () =
-  let json = Message.serialize_command ((Core.Uuid.create (), Uri.of_string "capnp://127.0.0.1:7000"),0,Types.Update(10,"k")) in
-  Lwt_main.run (
-    Lwt_io.printl (Yojson.Basic.pretty_to_string json) >>= fun () ->
-    let c = Message.deserialize_command json in
-    Lwt_io.printl (Types.string_of_command c))
-
-let () =
-  let json = Message.serialize_operation (Types.Remove(10)) in
-  Lwt_main.run (
-    Lwt_io.printl (Yojson.Basic.pretty_to_string json) >>= fun () ->
-    let op = Message.deserialize_operation json in 
-    Lwt_io.printl (Types.string_of_operation op))
-*)
+  Tests.run_tests |> ignore; (* Run unit tests *)
+  Command.run command

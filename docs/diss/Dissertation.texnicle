@@ -1,0 +1,140 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE database SYSTEM "file:///System/Library/DTDs/CoreData.dtd">
+
+<database>
+    <databaseInfo>
+        <version>134481920</version>
+        <UUID>2622F01B-1AA0-45A1-8038-F2E7C3B1920E</UUID>
+        <nextObjectID>108</nextObjectID>
+        <metadata>
+            <plist version="1.0">
+                <dict>
+                    <key>NSPersistenceFrameworkVersion</key>
+                    <integer>641</integer>
+                    <key>NSStoreModelVersionHashes</key>
+                    <dict>
+                        <key>Bookmark</key>
+                        <data>
+		DomRcT1vfHnhCpD4hL1oyiuZNfU1acRc5Sa8FV4eSzw=
+		</data>
+                        <key>File</key>
+                        <data>
+		Ow+iGdBKIP6AijDPzNT2dGmjwrSu3RsK6bNp03vZ4jY=
+		</data>
+                        <key>Folder</key>
+                        <data>
+		Grij332X1rMYXqmN3lNQISkMHRf2/DdXELst812WKGE=
+		</data>
+                        <key>Project</key>
+                        <data>
+		WeS8dr2dP74D2G4eO7AvRrVbufOi0GR7gpB57bjBiG8=
+		</data>
+                        <key>ProjectItem</key>
+                        <data>
+		WtaPU9rm7J0aQWjjEf7sfCn2HZlql+cuYhRsDffn51Q=
+		</data>
+                        <key>Settings</key>
+                        <data>
+		XWN4f49S6jLtf2g0hZok72bJ408wwyCX3ADwssmzwt0=
+		</data>
+                        <key>TeXFile</key>
+                        <data>
+		6CluIfoPedvZZaGidwNyxpUQEVkzbR2uHZVaqhL5Vl8=
+		</data>
+                        <key>UISettings</key>
+                        <data>
+		LjQtSuAfnBkFegfHijDskbOlefBAUNYPeVWd6Ou9Ngw=
+		</data>
+                    </dict>
+                    <key>NSStoreModelVersionHashesVersion</key>
+                    <integer>3</integer>
+                    <key>NSStoreModelVersionIdentifiers</key>
+                    <array>
+                        <string>15</string>
+                    </array>
+                    <key>kMDItemKeywords</key>
+                    <array>
+                        <string>Dissertation</string>
+                    </array>
+                </dict>
+            </plist>
+        </metadata>
+    </databaseInfo>
+    <object type="UISETTINGS" id="z102">
+        <attribute name="pdfviewscrollrect" type="string">{{0, 14663.953997053002}, {596.57538167552877, 967.63215752944234}}</attribute>
+        <attribute name="showpdfthumbnails" type="bool">0</attribute>
+        <attribute name="selectedcontrolstab" type="int16">0</attribute>
+        <attribute name="maxoutlinedepth" type="int16">7</attribute>
+        <attribute name="logoutputlevel" type="int16">0</attribute>
+        <attribute name="editorwidth" type="float">791</attribute>
+        <attribute name="controlswidth" type="float">220</attribute>
+        <attribute name="consoleview" type="int16">0</attribute>
+        <relationship name="project" type="1/1" destination="PROJECT" idrefs="z103"></relationship>
+    </object>
+    <object type="PROJECT" id="z103">
+        <attribute name="type" type="string">PDFLaTeX</attribute>
+        <attribute name="name" type="string">Dissertation</attribute>
+        <attribute name="folder" type="string">/Users/chrisjones/Google Drive/University/II/Project/Project/docs/diss</attribute>
+        <relationship name="mainfile" type="1/1" destination="FILE" idrefs="z107"></relationship>
+        <relationship name="selected" type="1/1" destination="FILE" idrefs="z107"></relationship>
+        <relationship name="settings" type="1/1" destination="SETTINGS" idrefs="z104"></relationship>
+        <relationship name="uisettings" type="1/1" destination="UISETTINGS" idrefs="z102"></relationship>
+        <relationship name="items" type="0/0" destination="PROJECTITEM" idrefs="z107 z105 z106"></relationship>
+    </object>
+    <object type="SETTINGS" id="z104">
+        <attribute name="stoponerror" type="bool">1</attribute>
+        <attribute name="showstatusbar" type="bool">1</attribute>
+        <attribute name="outputdirectory" type="string"></attribute>
+        <attribute name="openconsole" type="bool">0</attribute>
+        <attribute name="ncompile" type="int16">3</attribute>
+        <attribute name="language" type="string">en_GB</attribute>
+        <attribute name="enginename" type="string">pdflatex</attribute>
+        <attribute name="dops2pdf" type="bool">1</attribute>
+        <attribute name="doliveupdate" type="bool">0</attribute>
+        <attribute name="dobibtex" type="bool">1</attribute>
+        <attribute name="bibtexcommand" type="string">bibtex</attribute>
+        <relationship name="project" type="1/1" destination="PROJECT" idrefs="z103"></relationship>
+    </object>
+    <object type="FOLDER" id="z105">
+        <attribute name="sortindex" type="int32">2</attribute>
+        <attribute name="name" type="string">images</attribute>
+        <attribute name="isexpanded" type="bool">0</attribute>
+        <attribute name="filepath" type="string">images</attribute>
+        <relationship name="parent" type="1/1" destination="PROJECTITEM"></relationship>
+        <relationship name="project" type="1/1" destination="PROJECT" idrefs="z103"></relationship>
+        <relationship name="children" type="0/0" destination="PROJECTITEM"></relationship>
+    </object>
+    <object type="FOLDER" id="z106">
+        <attribute name="sortindex" type="int32">1</attribute>
+        <attribute name="name" type="string">include</attribute>
+        <attribute name="isexpanded" type="bool">0</attribute>
+        <attribute name="filepath" type="string">include</attribute>
+        <relationship name="parent" type="1/1" destination="PROJECTITEM"></relationship>
+        <relationship name="project" type="1/1" destination="PROJECT" idrefs="z103"></relationship>
+        <relationship name="children" type="0/0" destination="PROJECTITEM"></relationship>
+    </object>
+    <object type="TEXFILE" id="z107">
+        <attribute name="wasopen" type="bool">0</attribute>
+        <attribute name="visiblerect" type="string">{{0, 6930}, {763, 713}}</attribute>
+        <attribute name="lasteditdate" type="date">541604863.08201599121093750000</attribute>
+        <attribute name="istext" type="bool">1</attribute>
+        <attribute name="fileloaddate" type="date">541604863.26876997947692871094</attribute>
+        <attribute name="extension" type="string">tex</attribute>
+        <attribute name="cursor" type="string">{14892, 0}</attribute>
+        <attribute name="sortindex" type="int32">0</attribute>
+        <attribute name="name" type="string">Dissertation_main.tex</attribute>
+        <attribute name="isexpanded" type="bool">0</attribute>
+        <attribute name="filepath" type="string">./Dissertation_main.tex</attribute>
+        <relationship name="parent" type="1/1" destination="PROJECTITEM"></relationship>
+        <relationship name="project" type="1/1" destination="PROJECT" idrefs="z103"></relationship>
+        <relationship name="mainfileofproject" type="1/1" destination="PROJECT" idrefs="z103"></relationship>
+        <relationship name="children" type="0/0" destination="PROJECTITEM"></relationship>
+        <relationship name="bookmarks" type="0/0" destination="BOOKMARK"></relationship>
+    </object>
+    <object type="BOOKMARK" id="z108">
+        <attribute name="text" type="string">  \\item Give particular explanation to Capn'Proto and Lwt as these are the most interesting and pervasive libraries used in the project. Save technical details for implementation.
+</attribute>
+        <attribute name="linenumber" type="int64">211</attribute>
+        <relationship name="parentfile" type="1/1" destination="FILE"></relationship>
+    </object>
+</database>
