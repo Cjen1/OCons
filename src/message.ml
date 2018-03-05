@@ -5,6 +5,7 @@ open Capnp_rpc_lwt
 open Lwt.Infix
 
 exception DeserializationError
+let sturdy_refs = Hashtbl.create 10
 
 
 let serialize_operation op = 
@@ -420,7 +421,9 @@ let client_request_rpc t (cmd : Types.command) =
       (Params.command_set_reader params (Command.to_reader cmd_rpc) |> ignore);
 
       (* Send the message and pull out the result *)
-      Capability.call_for_unit_exn t method_id request;;
+      Capability.call_for_unit t method_id request >|= function
+      | Ok () -> ()
+      | Error e -> Hashtbl.clear sturdy_refs
 
 let client_response_rpc t (cid : Types.command_id) (result : Types.result) =
   let open Api.Client.Message.ClientResponse in
@@ -447,7 +450,11 @@ let client_response_rpc t (cid : Types.command_id) (result : Types.result) =
   Params.command_id_set_exn params cid;
 
   (* Send the message and ignore the response *)
-  Capability.call_for_unit_exn t method_id request;;
+      Capability.call_for_unit t method_id request >|= function
+      | Ok () -> ()
+      | Error e -> Hashtbl.clear sturdy_refs
+
+
 
 let decision_rpc t (p : Types.proposal) =
   let open Api.Client.Message.Decision in
@@ -493,7 +500,10 @@ let decision_rpc t (p : Types.proposal) =
       Params.slot_number_set_exn params slot_number;
 
       (* Send the message and ignore the response *)
-      Capability.call_for_unit_exn t method_id request;;
+      Capability.call_for_unit t method_id request >|= function
+      | Ok () -> ()
+      | Error e -> Hashtbl.clear sturdy_refs
+
 
 let proposal_rpc t (p : Types.proposal) =
   let open Api.Client.Message.SendProposal in
@@ -538,7 +548,11 @@ let proposal_rpc t (p : Types.proposal) =
       Params.slot_number_set_exn params slot_number;
 
       (* Send the message and ignore the response *)
-      Capability.call_for_unit_exn t method_id request;;
+      Capability.call_for_unit t method_id request >|= function
+      | Ok () -> ()
+      | Error e -> Hashtbl.clear sturdy_refs
+
+
 
 (*---------------------------------------------------------------------------*)
 
@@ -573,31 +587,18 @@ let uri_from_address host port =
 
 (* Takes a Capnp URI for a service and returns the lwt capability of that
    service *)
-(* TODO: This should probably be optimised - maybe store a reference to the
-   instantiated service in the client once a connection has been
-   established.
-   
-   This may even be necessary in order to preserve the ordering semantics
-   we want with RPC delivery *)
-
-
-let sturdy_refs = Hashtbl.create 10
-let service_from_uri uri =
-  (try Hashtbl.find sturdy_refs uri
-    with Not_found -> 
+let rec service_from_uri uri =
+  (try Lwt.return (Some (Hashtbl.find sturdy_refs uri))
+   with Not_found ->
+    (try (  
     let client_vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-    let capability = Sturdy_ref.connect_exn sr in
-    Hashtbl.add sturdy_refs uri capability; 
-    capability)
-
-(*
-let service_from_uri uri =
-  let client_vat = Capnp_rpc_unix.client_only_vat () in
-  let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
-  Sturdy_ref.connect_exn sr >>= fun proxy_to_service ->
-  Lwt.return proxy_to_service;;
-*)
+    Sturdy_ref.connect sr >>= function
+    | Ok capability ->
+      (Hashtbl.add sturdy_refs uri capability;
+       Lwt.return_some capability)
+    | Error e -> Lwt.return_none)
+    with _ -> failwith "hello"))
 
 (* Derive the service from an address by indirectly computing the URI.
 
@@ -606,13 +607,15 @@ let service_from_uri uri =
 
    TODO: Modify the code so that we don't need this extra indirection *)
 let service_from_addr host port = 
-  uri_from_address host port |> service_from_uri;;
+  uri_from_address host port |> service_from_uri
 
 (* Accepts as input a message and prepares it for RPC transport,
    given the URI of the service to which it will be sent*)
 let send_request message uri =
   (* Get the service for the given URI *)
-  service_from_uri uri >>= fun service ->
+  service_from_uri uri >>= function
+  | None -> Lwt.return_unit
+  | Some service -> (
   match message with
   | ClientRequestMessage cmd ->
     client_request_rpc service cmd;
@@ -621,7 +624,7 @@ let send_request message uri =
   | ProposalMessage p ->
     proposal_rpc service p;
   | ClientResponseMessage (cid, result) ->
-    client_response_rpc service cid result;;
+    client_response_rpc service cid result)
 
 (*---------------------------------------------------------------------------*)
 
@@ -653,8 +656,10 @@ let phase1_rpc t (b : Ballot.t) =
   Yojson.Basic.from_string >|=
   deserialize_phase1_response
 
+(* TODO: Pattern matching here exhaustive *)
 let send_phase1_message (b : Ballot.t) uri = 
-  service_from_uri uri >>= fun service ->
+  service_from_uri uri >>= function 
+  | Some service -> 
   phase1_rpc service b;;
 
 let phase2_rpc t (pval : Ballot.pvalue) =
@@ -667,6 +672,8 @@ let phase2_rpc t (pval : Ballot.pvalue) =
   Yojson.Basic.from_string >|=
   deserialize_phase2_response
 
+(* TODO: Pattern matching here is not exhaustive *)
 let send_phase2_message (pval : Ballot.pvalue) uri =
-  service_from_uri uri >>= fun service ->
-  phase2_rpc service pval
+  service_from_uri uri >>= function
+  | Some service ->
+    phase2_rpc service pval

@@ -12,6 +12,7 @@ let window = 5;;
 (* Type of replicas *)
 type t = {
   (* Id of the replica node *)
+
   id : Types.replica_id;
   
   (* The state of the application it is replicating *)
