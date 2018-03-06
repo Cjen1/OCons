@@ -9,5 +9,5 @@ license: "MIT"
 dev-repo: "https://github.com/chrislomaxjones/part-ii-project"
 
 build: [
-  ["jbuilder" "build" "--only" "main" "--root" "./src" "-j" jobs "@install"]
+  ["jbuilder" "build" "--root" "./src" "main.exe"]
 ]
