@@ -7,7 +7,7 @@ open Log.Logger
 type t = {
   id : Types.unique_id;
   mutable ballot_num : Ballot.t;
-  mutable accepted : Ballot.pvalue list
+  mutable accepted : Pval.t list
 }
 
 (* Useful helper functions *)
@@ -17,7 +17,7 @@ let (=) = Ballot.equal
 (* Initialize a new acceptor *)
 let initialize () = {
   id = Core.Uuid.create ();
-  ballot_num = Ballot.Bottom;
+  ballot_num = Ballot.bottom ();
   accepted = []
 }
 
@@ -42,26 +42,25 @@ let phase1_callback (a : t) (b : Ballot.t) =
      a.ballot_num <- b);
   
   Lwt.ignore_result (write_with_timestamp INFO ("Reply to phase1 message with: " ^ (Ballot.to_string a.ballot_num) ^ ", pvalues: "));
-  Core.List.iter a.accepted ~f:(fun pval -> Lwt.ignore_result (write_to_log INFO ("\t\t\t\t" ^ Ballot.pvalue_to_string pval)));
+  Core.List.iter a.accepted ~f:(fun pval -> Lwt.ignore_result (write_to_log INFO ("\t\t\t\t" ^ Pval.to_string pval)));
   (a.id, a.ballot_num, a.accepted))
 
 (* This callback occurs when an acceptor receives a phase2 message
    ... *)
-let phase2_callback (a : t) (p : Ballot.pvalue) =
+let phase2_callback (a : t) (p : Pval.t) =
   Core.Mutex.critical_section callback2_mutex ~f:(fun () ->
   Lwt.ignore_result (write_to_log INFO "\n");  
-  Lwt.ignore_result ( write_with_timestamp INFO ("Receive Phase2 callback with pvalue " ^ (Ballot.pvalue_to_string p)) );
+  Lwt.ignore_result ( write_with_timestamp INFO ("Receive Phase2 callback with pvalue " ^ (Pval.to_string p)) );
   let (b,_,_) = p in
   if b = a.ballot_num then
-    (Lwt.ignore_result ( write_with_timestamp INFO ("Accept pvalue " ^ (Ballot.pvalue_to_string p)) );
-     if not (Core.List.mem a.accepted p ~equal:(Ballot.pvalue_equal)) then
+    (Lwt.ignore_result ( write_with_timestamp INFO ("Accept pvalue " ^ (Pval.to_string p)) );
+     if not (Core.List.mem a.accepted p ~equal:(Pval.equal)) then
         a.accepted <- p :: a.accepted);
   Lwt.ignore_result (write_with_timestamp INFO ("Reply to phase2 message with: (" ^ (Types.string_of_id a.id) ^ "," ^ (Ballot.to_string a.ballot_num) ^ ")"));
   (a.id, a.ballot_num))
 
 (* Initialize a server for a given acceptor  on a given host and port *) 
 let start_server (acceptor : t) (host : string) (port : int) =
-  (* Todo: add callback mechanism... *)
   Message.start_new_server host port ~phase1_callback:(phase1_callback acceptor)
                                      ~phase2_callback:(phase2_callback acceptor) 
 
@@ -73,12 +72,3 @@ let new_acceptor host port =
   start_server acceptor host port >>= fun uri ->
   write_to_log INFO ("Initializing new acceptor: \n\tURI " ^ (Uri.to_string uri)) >>= fun () ->
   Lwt.wait () |> fst
-
-
-
-
-(* DE-DUPLICATION PROBLEM:
-
-   - CAPNPROTO URLS SOMEHOW GET ESCAPE CHARACTERS %20%20 ADDED ON, PROBABLY WHEN THEY'RE SERIALIZED.
-     Fix this or we'll spawn too many commanders 
-*)

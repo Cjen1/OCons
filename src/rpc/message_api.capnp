@@ -5,8 +5,7 @@ interface Message {
   
   struct Command {
     struct Operation {
-    # Encodes the operation passed in a command as a union of
-    # possible ops
+    # Encodes the operation passed in a command as a union of possible ops
       union {
         nop @0 :Void;
         # No operation, one possible value (hence void)
