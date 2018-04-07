@@ -1,39 +1,74 @@
-% The master copy of this demo dissertation is held on my filespace
-% on the cl file serve (/homes/mr/teaching/demodissert/)
-
-% Last updated by MR on 2 August 2001
-
 \documentclass[12pt,twoside,notitlepage]{report}
 
 \usepackage{a4}
 \usepackage{verbatim}
+\usepackage{color}
 
-\input{epsf}                            % to allow postscript inclusions
+\usepackage{listings}
+
+% Borders around figures
+\usepackage{float}
+\floatstyle{boxed} 
+\restylefloat{figure}
+
+% For the labelled bullet points...
+% \usepackage[showframe]{geometry}
+\usepackage{enumitem}
+\usepackage{listliketab, tabularx, makecell}
+\usepackage{amsmath, amsthm, amssymb}
+
+% Chapter heading sizing
+\usepackage{sectsty}
+\chapternumberfont{\huge} 
+\chaptertitlefont{\huge}
+
+% Header spacing adjustment
+\usepackage{titlesec}
+\titleformat{\chapter}[display]   
+{\normalfont\huge\bfseries}{\chaptertitlename\ \thechapter}{20pt}{\Huge}   
+\titlespacing*{\chapter}{0pt}{-20pt}{30pt}
+
+% ...?
+\usepackage{booktabs}% http://ctan.org/pkg/booktabs
+
+% Bullet points in tables
+\newcommand{\tabitem}{~~\llap{\textbullet}~~}
+
+
+\input{epsf}                           
+% to allow postscript inclusions
 % On thor and CUS read top of file:
 %     /opt/TeX/lib/texmf/tex/dvips/epsf.sty
 % On CL machines read:
 %     /usr/lib/tex/macros/dvips/epsf.tex
 
-
-
-\raggedbottom                           % try to avoid widows and orphans
+% Try to avoid widows and orphans
+\raggedbottom                          
 \sloppy
 \clubpenalty1000%
 \widowpenalty1000%
 
-\addtolength{\oddsidemargin}{6mm}       % adjust margins
-\addtolength{\evensidemargin}{-8mm}
+% Adjust margins (got rid of for now)
+%\addtolength{\oddsidemargin}{6mm}       
+%\addtolength{\evensidemargin}{-8mm}
 
-\setlength{\parindent}{0pt} % No ident on paragraph
+% No indent on paragraph
+\setlength{\parindent}{0pt} 
 
-\renewcommand{\baselinestretch}{1.1}    % adjust line spacing to make more readable
+% Adjust line spacing to make more readable
+\renewcommand{\baselinestretch}{1.1}    
 
 \begin{document}
 
+\lstset{
+   language=[Objective]Caml
+}
+
 \bibliographystyle{plain}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title page
 
 \pagestyle{empty}
 
@@ -42,6 +77,7 @@
 \vspace*{60mm}
 \begin{center}
 \Huge
+{\bf \color{red} DRAFT} \\
 {\bf Achieving distributed consensus with Paxos} \\
 \vspace*{5mm}
 Part II Project \\
@@ -53,72 +89,73 @@ Trinity Hall \\
 
 \cleardoublepage
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% Proforma, table of contents and list of figures
+% Proforma
 
 \setcounter{page}{1}
 \pagenumbering{roman}
 \pagestyle{plain}
 
-\chapter*{Proforma}
+%\chapter*{Proforma}
 
-{\large
-\begin{tabular}{ll}
-Name:               & \bf Christopher Jones                       \\
-College:            & \bf Trinity Hall                     \\
-Project Title:      & \bf Achieving distributed consensus with Paxos \\
-Examination:        & \bf Part II Project        \\
-Word Count:         & \bf ... \footnotemark[1] \\
-Project Originator: & Christopher Jones                    \\
-Supervisor:         & Dr Richard Mortier                    \\ 
-\end{tabular}
-}
-\footnotetext[1]{This word was computed
-by {\tt detex diss.tex | tr -cd '0-9A-Za-z $\tt\backslash$n' | wc -w}
-}
-\stepcounter{footnote}
-
-
-\section*{Original Aims of the Project}
-
-...
+%{\large
+%\begin{tabular}{ll}
+%Name:               & \bf Christopher Jones                       \\
+%College:            & \bf Trinity Hall                     \\
+%Project Title:      & \bf Achieving distributed consensus with Paxos \\
+%Examination:        & \bf Part II Project        \\
+%Word Count:         & \bf ... \footnotemark[1] \\
+%Project Originator: & Christopher Jones                    \\
+%Supervisor:         & Dr Richard Mortier                    \\ 
+%\end{tabular}
+%}
+%\footnotetext[1]{This word was computed
+%by {\tt detex diss.tex | tr -cd '0-9A-Za-z $\tt\backslash$n' | wc -w}
+%}
+%\stepcounter{footnote}
 
 
-\section*{Work Completed}
+%\section*{Original Aims of the Project}
+%...
 
-... 
+%\section*{Work Completed}
+%... 
 
-\section*{Special Difficulties}
+%\section*{Special Difficulties}
+%... 
 
-... 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
  
-\newpage
-\section*{Declaration}
+ 
+ % Declaration
+ 
+%\newpage
+%\section*{Declaration}
 
-I, [Name] of [College], being a candidate for Part II of the Computer
-Science Tripos [or the Diploma in Computer Science], hereby declare
-that this dissertation and the work described in it are my own work,
-unaided except as may be specified below, and that the dissertation
-does not contain material that has already been used to any substantial
-extent for a comparable purpose.
+%I, [Name] of [College], being a candidate for Part II of the Computer
+%Science Tripos [or the Diploma in Computer Science], hereby declare
+%that this dissertation and the work described in it are my own work,
+%unaided except as may be specified below, and that the dissertation
+%does not contain material that has already been used to any substantial
+%extent for a comparable purpose.
 
-\bigskip
-\leftline{Signed [signature]}
+%\bigskip
+%\leftline{Signed [signature]}
 
-\medskip
-\leftline{Date [date]}
+%\medskip
+%\leftline{Date [date]}
 
-\cleardoublepage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%\cleardoublepage
 
 \tableofcontents
 
-\listoffigures
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \listoffigures
 
 \cleardoublepage        % just to make sure before the page numbering is changed
 
@@ -126,298 +163,47 @@ extent for a comparable purpose.
 \pagenumbering{arabic}
 \pagestyle{headings}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\chapter{Introduction}
-
-\begin{itemize}
-  \item Quick sentence or two introducing the project as a whole.
-\end{itemize}
-
-\section{Background}
-
-\begin{itemize}
-  \item Describe at a high-level the problem of distributed consensus
-  \item Describe the environment we're operating in (again at a high level)
-  \item Paxos as a means of getting around these problems.
-  \item Why Paxos is important
-  \item Where Paxos is used in real large-scale systems (e.g. Google Chubby)
-  \item How Paxos provides us with primitives to use state machine replication techniques and atomic broadcast etc.
-\end{itemize}
-
-\section{Aims}
-
-\begin{itemize}
-  \item Describe the purpose of this project - to develop an implementation of Multi-Paxos.
-  \item How the project will be evaluated - such as metrics and the comparison to popular existing library (Libpaxos), using a network simulator.
-\end{itemize}
-
+\include{include/introduction}
 \newpage
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\chapter{Preparation}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Short introduction of what we're going to cover in preparation. All the stuff that was considered before development began. \\
-
-Do I need to re-produce proofs here?
-
-\section{Theotrical background}
-
-\subsection{Aims of Consensus}
-  \begin{itemize}
-    \item A more formal treatment of distributed consensus?
-    \item The formal definition of what we mean by consensus / agreement
-  \end{itemize}
-
-\subsection{Assumptions of the environment}
-
-\begin{itemize}
-  \item State the assumptions of the networks in which we operate and their failure modes.
-  \item State the assumptions about how nodes can fail in Paxos.
-  \item The guarantees we can rely on when sending messages, in paticular non-Byzantine faults for all of the above
-\end{itemize}
-
-\subsection{Single-decree Paxos}
-
-\begin{itemize}
-  \item Start with a description of how the algorithm works in the case of proposing a single value.
-  \item Use the parlance in Lamport's Paxos Made Simple - proposers, learners and leaders?
-  \item Discuss the phases and invariants of the algorithm in this simple case to introduce how these systems work
-  \item Include an explanation and a timing diagram
-\end{itemize}
-
-\subsection{Multi Paxos}
-\begin{itemize}
-  \item Move now to the parlance used in Paxos Made Moderately Complex and also that with which the project uses.
-  \item Explain how we do not need to perform a whole instance of Paxos for each proposed value in a sequence if we assume the leader does not crash with high regularity.
-  \item Introduce ballots as an indirection between proposals and the voting protocol.
-  \item Describe the roles in Multi Paxos under this scheme. High level overview of clients, replicas, leaders and acceptors (note we can co-locate them if we wish to return to the same node types we have in Paxos above)
-  \item Describe the failures we can tolerate of each of these nodes
-  \item Communication patterns between nodes.
-\end{itemize}
-
-\subsection{Replicating a State Machine}
-\begin{itemize}
-  \item Discuss the technique used to take an state machine and replicate it with Multi-Paxos
-\end{itemize}
-
-\section{Requirements}
-
-\subsection{Application}
-\begin{itemize}
-  \item Describe the application to build (strongly consistent replicated KV-store). Link back to state machine replication.
-  \item Explain we need to convert RSM transitions into commands clients can issue to replicas.
-  \item A table containing the commands, their parameters, their response types and their semantics (i.e. updating a key that does not exists returns a failure) for the KV-store.
-  \item Describe the need to separate out the messaging subsystem from the Paxos module.
-  \item A diagram showing how the appliction sits atop a Paxos module that sits atop a messaging module that is connected to the network.
-\end{itemize}
-
-\subsection{System requirements}
-\begin{itemize}
-  \item
-\end{itemize}
-
-\subsection{Evaluation strategy}
-\begin{itemize}
-  \item
-\end{itemize}
-
-\section{Software Engineering}
-
-Brief introduction and describe the structure of this section here.
-
-\subsection{Choice of language}
-
-\begin{itemize}
-  \item Explain why OCaml was used, what advantages it offers.
-\end{itemize}
-
-\subsection{Methodology}
-
-\begin{itemize}
-  \item Discuss the software development methodology (something along the lines of Agile I imagine)
-  \item Describe the testing strategy. Talk about OUnit for unit testing functions as simple units and then more thorough and complete tests for correct funtionality at the cluster-level - (these can either be Mininet scripts or something else entirely...)
-\end{itemize}
-
-\subsection{Libraries}
-
-\begin{itemize}
-  \item Mention OPAM package manager and how it is used for installing / managing libraries and dependencies
-  \item Discuss the licenses of these packages (professional practice)
-  \item Give particular explanation to Capn'Proto and Lwt as these are the most interesting and pervasive libraries used in the project. Save technical details for implementation.
-  \item Remark briefly about using Core as standard library replacement, Yojson for some serialization, OUnit for unit testing, some lib for command line parsing.
-\end{itemize}
-
-\subsection{Tools}
-
-\begin{itemize}
-  \item Vim with Merlin for type inference whilst editing.
-  \item Git for version control, Github (and Google Drive) for backups.
-  \item Mininet (with VirtualBox) for evaluation.
-\end{itemize}
-
-\section{Summary}
-
-
+\include{include/preparation}
 \newpage
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\chapter{Implementation}
-
-\section{High level structure of program}
-
-\section{Data structures}
-
-Include a description of the data structures used in the implementation. Talk about them first so we can discuss them in the messaging section and the protocol implementation sections.
-
-\subsection{Key value store}
-...
-
-\subsection{Proposals}
-...
-\subsection{Ballots}
-...
-
-\section{Messages}
-
-\begin{itemize}
-  \item Talk about the Cap'n Proto schema format. Include snippets of the schema file and how it relates to messages we are required to send (could easily fit the schema into a two page appendix as well).
-  \item Include mention of serialization of certain parts of the application as JSON.
-  \item Now talk about implementation of the Cap'n Proto server. How functions-as-values were used to allow callbacks to be performed by the server.
-  \item Recall / reference the message semantics required from the preparation chapter. Explain how we carefully handle exceptions to ensure we get the desired semantics of messaging from Cap'n Proto.
- \end{itemize}
-
-\section{Clients and replicas - better title?}
-
-\subsection{Clients}
-\begin{itemize}
-  \item Talk about how clients operate outside the system
-  \item How they send messages to replicas.
-  \item Include .mli interface for replicas, the record (with mutable fields) for storing replicas.
-\end{itemize}
-
-\subsection{Replicas}
-\begin{itemize}
-  \item Leading on from clients, explain how messages can be re-ordered / lost / delayed from clients and how broadcasts from replicas allow progress in the event of replica failure.
-  \item Describe the two-fold operation of replicas. They receive and perform de-duplication of broadcast client messages. They then go on to propose to commit commands to given slots. They also handle when leaders reject their proposals so they can be re-proposed later. They also maintain the application state (in this case the replicated key-value store.)
-  \item Interesting points to discuss include looking at a snippet of the de-duplication function and discussing it. Also looking at how mutexes are used to hold locks on the sets of commands, proposals, decisions etc.
-  \item Include a diagram of the three different sets of commands, proposals and decisions and how each moves from one set to another in different sets of circumstances.
-\end{itemize}
-
-\section{Synod protocol}
-
-\subsection{Quorums}
-\begin{itemize}
-  \item Describe how the quorum system was implemented. Show the .mli interface as a snippet and describe how this can be used to achieve majority quorums.
-  \item Show briefly how the majority checking function was implemented.
-\end{itemize}
-
-\subsection{Acceptors}
-\begin{itemize}
-  \item Discuss the operation of acceptors - how they form the fault tolerant memory of Paxos.
-  \item Discuss the functions (along with snippets) by which acceptors adopt and accept ballots.
-\end{itemize}
-
-\subsection{Leaders}
-\begin{itemize}
-  \item Describe how the operation of leaders is split into two sub-processes - scouts and commanders.
-  \item Operational description of how scouts and commanders communicate concurrently. Diagram displaying how there is a message queue that these sub-processes use to send ``virtual'' messages.
-  \item Snippets of the signatures and structs used to construct these sub-processes. 
-\end{itemize}
-
-\subsubsection{Scouts}
-\begin{itemize}
-  \item Describe how scouts secure ballots with acceptors. Relate this to operation of acceptors above.
-  \item State how scouts enqueue virtual adopted messages after securing adoption from quorum of acceptors.
-  \item Describe how pre-emption can occur when a commander is waiting for adoption.
-\end{itemize}
-
-\subsubsection{Commanders}
-\begin{itemize}
-  \item Explain how commanders attempt to commit their set of proposals.
-  \item Give detail on the pmax and ``arrow'' function as used in the paper.
-  \item Describe how pre-emption can occur when a commander is waiting for acceptance.
-\end{itemize}
-
-\section{Summary}
-
+\include{include/implementation}
 \newpage
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\chapter{Evaluation}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\section{Experimental Setup}
-\subsection{Mininet}
-\begin{itemize}
-  \item Describe the simulation framework used with Mininet - how the simulation scripts are structured.
-  \item Describe the system by which a simulation is performed - include a diagram of how simulation scripts and executable binaries are transferred to the simulation, simulations are performed and resulting log files are returned to the host-machine for analysis and plotting.
-  \item Describe the system by which tracing is performed.
-\end{itemize}
+% \include{include/evaluation}
+%\newpage
 
-\subsection{Libpaxos}
-\begin{itemize}
-  \item Short description of Libpaxos library.
-  \item Explain how application was written / any modifications necessary to run the same sample application.
-\end{itemize}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\section{Steady state behaviour}
-\begin{itemize}
-   \item Characterise the steady state behaviour of the system - capturing the latency and throughput in a given configuration. Plot against each other to show characteristics.
-   \item Comparison in the steady state behaviour between the project implementation and Libpaxos.
-\end{itemize}
+% \include{include/conclusion}
+ \cleardoublepage
 
-\section{Configuration sizes}
-\begin{itemize}
-   \item Treatment of experiments that describe how latency and throughput vary as a function of the number of different nodes in the configuration varies.
-      \item Include description of the exact experiment performed and how confidence intervals were calculated.
-   \item Include graphs for: latency against different cluster sizes and throughput against different cluster sizes. Include Libpaxos version of this as well.
-\end{itemize}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\section{Failure traces}
-\begin{itemize}
-  \item Experiment pertaining to crashing a replica and observing system behaviour over time.
-  \item Describe how data was averaged - including the sample mean and EWMA.
-  \item Graph of latency and throughput as a function of time with a specific point a replica is crashed noted.
-  \item Similar graph with a replica restoration.
-  \item Graphs / on the same plot with behaviour of Libpaxos.
-\end{itemize}
-
-\section{Quorum sizes}
-\begin{itemize}
-  \item ...
-  \item ...
-\end{itemize}
-
-\section{Summary}
-
-
-\newpage
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\chapter{Conclusion}
-
-...
-
-
-
-\cleardoublepage
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % the bibliography
 
 \addcontentsline{toc}{chapter}{Bibliography}
 \bibliography{refs}
 \newpage
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 % the appendices
-\appendix
+%\appendix
 
-\cleardoublepage
+%\cleardoublepage
 
-\chapter{Projct Proposal}
-
-% \input{propbody}
+% Project proposal
+%\chapter{Projct Proposal}
 
 \end{document}

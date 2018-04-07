@@ -1,0 +1,45 @@
+\chapter{Evaluation}
+
+\section{Experimental Setup}
+\subsection{Mininet}
+\begin{itemize}
+  \item Describe the simulation framework used with Mininet - how the simulation scripts are structured.
+  \item Describe the system by which a simulation is performed - include a diagram of how simulation scripts and executable binaries are transferred to the simulation, simulations are performed and resulting log files are returned to the host-machine for analysis and plotting.
+  \item Describe the system by which tracing is performed.
+\end{itemize}
+
+\subsection{Libpaxos}
+\begin{itemize}
+  \item Short description of Libpaxos library.
+  \item Explain how application was written / any modifications necessary to run the same sample application.
+\end{itemize}
+
+\section{Steady state behaviour}
+\begin{itemize}
+   \item Characterise the steady state behaviour of the system - capturing the latency and throughput in a given configuration. Plot against each other to show characteristics.
+   \item Comparison in the steady state behaviour between the project implementation and Libpaxos.
+\end{itemize}
+
+\section{Configuration sizes}
+\begin{itemize}
+   \item Treatment of experiments that describe how latency and throughput vary as a function of the number of different nodes in the configuration varies.
+      \item Include description of the exact experiment performed and how confidence intervals were calculated.
+   \item Include graphs for: latency against different cluster sizes and throughput against different cluster sizes. Include Libpaxos version of this as well.
+\end{itemize}
+
+\section{Failure traces}
+\begin{itemize}
+  \item Experiment pertaining to crashing a replica and observing system behaviour over time.
+  \item Describe how data was averaged - including the sample mean and EWMA.
+  \item Graph of latency and throughput as a function of time with a specific point a replica is crashed noted.
+  \item Similar graph with a replica restoration.
+  \item Graphs / on the same plot with behaviour of Libpaxos.
+\end{itemize}
+
+\section{Quorum sizes}
+\begin{itemize}
+  \item ...
+  \item ...
+\end{itemize}
+
+\section{Summary}
