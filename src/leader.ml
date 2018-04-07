@@ -1,53 +1,58 @@
 (* leader.ml *)
 
+open Types
 open Lwt.Infix
 open Core
 open Log.Logger
 
 (* Types of leaders *)
 type t = {
-  id : Types.leader_id;
+  id : leader_id;
   mutable replica_uris : Uri.t list;
   mutable acceptor_uris : Uri.t list;
   mutable ballot_num : Ballot.t;
   mutable active : bool;
-  mutable proposals : Types.proposal list
+  mutable proposals : proposal list
 }
 
 (* Types of responses that can be returned by scout and commander sub-processes *)
-type process_response = Adopted of Ballot.t * Ballot.pvalue list
+type process_response = Adopted of Ballot.t * Pval.t list
                       | Preempted of Ballot.t
 
 (* Create a new leader *)
 let initialize replica_uris acceptor_uris =
-  let id = Core.Uuid.create () in {
+  let id = create_id ()
+  in {
     id;
     replica_uris;
     acceptor_uris;
-    ballot_num = Number(0,id);
+    ballot_num = Ballot.init id;
     active = false;
-    proposals = [] }
+    proposals = [] 
+  }
 
 (* Given a list of pvalues, return the pvalue with the greatest ballot number.
    Achieve this by first sorting the ballots in the list and then selecting the
    tail of the list *)
-let max_ballot (pvals : Ballot.pvalue list) : Ballot.pvalue =
-  List.hd_exn (
-    List.stable_sort ~cmp:(fun (b,_,_) -> fun (b',_,_) -> - (Ballot.compare b b')) pvals)
+let max_ballot (pvals : Pval.t list) : Pval.t =
+  let open Core.List in
+  let cmp = fun (b,_,_) -> fun (b',_,_) -> - (Ballot.compare b b') in
+    hd_exn ( stable_sort ~cmp:cmp pvals )
 
-let pmax (pvals : Ballot.pvalue list) : Types.proposal list =
-  (* Sort the list by slot number *)
-  let sorted_pvals = List.stable_sort ~cmp:(fun (_,s,_) -> fun (_,s',_) -> Int.compare s s') pvals in
-  (* Then group by slot number *)
-  let grouped_pvals = List.group sorted_pvals ~break:(fun (_,s,_) -> fun (_,s',_) -> not (s=s')) in
-  (* Finally map over the list of list of pvalues, selecting the proposal corresponding to
-     the maximum ballot number in each sublist *)
-  List.map grouped_pvals ~f:(fun ps -> let (_,s,c) = max_ballot ps in (s,c))
+let pmax (pvals : Pval.t list) : proposal list =
+  let open Core.List in
+    (* Sort the list by slot number *)
+    let sorted_pvals = stable_sort ~cmp:(fun (_,s,_) -> fun (_,s',_) -> Int.compare s s') pvals in
+      (* Then group by slot number *)
+      let grouped_pvals = group sorted_pvals ~break:(fun (_,s,_) -> fun (_,s',_) -> not (s=s')) in
+        (* Finally map over the list of list of pvalues, selecting the proposal corresponding to
+           the maximum ballot number in each sublist *)
+        map grouped_pvals ~f:(fun ps -> let (_,s,c) = max_ballot ps in (s,c))
 
 (* xs << ys returns the elements of y and the elements of x not in y *)
 let (<<) xs ys =
-  List.append ys (List.filter xs ~f:(fun x -> not (List.mem ys x ~equal:Types.proposals_equal)))
-
+  let open Core.List in
+    append ys (filter xs ~f:(fun x -> not (mem ys x ~equal:proposals_equal)))
 
 
 
@@ -57,7 +62,7 @@ let (<<) xs ys =
 module Scout = struct
   type t' = {
     receive_lock : Lwt_mutex.t;  
-    mutable pvalues : Ballot.pvalue list;
+    mutable pvalues : Pval.t list;
     mutable quorum : (Uri.t, Types.unique_id) Quorum.t
   }
 
@@ -131,15 +136,15 @@ module Commander = struct
 
   (* Computation performed by the commander sub-process involves sending out phase1 requests
    and waiting for a majority of responses *)
-  let run_commander (commander : t') (leader : t) (pval : Ballot.pvalue) send =
+  let run_commander (commander : t') (leader : t) (pval : Pval.t) send =
     (* Iterate through list of uris, sending a phase1 request to each in parallel 
        and call a function to operate over the response *)
     Lwt_list.iter_p (fun uri -> Message.send_phase2_message pval uri >>= fun response ->
       receive_phase2b commander pval response leader.replica_uris send) leader.acceptor_uris    
 
   (* Spawn a new commander sub-process *)
-  let spawn (leader : t) (pval : Ballot.pvalue) send =
-    Lwt.ignore_result (write_with_timestamp INFO ("Spawning new commander for pvalue " ^ (Ballot.pvalue_to_string pval)));
+  let spawn (leader : t) (pval : Pval.t) send =
+    Lwt.ignore_result (write_with_timestamp INFO ("Spawning new commander for pvalue " ^ (Pval.to_string pval)));
     (* Run process in the background and don't wait for a result *)
     Lwt.async (fun () ->
         run_commander { receive_lock = Lwt_mutex.create ();
@@ -175,10 +180,10 @@ let send msg =
 
 let message_mutex = Lwt_mutex.create ()
 
-let adopt (leader : t) (ballot_num : Ballot.t) (pvals : Ballot.pvalue list) =
+let adopt (leader : t) (ballot_num : Ballot.t) (pvals : Pval.t list) =
   Lwt_mutex.with_lock message_mutex (fun () ->
       write_with_timestamp INFO ("Adopted " ^ (Ballot.to_string ballot_num) ^ " with pvals " ^
-                                 (Core.List.to_string ~f:(Ballot.pvalue_to_string) pvals)) >|= fun () ->
+                                 (Core.List.to_string ~f:(Pval.to_string) pvals)) >|= fun () ->
 
       (* Update set of proposals *)
       leader.proposals <- (leader.proposals << (pmax pvals));
@@ -188,7 +193,9 @@ let adopt (leader : t) (ballot_num : Ballot.t) (pvals : Ballot.pvalue list) =
       (* Set active for this leader to true *)
       leader.active <- true)
 
-exception Invalid_ballot
+(*
+
+OLD PREEMPT FUNCTION...
 
 let preempt (leader : t) (b' : Ballot.t) =
   Lwt_mutex.with_lock message_mutex (fun () ->
@@ -201,10 +208,20 @@ let preempt (leader : t) (b' : Ballot.t) =
        leader.ballot_num <- Number(r' + 1, leader.id);
        Scout.spawn leader leader.ballot_num send)
     else Lwt.return_unit)
+*)
+
+let preempt (leader : t) (b' : Ballot.t) =
+  Lwt_mutex.with_lock message_mutex (fun () ->
+    if Ballot.less_than leader.ballot_num b' then
+      write_with_timestamp INFO ("Preempted with ballot " ^ (Ballot.to_string b')) >|= fun () ->    
+      (leader.active <- false;
+       leader.ballot_num <- Ballot.succ_exn b';
+       Scout.spawn leader leader.ballot_num send)
+    else Lwt.return_unit)
 
 (* Process messages as they are added to the queue *)
 let rec receive (leader : t) =
-  Lwt_unix.sleep 0.1 >>= fun () -> (* This is required for some reason... *)
+  Lwt_unix.sleep 0.00001 >>= fun () -> (* This is required for some reason... *)
   Lwt_mutex.lock queue_guard >>= fun () ->
   (match Queue.dequeue message_queue with
    | None -> Lwt.return_unit
@@ -258,6 +275,6 @@ let new_leader host port replica_uris acceptor_uris =
   Lwt.join [
     (start_server leader host port >>= fun uri ->
      print_uri uri >>= fun () ->
-     Scout.spawn leader (Number(0,leader.id)) send;
+     Scout.spawn leader (Ballot.init leader.id) send;
      Lwt.wait () |> fst);
      receive leader]

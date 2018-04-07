@@ -201,7 +201,10 @@ let receive_decision (replica : t) (p : proposal ) : unit =
 (* Starts a server that will run the service
    This is mostly Capnproto boilerplate *)
 let start_server (replica : t) (host : string) (port : int) =
-  Message.start_new_server ~request_callback:(receive_request replica) ~proposal_callback:(receive_decision replica) host port;;
+  Message.start_new_server 
+    ~request_callback:(receive_request replica) 
+    ~proposal_callback:(receive_decision replica) 
+    host port;;
 
 
 
@@ -276,7 +279,7 @@ let rec propose_lwt replica =
 
 (* Initialize a new replica and its lwt threads *)
 let new_replica host port leader_uris =  
-  let replica = initialize leader_uris in 
+  let replica = initialize leader_uris in
   Lwt.join [
     (* Start the server on the specified (host,port) pair.
        Print the URI representing the Capnp sturdy ref
