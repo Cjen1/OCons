@@ -1,0 +1,109 @@
+\chapter{Implementation}
+
+\section{Data structures}
+
+\subsection{Ballots}
+
+\begin{figure}[h]
+  \begin{lstlisting}
+type t = Bottom
+       | Number of int * leader_id
+  \end{lstlisting}
+    \caption{Types of ballot numbers.}
+  \centering
+\end{figure}
+
+\begin{figure}[h]
+  \begin{lstlisting}
+type t
+val bottom : unit -> t
+val init : leader_id -> t
+val succ_exn : t -> t
+  \end{lstlisting}
+    \caption{Excerpt of the type definitions in the Ballot module. These are the types of functions that can be used to generate ballot numbers.}
+  \centering
+\end{figure}
+
+Talk about the correspondence between the definition and the types of ballots. Talk about how, with the interface
+we've given for ballots, the concrete type is obscured so the compiler will reject a whole host of errors to do with
+generating invalid ballots.
+
+
+
+
+%\section{High level structure of program}
+%
+%\section{Data structures}
+%
+%Include a description of the data structures used in the implementation. Talk about them first so we can discuss them in the messaging section and the protocol implementation sections.
+%
+%\subsection{Key value store}
+%...
+%
+%\subsection{Proposals}
+%...
+%\subsection{Ballots}
+%...
+%
+%\section{Messages}
+%
+%\begin{itemize}
+%  \item Talk about the Cap'n Proto schema format. Include snippets of the schema file and how it relates to messages we are required to send (could easily fit the schema into a two page appendix as well).
+%  \item Include mention of serialization of certain parts of the application as JSON.
+%  \item Now talk about implementation of the Cap'n Proto server. How functions-as-values were used to allow callbacks to be performed by the server.
+%  \item Recall / reference the message semantics required from the preparation chapter. Explain how we carefully handle exceptions to ensure we get the desired semantics of messaging from Cap'n Proto.
+% \end{itemize}
+%
+%\section{Clients and replicas - better title?}
+%
+%\subsection{Clients}
+%\begin{itemize}
+%  \item Talk about how clients operate outside the system
+%  \item How they send messages to replicas.
+%  \item Include .mli interface for replicas, the record (with mutable fields) for storing replicas.
+%\end{itemize}
+%
+%\subsection{Replicas}
+%\begin{itemize}
+%  \item Leading on from clients, explain how messages can be re-ordered / lost / delayed from clients and how broadcasts from replicas allow progress in the event of replica failure.
+%  \item Describe the two-fold operation of replicas. They receive and perform de-duplication of broadcast client messages. They then go on to propose to commit commands to given slots. They also handle when leaders reject their proposals so they can be re-proposed later. They also maintain the application state (in this case the replicated key-value store.)
+%  \item Interesting points to discuss include looking at a snippet of the de-duplication function and discussing it. Also looking at how mutexes are used to hold locks on the sets of commands, proposals, decisions etc.
+%  \item Include a diagram of the three different sets of commands, proposals and decisions and how each moves from one set to another in different sets of circumstances.
+%\end{itemize}
+%
+%\section{Synod protocol}
+%
+%\subsection{Quorums}
+%\begin{itemize}
+%  \item Describe how the quorum system was implemented. Show the .mli interface as a snippet and describe how this can be used to achieve majority quorums.
+%  \item Show briefly how the majority checking function was implemented.
+%\end{itemize}
+%
+%\subsection{Acceptors}
+%\begin{itemize}
+%  \item Discuss the operation of acceptors - how they form the fault tolerant memory of Paxos.
+%  \item Discuss the functions (along with snippets) by which acceptors adopt and accept ballots.
+%\end{itemize}
+%
+%\subsection{Leaders}
+%\begin{itemize}
+%  \item Describe how the operation of leaders is split into two sub-processes - scouts and commanders.
+%  \item Operational description of how scouts and commanders communicate concurrently. Diagram displaying how there is a message queue that these sub-processes use to send ``virtual'' messages.
+%  \item Snippets of the signatures and structs used to construct these sub-processes. 
+%\end{itemize}
+%
+%\subsubsection{Scouts}
+%\begin{itemize}
+%  \item Describe how scouts secure ballots with acceptors. Relate this to operation of acceptors above.
+%  \item State how scouts enqueue virtual adopted messages after securing adoption from quorum of acceptors.
+%  \item Describe how pre-emption can occur when a commander is waiting for adoption.
+%\end{itemize}
+%
+%\subsubsection{Commanders}
+%\begin{itemize}
+%  \item Explain how commanders attempt to commit their set of proposals.
+%  \item Give detail on the pmax and ``arrow'' function as used in the paper.
+%  \item Describe how pre-emption can occur when a commander is waiting for acceptance.
+%\end{itemize}
+%
+%\section{Summary}
