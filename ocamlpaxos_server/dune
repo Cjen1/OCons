@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (libraries lib core lwt uri lwt_ppx)
+ (preprocess (pps ppx_jane))
+ )

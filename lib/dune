@@ -1,0 +1,9 @@
+(library
+  (name lib)
+  (libraries oUnit core lwt yojson uri capnp-rpc-lwt capnp-rpc-unix message_api)
+  (preprocess (pps ppx_jane))
+  )
+
+(env
+ (dev
+  (flags (:standard -warn-error -A))))

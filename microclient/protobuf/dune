@@ -1,0 +1,10 @@
+(library
+ (name message_pb_api)
+ (libraries ocaml-protoc)
+  )
+
+(rule
+ (targets message_pb.ml message_pb.mli message_types.ml message_types.mli)
+ (deps message.proto)
+ (action (bash "ocaml-protoc -binary -ml_out . message.proto"))
+ )
