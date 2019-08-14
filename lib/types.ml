@@ -6,8 +6,8 @@ open Yojson
 (* Types of unique identifiers *)
 type unique_id = Uuid.t
 
-(* Reproduce some of the Uuid manipulation functions we'll use. 
-   
+(* Reproduce some of the Uuid manipulation functions we'll use.
+
    This is so if we change the type of unique ids in the future then we can update these functions
    without breaking the rest of the program *)
 let unique_ids_equal = Uuid.equal
@@ -16,9 +16,9 @@ let id_of_string = Uuid.of_string
 let create_id = Uuid.create
 
 (* Unique identifier for a given client node
-    
-   This is different to other nodes because replicas need to reply to a client based upon 
-   the id of the client that issued the command, so the ID needs include the address to 
+
+   This is different to other nodes because replicas need to reply to a client based upon
+   the id of the client that issued the command, so the ID needs include the address to
    which the response is sent *)
 type client_id = unique_id * Uri.t
 
@@ -40,7 +40,7 @@ type command_id = int
     -   Idea is that same sequence of operations, given same initial state
         produces the same final state.
     -   Represent transitions in replicated state machine.
-  
+
   Note:
     -   Keys are unique in store.
 
@@ -84,10 +84,10 @@ let initial_state = []
    state, returning the new state and a result *)
 let apply (state : app_state) (op : operation) : (app_state * result) =
   match op with
-  | Nop -> 
+  | Nop ->
     (state, Success)
-  | Create (k,v) 
-  | Update (k,v) -> 
+  | Create (k,v)
+  | Update (k,v) ->
     if List.Assoc.mem state ~equal:(=) k then
       let state' = List.Assoc.remove state ~equal:(=) k in
       ((k,v) :: state' , Success)
@@ -112,7 +112,7 @@ let string_of_state (state : app_state) : string =
 (* Function returns string representation of application state *)
 let string_of_state (state : app_state) : string =
   let pairs = List.map state ~f:(fun (k,v) -> "(" ^ (string_of_int k) ^ ", " ^ v ^ ")")
-  in 
+  in
     "[" ^ (String.concat pairs) ^ "]"
 
 (* A command consists of a triple containing:
@@ -157,19 +157,19 @@ let string_of_operation oper =
   | Remove k -> "Remove (" ^ (string_of_int k) ^ ")"
 
 (* Function serializes operation into JSON *)
-let serialize_operation op = 
+let serialize_operation op =
   match op with
   | Nop -> `Assoc [("type", `String "nop")]
   | Read(k) -> `Assoc [("type", `String "read"); ("key", `Int k)]
   | Create(k,v) -> `Assoc [("type", `String "create"); ("key", `Int k); ("value", `String v)]
-  | Update(k,v) -> `Assoc [("type", `String "update"); ("key", `Int k); ("value", `String v)] 
+  | Update(k,v) -> `Assoc [("type", `String "update"); ("key", `Int k); ("value", `String v)]
   | Remove(k) -> `Assoc [("type", `String "remove"); ("key", `Int k)]
 
 (* Function deserializes JSON into operation, or throws an exception if this is not possible *)
 
 exception OperationDeserializationError
 
-let deserialize_operation op_json = 
+let deserialize_operation op_json =
   match op_json with
   | `Assoc [("type", `String "nop")] -> Nop
   | `Assoc [("type", `String "read"); ("key", `Int k)] -> Read(k)
@@ -179,23 +179,23 @@ let deserialize_operation op_json =
   | _ -> raise OperationDeserializationError
 
 (* Pretty-printable string for a given command *)
-let string_of_command (cmd : command) = 
+let string_of_command (cmd : command) =
   let client_id, command_id, operation = cmd in
   let id, uri = client_id in
-    "<(" ^ (Uuid.to_string id) 
+    "<(" ^ (Uuid.to_string id)
     ^ "," ^ (Uri.to_string uri) ^ "),"
-    ^ (string_of_int command_id) ^ "," 
+    ^ (string_of_int command_id) ^ ","
     ^ (string_of_operation operation) ^ ">"
 
 (* Function serializes command into JSON *)
 let serialize_command (c : command) : Basic.json =
   let ((id,uri), cid, op) = c in
-  let client_id_json = 
+  let client_id_json =
   `Assoc [ ("id", `String (string_of_id id));
            ("uri", `String (Uri.to_string uri)) ] in
   let inner_json =
-  `Assoc [ ("client_id", client_id_json); 
-           ("command_id", `Int cid); 
+  `Assoc [ ("client_id", client_id_json);
+           ("command_id", `Int cid);
            ("operation", (serialize_operation op)) ] in
   `Assoc [ ("command", inner_json) ]
 
@@ -208,7 +208,7 @@ let deserialize_command (cmd_json : Basic.json) : command =
   let uri_json = Basic.Util.member "uri" client_id_json in
   let command_id_json = Basic.Util.member "command_id" inner_json in
   let operation_json = Basic.Util.member "operation" inner_json in
-  
+
   (* We need to include these helpers to remove quotation marks and a %22 character
      from the deserialized strings. This seems like a very fragile way of doing this
      but hopefully will be rectified when much of this serialization is moved to
@@ -216,7 +216,7 @@ let deserialize_command (cmd_json : Basic.json) : command =
   let stringify_id s = String.drop_prefix (String.drop_suffix s 1) 1 in
   let stringify_uri s = String.drop_prefix (String.drop_suffix s 1) 1 in
 
-  ((id_json |> Basic.to_string |> stringify_id |> id_of_string, 
+  ((id_json |> Basic.to_string |> stringify_id |> id_of_string,
     uri_json |> Basic.to_string |> stringify_uri |> Uri.of_string),
    Basic.Util.to_int command_id_json,
    operation_json |> deserialize_operation)
