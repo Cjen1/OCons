@@ -1,7 +1,0 @@
-B /root/.opam/4.07.0/lib/ocaml-protoc
-B /root/.opam/4.07.0/lib/ppx_deriving_protobuf
-B ../../_build/default/microclient/protobuf/.message_pb_api.objs
-S /root/.opam/4.07.0/lib/ocaml-protoc
-S /root/.opam/4.07.0/lib/ppx_deriving_protobuf
-S .
-FLG -open Message_pb_api -w @a-4-29-40-41-42-44-45-48-58-59-60-40 -strict-sequence -strict-formats -short-paths -keep-locs
