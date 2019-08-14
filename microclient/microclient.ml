@@ -5,7 +5,7 @@ open Core
 open Lib
 open Log
 
-let start_zmq_socket op_path = 
+let start_zmq_socket op_path =
   Lwt.return (
   let ctx = Zmq.Context.create() in
   let socket = Zmq.Socket.create ctx Zmq.Socket.req in
@@ -23,30 +23,30 @@ let conv_exn f x = match f x with
 
 let do_put ({key; value;_}:Message_types.operation_op_put) client =
   let cmd = Types.Create (conv_exn Int64.to_int key, Bytes.to_string value) in
-  let st = Unix.gettimeofday() in 
+  let st = Unix.gettimeofday() in
   let%lwt () = Client.send_request_message client cmd in
   let et = Unix.gettimeofday() in
   Lwt.return (st, et, "Write", "")
-  
-let do_get ({key;_}:Message_types.operation_op_get) client = 
+
+let do_get ({key;_}:Message_types.operation_op_get) client =
   let cmd = Types.Read (conv_exn Int64.to_int key) in
-  let st = Unix.gettimeofday() in 
+  let st = Unix.gettimeofday() in
   let%lwt () = Client.send_request_message client cmd in
   let et = Unix.gettimeofday() in
   Lwt.return (st, et, "Read", "")
 
 let rec main_loop socket client encoder  clientid =
   let%lwt op = recv_op socket in
-  let%lwt s_time_stamps_x_resp = 
+  let%lwt s_time_stamps_x_resp =
     match op with
     | Put(op) -> Lwt.return @@ Some(op.start, do_put op client)
     | Get(op) -> Lwt.return @@ Some(op.start, do_get op client)
-    | Quit(op) -> 
+    | Quit(op) ->
         let%lwt () = Lwt_io.printl ("Quitting msg: " ^ op.msg) in
         Lwt.return None
   in
   match s_time_stamps_x_resp with
-  | Some(queue_start, v) -> 
+  | Some(queue_start, v) ->
       let%lwt (st, et, op_type, err) = v in
       let resp = Message_types.({
         err = err;
@@ -77,7 +77,7 @@ let run_client host port uris op_path client_id =
     main_loop socket client encoder client_id
   end
 
-let command = 
+let command =
   Command.basic
     ~summary:"microclient for OCaml Paxos"
     Command.Let_syntax.(
@@ -91,8 +91,8 @@ let command =
         let config = try Config.read_settings config_path
           with _ -> raise (Invalid_argument "Malformed path / JSON file")
         in
-        let replica_uris = List.map config.replica_addrs 
-          ~f:(fun (host,port) -> Lib.Message.uri_from_address host port) 
+        let replica_uris = List.map config.replica_addrs
+          ~f:(fun (host,port) -> Lib.Message.uri_from_address host port)
         in
         run_client
           host_string
