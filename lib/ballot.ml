@@ -12,7 +12,7 @@ open Yojson
    integer component and the leader id.
 
    The Bottom ballot denotes the lowest possible ballot number (used for
-   initialisation in accceptors for example). 
+   initialisation in accceptors for example).
 *)
 
 
@@ -39,7 +39,7 @@ let succ_exn = function
    ordered *)
 let equal b b' =
   match b, b' with
-  | Bottom, Bottom -> true  
+  | Bottom, Bottom -> true
   | Number(n,l), Number(n',l') -> (n = n') && (leader_ids_equal l l')
   | _, _ -> false
 
@@ -63,9 +63,9 @@ let compare b b' =
   | Bottom, Bottom -> 0
   | Bottom, _ -> - 1
   | _, Bottom -> 1
-  | Number(n,lid), Number(n',lid') -> 
+  | Number(n,lid), Number(n',lid') ->
     let int_comp = Core.Int.compare n n' in
-      if int_comp = 0 then Core.Uuid.compare lid lid'
+      if int_comp = 0 then Uuid.compare lid lid'
       else int_comp
 
 (* Convert a ballot to a string *)
@@ -74,13 +74,13 @@ let to_string = function
   | Number(n,lid) -> "Number(" ^ (string_of_int n) ^ "," ^ (string_of_id lid) ^ ")"
 
 (* Serialize a ballot into JSON *)
-let serialize (b : t) : Basic.json =
+let serialize (b : t) : Basic.t =
   let ballot_json = match b with
-    | Bottom -> 
+    | Bottom ->
       `String "bottom"
-    | Number(n,lid) -> 
-      `Assoc [ 
-        ("id", `Int n); 
+    | Number(n,lid) ->
+      `Assoc [
+        ("id", `Int n);
         ("leader_id", `String (string_of_id lid))] in
   `Assoc [ ("ballot_num", ballot_json) ]
 
@@ -89,7 +89,7 @@ let serialize (b : t) : Basic.json =
 
 exception BallotDeserializationError
 
-let deserialize (ballot_json : Basic.json) : t =
+let deserialize (ballot_json : Basic.t) : t =
   match Basic.Util.member "ballot_num" ballot_json with
   | `String "bottom" -> Bottom
   | `Assoc [ ("id", `Int n); ("leader_id", `String lid)] -> Number(n, id_of_string lid)

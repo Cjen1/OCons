@@ -8,33 +8,33 @@ exception DeserializationError
 let sturdy_refs = Hashtbl.create 10
 
 
-  
+
 
 let serialize_phase1_response acceptor_id ballot_num accepted : Yojson.Basic.json =
   let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in
   let ballot_json = Yojson.Basic.Util.to_assoc (Ballot.serialize ballot_num) in
   let pvalues_json = Yojson.Basic.Util.to_assoc ( (`Assoc [("pvalues", Pval.serialize_list accepted)])) in
-  let response_json = `Assoc ( acceptor_id :: (Core.List.concat [ballot_json; pvalues_json]) ) in  
+  let response_json = `Assoc ( acceptor_id :: (Core.List.concat [ballot_json; pvalues_json]) ) in
   `Assoc [ ("response", response_json )]
 
 let deserialize_phase1_response (response_json : Yojson.Basic.json) =
   let inner_json = Yojson.Basic.Util.member "response" response_json in
   let acceptor_id_json = Yojson.Basic.Util.member "acceptor_id" inner_json in
-  let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in  
+  let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in
   let pvalues_json = Yojson.Basic.Util.member "pvalues" inner_json in
   (acceptor_id_json |> Yojson.Basic.Util.to_string |> Types.id_of_string,
    Ballot.deserialize (`Assoc [("ballot_num",ballot_number_json)]),
    Pval.deserialize_list pvalues_json)
 
 let serialize_phase2_response acceptor_id ballot_num : Yojson.Basic.json =
-  let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in  
+  let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in
   let ballot_json = Yojson.Basic.Util.to_assoc (Ballot.serialize ballot_num) in
   `Assoc [ ("response", `Assoc ( acceptor_id :: ballot_json ) ) ]
 
 let deserialize_phase2_response (response_json : Yojson.Basic.json) =
   let inner_json = Yojson.Basic.Util.member "response" response_json in
   let acceptor_id_json = Yojson.Basic.Util.member "acceptor_id" inner_json in
-  let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in  
+  let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in
   (acceptor_id_json |> Yojson.Basic.Util.to_string |> Types.id_of_string,
    Ballot.deserialize (`Assoc [ ("ballot_num", ballot_number_json) ]))
 
@@ -63,7 +63,7 @@ exception Invalid_response;;
 (* Expose the API service for the RPC system *)
 module Api = Message_api.MakeRPC(Capnp_rpc_lwt);;
 
-let local ?(request_callback : (command -> unit) option) 
+let local ?(request_callback : (command -> unit) option)
           ?(proposal_callback : (proposal -> unit) option)
           ?(response_callback : ((command_id * result) -> unit) option)
           ?(phase1_callback : (Ballot.t -> (Types.unique_id * Ballot.t * Pval.t list)) option)
@@ -73,7 +73,7 @@ let local ?(request_callback : (command -> unit) option)
   let module Message = Api.Service.Message in
   Message.local @@ object
     inherit Message.service
-  
+
     method phase2_impl params release_param_caps =
       let open Message.Phase2 in
       let module Params = Message.Phase2.Params in
@@ -92,8 +92,8 @@ let local ?(request_callback : (command -> unit) option)
     method phase1_impl params release_param_caps =
       let open Message.Phase1 in
       let module Params = Message.Phase1.Params in
-      let ballot_number = Params.ballot_number_get params 
-                              |> Yojson.Basic.from_string 
+      let ballot_number = Params.ballot_number_get params
+                              |> Yojson.Basic.from_string
                               |> Ballot.deserialize in
       release_param_caps ();
       match phase1_callback with Some f ->
@@ -107,18 +107,18 @@ let local ?(request_callback : (command -> unit) option)
     method client_response_impl params release_param_caps =
       let open Message.ClientResponse in
       let module Params = Message.ClientResponse.Params in
-    
+
       let open Api.Reader.Message in
-      
+
       let result_reader = Params.result_get params in
-      
+
       (* Pull out all the necessary data from the params *)
       let result = (match Result.get result_reader with
       | Result.Failure -> Types.Failure
       | Result.Success -> Types.Success
       | Result.Read v  -> Types.ReadSuccess v
       | Result.Undefined _ -> raise Undefined_result) in
-      
+
       let command_id = Params.command_id_get params in
 
       (* Call a callback to notify client *)
@@ -136,21 +136,21 @@ let local ?(request_callback : (command -> unit) option)
 
       (* Pull out all the slot number from params *)
       let slot_number = Params.slot_number_get params in
-    
+
       (* Get an API reader for the command, since its a nested struct *)
       let cmd_reader  = Params.command_get params in
-      
+
       (* Retrieve the fields from the command struct passed in decision *)
       let open Api.Reader.Message in
-    
+
       (* Retrieve the client id and command id fields from the struct *)
       let id = Command.client_id_get cmd_reader in
-      let uri = Command.client_uri_get cmd_reader in 
+      let uri = Command.client_uri_get cmd_reader in
       let command_id = Command.command_id_get cmd_reader in
-        
+
       (* Operation is more difficult as it is a nested struct *)
       let op_reader = Command.operation_get cmd_reader in
-      
+
       (* Operations are a union type in Capnp so match over the variant *)
       let operation = (match Command.Operation.get op_reader with
       | Command.Operation.Nop -> Types.Nop
@@ -158,7 +158,7 @@ let local ?(request_callback : (command -> unit) option)
         let k = Command.Operation.Create.key_get c_struct in
         let v = Command.Operation.Create.value_get c_struct in
         Types.Create(k,v)
-      | Command.Operation.Read r_struct -> 
+      | Command.Operation.Read r_struct ->
         let k = Command.Operation.Read.key_get r_struct in
         Types.Read(k)
       | Command.Operation.Update u_struct ->
@@ -169,43 +169,43 @@ let local ?(request_callback : (command -> unit) option)
         let k = Command.Operation.Remove.key_get r_struct in
         Types.Remove(k)
       | Command.Operation.Undefined(_) -> raise Undefined_oper) in
-      
+
       (* Form the proposal from the message parameters *)
-      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation)) in
-      
+      let proposal = (slot_number, ((Uuid.of_string id,Uri.of_string uri), command_id, operation)) in
+
       (* Do something with the proposal here *)
       (* This is nonsense at the moment *)
       (match proposal_callback with
       | None -> ()
       | Some g -> g(proposal) );
-      
+
       (* Release capabilities, doesn't matter for us *)
       release_param_caps ();
 
       (* Return an empty response *)
       Service.return_empty ();
 
-    method decision_impl params release_param_caps = 
+    method decision_impl params release_param_caps =
       let open Message.Decision in
       let module Params = Message.Decision.Params in
-    
+
       (* Get slot number *)
       let slot_number = Params.slot_number_get params in
 
       (* Get an API reader for the command, since its a nested struct *)
       let cmd_reader  = Params.command_get params in
-      
+
       (* Retrieve the fields from the command struct passed in decision *)
       let open Api.Reader.Message in
-    
+
       (* Retrieve the client id and command id fields from the struct *)
       let id = Command.client_id_get cmd_reader in
       let uri = Command.client_uri_get cmd_reader in
       let command_id = Command.command_id_get cmd_reader in
-        
+
       (* Operation is more difficult as it is a nested struct *)
       let op_reader = Command.operation_get cmd_reader in
-      
+
       (* Operations are a union type in Capnp so match over the variant *)
       let operation = (match Command.Operation.get op_reader with
       | Command.Operation.Nop -> Types.Nop
@@ -213,7 +213,7 @@ let local ?(request_callback : (command -> unit) option)
         let k = Command.Operation.Create.key_get c_struct in
         let v = Command.Operation.Create.value_get c_struct in
         Types.Create(k,v)
-      | Command.Operation.Read r_struct -> 
+      | Command.Operation.Read r_struct ->
         let k = Command.Operation.Read.key_get r_struct in
         Types.Read(k)
       | Command.Operation.Update u_struct ->
@@ -224,15 +224,15 @@ let local ?(request_callback : (command -> unit) option)
         let k = Command.Operation.Remove.key_get r_struct in
         Types.Remove(k)
       | Command.Operation.Undefined(_) -> raise Undefined_oper) in
-      
+
       (* Form the proposal from the message parameters *)
-      let proposal = (slot_number, ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation)) in
-      
+      let proposal = (slot_number, ((Uuid.of_string id,Uri.of_string uri), command_id, operation)) in
+
       (* Call the callback function that will process the decision *)
       (match proposal_callback with
       | None -> ()
       | Some g -> g(proposal) );
- 
+
       (* Release capabilities, doesn't matter for us *)
       release_param_caps ();
 
@@ -245,12 +245,12 @@ let local ?(request_callback : (command -> unit) option)
       (* Retrieve the fields from the command struct passed in request *)
       let cmd_reader = Params.command_get params in
         let open Api.Reader.Message in
-        
+
         (* Retrieve the client id and command id fields from the struct *)
         let id = Command.client_id_get cmd_reader in
         let uri = Command.client_uri_get cmd_reader in
         let command_id = Command.command_id_get cmd_reader in
-        
+
         (* Operation is more difficult as it is a nested struct *)
         let op_reader = Command.operation_get cmd_reader in
         (* Operations are a union type in Capnp so match over the variant *)
@@ -260,7 +260,7 @@ let local ?(request_callback : (command -> unit) option)
               let k = Command.Operation.Create.key_get c_struct in
               let v = Command.Operation.Create.value_get c_struct in
               Types.Create(k,v)
-          | Command.Operation.Read r_struct -> 
+          | Command.Operation.Read r_struct ->
               let k = Command.Operation.Read.key_get r_struct in
               Types.Read(k)
           | Command.Operation.Update u_struct ->
@@ -275,18 +275,18 @@ let local ?(request_callback : (command -> unit) option)
         (* Get back response for request *)
         (* Note here there is a temporay Nop passed *)
         (* This pattern matching is not exhaustive but
-           we always want some callback f here 
+           we always want some callback f here
 
            So it is suitable to raise an exception
            if one is not passed in this case
-        *) 
+        *)
         match request_callback with Some f ->
-        f ((Core.Uuid.of_string id,Uri.of_string uri), command_id, operation);
-      
+        f ((Uuid.of_string id,Uri.of_string uri), command_id, operation);
+
         (* Releases capabilities, doesn't matter for us *)
         release_param_caps ();
 
-        (* Return an empty response *)        
+        (* Return an empty response *)
         Service.return_empty ()
   end;;
 
@@ -298,32 +298,32 @@ let client_request_rpc t (cmd : Types.command) =
   let open Api.Builder.Message in
     (* Create an empty command type as recognised by Capnp *)
     let cmd_rpc = (Command.init_root ()) in
-    
+
     (* Construct a command struct for Capnp from the cmd argument given *)
     let ((id,uri), command_id, operation) = cmd in
-      Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
+      Command.client_id_set cmd_rpc (Uuid.to_string id);
       Command.client_uri_set cmd_rpc (Uri.to_string uri);
       Command.command_id_set_exn cmd_rpc command_id;
-      
+
       (* Construct an operation struct here *)
       let oper_rpc = (Command.Operation.init_root ()) in
-      
+
       (* Populate the operation struct with the correct values *)
       (match operation with
-      | Nop         -> 
+      | Nop         ->
         Command.Operation.nop_set oper_rpc
       | Create(k,v) ->
         let create = (Command.Operation.create_init oper_rpc) in
         Command.Operation.Create.key_set_exn create k;
         Command.Operation.Create.value_set create v;
-      | Read  (k)   -> 
+      | Read  (k)   ->
         let read = Command.Operation.read_init oper_rpc in
         Command.Operation.Read.key_set_exn read k;
       | Update(k,v) ->
         let update = Command.Operation.update_init oper_rpc in
         Command.Operation.Update.key_set_exn update k;
         Command.Operation.Update.value_set update v;
-      | Remove(k)   -> 
+      | Remove(k)   ->
         let remove = Command.Operation.remove_init oper_rpc in
         Command.Operation.Remove.key_set_exn remove k);
 
@@ -344,7 +344,7 @@ let client_response_rpc t (cid : Types.command_id) (result : Types.result) =
 
   (* Create an empty result type as recognised by Capnp *)
   let result_rpc = Result.init_root () in
-  
+
   (* As result is a Capnp union, match over the variant result argument
      and set the appropriate Capnp value of result_rpc *)
   (match result with
@@ -375,31 +375,31 @@ let decision_rpc t (p : Types.proposal) =
 
     (* Create an empty command type as recognised by Capnp *)
     let cmd_rpc = Command.init_root () in
-    
+
     (* Construct a command struct for Capnp from the cmd argument given *)
     let (slot_number, ((id,uri), command_id, operation)) = p in
-      Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
+      Command.client_id_set cmd_rpc (Uuid.to_string id);
       Command.client_uri_set cmd_rpc (Uri.to_string uri);
       Command.command_id_set_exn cmd_rpc command_id;
       (* Construct an operation struct here *)
       let oper_rpc = (Command.Operation.init_root ()) in
-      
+
       (* Populate the operation struct with the correct values *)
       (match operation with
-      | Nop         -> 
+      | Nop         ->
         Command.Operation.nop_set oper_rpc
       | Create(k,v) ->
         let create = (Command.Operation.create_init oper_rpc) in
         Command.Operation.Create.key_set_exn create k;
         Command.Operation.Create.value_set create v;
-      | Read  (k)   -> 
+      | Read  (k)   ->
         let read = Command.Operation.read_init oper_rpc in
         Command.Operation.Read.key_set_exn read k;
       | Update(k,v) ->
         let update = Command.Operation.update_init oper_rpc in
         Command.Operation.Update.key_set_exn update k;
         Command.Operation.Update.value_set update v;
-      | Remove(k)   -> 
+      | Remove(k)   ->
         let remove = Command.Operation.remove_init oper_rpc in
         Command.Operation.Remove.key_set_exn remove k);
 
@@ -407,7 +407,7 @@ let decision_rpc t (p : Types.proposal) =
 
       (* Constructs the command struct and associates with params *)
       (Params.command_set_reader params (Command.to_reader cmd_rpc) |> ignore);
-      
+
       (* Add the given slot number argument to the message parameters *)
       Params.slot_number_set_exn params slot_number;
 
@@ -423,31 +423,31 @@ let proposal_rpc t (p : Types.proposal) =
   let open Api.Builder.Message in
    (* Create an empty command type as recognised by Capnp *)
     let cmd_rpc = Command.init_root () in
-    
+
     (* Construct a command struct for Capnp from the cmd argument given *)
     let (slot_number, ((id,uri), command_id, operation)) = p in
-      Command.client_id_set cmd_rpc (Core.Uuid.to_string id);
+      Command.client_id_set cmd_rpc (Uuid.to_string id);
       Command.client_uri_set cmd_rpc (Uri.to_string uri);
       Command.command_id_set_exn cmd_rpc command_id;
       (* Construct an operation struct here *)
       let oper_rpc = (Command.Operation.init_root ()) in
-      
+
       (* Populate the operation struct with the correct values *)
       (match operation with
-      | Nop         -> 
+      | Nop         ->
         Command.Operation.nop_set oper_rpc
       | Create(k,v) ->
         let create = (Command.Operation.create_init oper_rpc) in
         Command.Operation.Create.key_set_exn create k;
         Command.Operation.Create.value_set create v;
-      | Read  (k)   -> 
+      | Read  (k)   ->
         let read = Command.Operation.read_init oper_rpc in
         Command.Operation.Read.key_set_exn read k;
       | Update(k,v) ->
         let update = Command.Operation.update_init oper_rpc in
         Command.Operation.Update.key_set_exn update k;
         Command.Operation.Update.value_set update v;
-      | Remove(k)   -> 
+      | Remove(k)   ->
         let remove = Command.Operation.remove_init oper_rpc in
         Command.Operation.Remove.key_set_exn remove k);
 
@@ -455,7 +455,7 @@ let proposal_rpc t (p : Types.proposal) =
 
       (* Constructs the command struct and associates with params *)
       (Params.command_set_reader params (Command.to_reader cmd_rpc) |> ignore);
-      
+
       (* Add the given slot number argument to the message parameters *)
       Params.slot_number_set_exn params slot_number;
 
@@ -475,7 +475,7 @@ type message = ClientRequestMessage of command
              | ProposalMessage of proposal
              | DecisionMessage of proposal
              | ClientResponseMessage of command_id * result
-          (* | ... further messages will be added *) 
+          (* | ... further messages will be added *)
 
 (* Start a new server advertised at address (host,port)
    This server does not serve with TLS and the service ID for the
@@ -502,7 +502,7 @@ let uri_from_address host port =
 let rec service_from_uri uri =
   (try Lwt.return (Some (Hashtbl.find sturdy_refs uri))
    with Not_found ->
-    (try (  
+    (try (
     let client_vat = Capnp_rpc_unix.client_only_vat () in
     let sr = Capnp_rpc_unix.Vat.import_exn client_vat uri in
     Sturdy_ref.connect sr >>= function
@@ -518,7 +518,7 @@ let rec service_from_uri uri =
    messages based on URIs.
 
    TODO: Modify the code so that we don't need this extra indirection *)
-let service_from_addr host port = 
+let service_from_addr host port =
   uri_from_address host port |> service_from_uri
 
 (* Accepts as input a message and prepares it for RPC transport,
@@ -562,16 +562,16 @@ let phase1_rpc t (b : Ballot.t) =
   let open Api.Client.Message.Phase1 in
   let request, params = Capability.Request.create Params.init_pointer in
   let open Api.Builder.Message in
-  Params.ballot_number_set params (b |> Ballot.serialize |> Yojson.Basic.to_string);  
+  Params.ballot_number_set params (b |> Ballot.serialize |> Yojson.Basic.to_string);
   Capability.call_for_value_exn t method_id request >|=
   Results.result_get >|=
   Yojson.Basic.from_string >|=
   deserialize_phase1_response
 
 (* TODO: Pattern matching here exhaustive *)
-let send_phase1_message (b : Ballot.t) uri = 
-  service_from_uri uri >>= function 
-  | Some service -> 
+let send_phase1_message (b : Ballot.t) uri =
+  service_from_uri uri >>= function
+  | Some service ->
   phase1_rpc service b;;
 
 let phase2_rpc t (pval : Pval.t) =

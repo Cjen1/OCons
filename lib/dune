@@ -1,6 +1,6 @@
 (library
   (name lib)
-  (libraries oUnit core lwt yojson uri capnp-rpc-lwt capnp-rpc-unix message_api)
+  (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix message_api)
   (preprocess (pps ppx_jane))
   )
 

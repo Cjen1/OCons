@@ -13,10 +13,10 @@ type t = {
   mutable next_command_id : command_id;
   mutable replica_uri_list : Uri.t list;
 }
- 
+
 (* Create a new record of client information *)
 let initialize client_uri replica_uris = {
-  id = (Core.Uuid.create (), client_uri);
+  id = (Uuid.create (), client_uri);
   next_command_id = 1;
   replica_uri_list = replica_uris;
 }
@@ -28,16 +28,16 @@ type measurement = Empty
                  | Responded
 let request_no = 1001
 let request_times = Core.Array.create ~len:request_no Empty
-let latency_of_times t0 t1 = 
+let latency_of_times t0 t1 =
   string_of_float (Core.Time.Span.to_ms (Core.Time.abs_diff t0 t1))
 let bandwidth_of_times t0 t1 n =
   string_of_float ((float_of_int n) /. (Core.Time.Span.to_sec (Core.Time.abs_diff t0 t1)))
-      
+
 let t0 = ref @@ Core.Time.now ()
 
 (* ... *)
 let result_callback (response : Types.command_id * Types.result) =
-  let (cid, result) = response in 
+  let (cid, result) = response in
   match Core.Array.get request_times cid with
   | Empty -> failwith "We shouldn't reach here"
   | Request t ->
@@ -60,7 +60,7 @@ let send_request_message client operation =
   client.next_command_id <- client.next_command_id + 1;
   (* Iterate over the replica URIs and send a client request message to each, with the same
      command *)
-  Lwt_list.iter_p (fun uri -> 
+  Lwt_list.iter_p (fun uri ->
     let message = (ClientRequestMessage(client.id,command_id,operation)) in
     Message.send_request message uri) client.replica_uri_list
 
