@@ -1,5 +1,0 @@
-(jbuild_version 1)
-
-(executable
- ((name main)
-  (libraries (ounit core lwt yojson uri capnp-rpc-lwt capnp-rpc-unix message_api))))

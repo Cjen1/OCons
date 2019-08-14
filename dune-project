@@ -1,2 +1,1 @@
-(lang dune 1.0)
-(name main)
+(lang dune 1.2)
