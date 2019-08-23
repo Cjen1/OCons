@@ -42,7 +42,7 @@ type t = {
 
 (* Function new_replica returns a new replica given a list of leader ids *)
 let initialize leader_ids = {
-  id = Uuid.create ();
+  id = Uuid_unix.create ();
   app_state = Types.initial_state;
   slot_in   = 1;
   slot_out  = 1;

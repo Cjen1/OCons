@@ -13,7 +13,7 @@ type unique_id = Uuid.t
 let unique_ids_equal = Uuid.equal
 let string_of_id = Uuid.to_string
 let id_of_string = Uuid.of_string
-let create_id = Uuid.create
+let create_id = Uuid_unix.create
 
 (* Unique identifier for a given client node
 
