@@ -1,5 +1,6 @@
 (executable
  (name main)
+ (public_name ocaml-paxos-bin)
  (libraries lib core lwt uri lwt_ppx)
  (preprocess (pps ppx_jane))
  )
