@@ -16,7 +16,7 @@ type t = {
 
 (* Create a new record of client information *)
 let initialize client_uri replica_uris = {
-  id = (Uuid.create (), client_uri);
+  id = (Uuid_unix.create (), client_uri);
   next_command_id = 1;
   replica_uri_list = replica_uris;
 }
