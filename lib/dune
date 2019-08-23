@@ -1,7 +1,14 @@
 (library
   (name lib)
   (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix message_api)
+  (modules (:standard \ test))
   (preprocess (pps ppx_jane))
+  )
+
+(executable
+  (name test)
+  (libraries oUnit lib)
+  (modules test)
   )
 
 (env
