@@ -1,5 +1,0 @@
-(executable
- (name microclient)
- (libraries core lwt unix lwt_ppx zmq-lwt lib message_pb_api)
- (preprocess (pps ppx_jane lwt_ppx))
- )
