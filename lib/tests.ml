@@ -1,4 +1,3 @@
-(*
 open OUnit
 open Core.List
 open Types
@@ -171,4 +170,3 @@ let proposal_list_tests = [
 
 
 let run_tests = run_test_tt ballot_test_suite
-*)

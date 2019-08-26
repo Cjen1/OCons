@@ -4,10 +4,10 @@
 killall main.exe
 
 # Buid the source
-dune build --root ./src main.exe
+dune build ../bin/main.exe
 
-DIR=./src/_build/default/main.exe
-CONFIG=./scripts/config.json
+DIR=./src/_build/default/bin/main.exe
+CONFIG=./config.json
 
 $DIR --node replica --host 127.0.0.1 --port 50010 --config $CONFIG &
 $DIR --node replica --host 127.0.0.1 --port 50011 --config $CONFIG &
