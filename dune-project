@@ -1,4 +1,4 @@
-(lang dune 1.2)
+(lang dune 1.11)
 (name ocaml-paxos)
 (source (github chrislomaxjones/part-ii-project))
 (authors "Chris Jones" "Chris Jensen")
