@@ -15,11 +15,11 @@
     capnp-rpc-lwt 
     capnp-rpc-unix))
 
-(package
-  (name ocaml-paxos-bin)
-  (synopsis "A server using ocaml-paxos")
-  (depends
-    core
-    lwt
-    uri
-    lwt_ppx))
+;(package
+;  (name ocaml-paxos)
+;  (synopsis "A server using ocaml-paxos")
+;  (depends
+;    core
+;    lwt
+;    uri
+;    lwt_ppx))
