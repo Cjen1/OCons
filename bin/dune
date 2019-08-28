@@ -4,4 +4,30 @@
  (package ocaml-paxos)
  (libraries lib core lwt uri lwt_ppx)
  (preprocess (pps ppx_jane))
+ (modules main)
  )
+
+(executable
+ (name acceptor)
+ (public_name ocaml-paxos-acceptor)
+ (libraries lib core lwt uri lwt_ppx)
+ (preprocess (pps ppx_jane))
+ (modules acceptor)
+ )
+
+(executable
+ (name leader)
+ (public_name ocaml-paxos-leader)
+ (libraries lib core lwt uri lwt_ppx)
+ (preprocess (pps ppx_jane))
+ (modules leader)
+ )
+
+(executable
+ (name replica)
+ (public_name ocaml-paxos-replica)
+ (libraries lib core lwt uri lwt_ppx)
+ (preprocess (pps ppx_jane))
+ (modules replica)
+ )
+
