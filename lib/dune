@@ -1,9 +1,9 @@
 (library
   (name lib)
   (public_name ocaml-paxos)
-  (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix)
+  (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix lwt_ppx)
+  (preprocess (pps ppx_jane lwt_ppx))
   (modules (:standard \ tests))
-  ;(preprocess (pps ppx_jane))
   )
 
 (executable

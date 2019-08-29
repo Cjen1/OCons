@@ -38,15 +38,17 @@ let t0 = ref @@ Core.Time.now ()
 (* ... *)
 let result_callback (response : Types.command_id * Types.result) =
   let (cid, result) = response in
-  match Core.Array.get request_times cid with
+  Lwt_main.run (
+    match Core.Array.get request_times cid with
   | Empty -> failwith "We shouldn't reach here"
   | Request t ->
-    (write_to_log WARN ("Receive first response " ^ (string_of_int cid)) ) |> Lwt.ignore_result;
-    let t1 = Core.Time.now () in
-    write_to_log TRACE (latency_of_times t t1) |> Lwt.ignore_result;
-    write_to_log INFO (bandwidth_of_times !t0 t1 cid) |> Lwt.ignore_result;
-    Core.Array.set request_times cid Responded;
-  | Responded -> ()
+      let%lwt () = write_to_log WARN ("Receive first response " ^ (string_of_int cid)) in
+      let t1 = Core.Time.now () in
+      let%lwt () = write_to_log TRACE (latency_of_times t t1) in
+      let%lwt () = write_to_log INFO (bandwidth_of_times !t0 t1 cid) in
+      Lwt.return (Core.Array.set request_times cid Responded)
+  | Responded -> Lwt.return ()
+  )
 
 (* Create a new client record and start a server for such a client *)
 let new_client host port replica_uris  =
@@ -69,6 +71,6 @@ let send_request_message client operation =
 let send_timed_request client cid =
   (if cid=1 then
      t0 := Core.Time.now () );
-  send_request_message client Types.Nop >>= fun () ->
-  write_to_log WARN ("Sending message " ^ (string_of_int cid))  >|= fun () ->
-  Core.Array.set request_times cid (Request (Core.Time.now ()))
+  let%lwt () = send_request_message client Types.Nop in
+  let%lwt () = write_to_log WARN ("Sending message " ^ (string_of_int cid)) in 
+  Core.Array.set request_times cid (Request (Core.Time.now ())) |> Lwt.return
