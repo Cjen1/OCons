@@ -63,7 +63,7 @@ module Logger : LOGGER = struct
     let%lwt info_chan = Lwt_io.open_file Lwt_io.Output (directory ^ "-info.log")  in
     let%lwt debug_chan = Lwt_io.open_file Lwt_io.Output (directory ^ "-debug.log")  in
     let%lwt trace_chan = Lwt_io.open_file Lwt_io.Output (directory ^ "-trace.log")  in
-    let fd = Unix.openfile [Unix.O_WRONLY] (directory ^ "-wal.log") in
+    let fd = Unix.openfile [Unix.O_WRONLY; Unix.O_CREAT] (directory ^ "-wal.log") in
     let () = (wal_fd := Some(fd)) in
     let wal_chan = Lwt_io.of_fd Lwt_io.Output (fd |> Lwt_unix.of_unix_file_descr ) in
     Lwt. return (initialize_logs ~err_chan:Lwt_io.stderr ~warn_chan:Lwt_io.stdout
