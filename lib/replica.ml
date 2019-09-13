@@ -28,7 +28,7 @@ type t = {
   mutable slot_out : slot_number;
 
   (* Set of request commands sent to the replica *)
-  mutable requests : Types.command list;
+  requests : Types.command Queue.t;
 
   (* Set of commands proposed by the replica *)
   mutable proposals : Types.proposal list;
@@ -46,7 +46,7 @@ let initialize leader_ids = {
   app_state = Types.initial_state;
   slot_in   = 1;
   slot_out  = 1;
-  requests  = [];
+  requests  = Queue.create ();
   proposals = [];
   decisions = [];
   leaders   = leader_ids;
@@ -55,8 +55,8 @@ let initialize leader_ids = {
 (* Print debug information pertaining to a replica *)
 
 let list_of_cmds cmds =
-  Lwt.return (List.iter cmds ~f:(fun cmd ->
-  Lwt.ignore_result (Lwt_io.print (" " ^ (Types.string_of_command cmd) ^ "\n"))));;
+  Lwt.return (Queue.iter ~f:(fun cmd ->
+  Lwt.ignore_result (Lwt_io.print (" " ^ (Types.string_of_command cmd) ^ "\n"))) cmds) ;;
 
 let list_of_proposals proposals =
   Lwt.return (List.iter proposals ~f:(fun p ->
@@ -95,7 +95,7 @@ let receive_request (replica : t) (cmd : command)  : unit =
     write_with_timestamp INFO ("Receive client request, command " ^ (Types.string_of_command cmd)));
   (* Add the command to the end of set of requests
      This is an expensive append operation for now - perhaps change? *)
-  replica.requests <- (List.append (replica.requests) [cmd]);;
+  Queue.enqueue  replica.requests cmd;;(* replica.requests <- (List.append (replica.requests) [cmd]);; *)
 
 (* TODO: Implement configurations *)
 (* We won't yet worry about reconfigurations *)
@@ -139,9 +139,12 @@ let perform replica c =
     Message.send_request (Message.ClientResponseMessage(cid,results)) uri |>
     Lwt.ignore_result;;
 
+let queue_mem (q : 'a Queue.t) (x: 'a) (equal : 'a -> 'a -> bool) =
+        let b = ref false in ( fst (!b , Queue.iter ~f:(fun y -> (b := !b || equal x y)) q) );;
+
 let rec try_execute (replica : t) (p : proposal) =
   let (s,c) = p in
-  if (List.mem replica.requests c ~equal:Types.commands_equal) &&
+  if (queue_mem replica.requests c Types.commands_equal) &&
      (replica.slot_in = s) then
     Lwt.ignore_result (write_with_timestamp INFO "this command is already in the requests")
   else
@@ -174,7 +177,7 @@ let rec try_execute (replica : t) (p : proposal) =
            by this replica *)
         if not (Types.commands_equal c' c'') then
           (* Add c'' to requests *)
-          replica.requests <- (List.append (replica.requests) [c''])
+                Queue.enqueue  replica.requests c''
         else ()); (* Do nothing *)
 
     (* Perform the operation of command c' on the application state *)
@@ -207,18 +210,21 @@ let start_server (replica : t) (host : string) (port : int) =
     host port;;
 
 
-
+let queue_filter (q : 'a Queue.t) (p : 'a -> bool) = 
+  let q' = Queue.copy q in Queue.clear q ; Queue.iter ~f:(fun x -> if p x then Queue.enqueue q x else ()) q';;
 
 let do_proposal (c : Types.command) (replica : t) =
   Lwt.ignore_result (
     write_with_timestamp INFO ("There is no command yet committed to slot " ^ (string_of_int replica.slot_in)));
-
+(*
   (* Remove c from the list of requests *)
   let new_requests = List.filter replica.requests ~f:(fun c' -> not (Types.commands_equal c c')) in
 
   (* Set the replica to include these updated lists *)
   replica.requests <- new_requests;
-
+*)
+  queue_filter replica.requests  (fun c' -> not (Types.commands_equal c c'));
+  
   (* Add <slot_in,c> to the list of proposals *)
   replica.proposals <- (replica.slot_in, c) :: replica.proposals;
 
@@ -241,10 +247,10 @@ let do_proposal (c : Types.command) (replica : t) =
 *)
 let propose replica =
   let slot_in, slot_out = replica.slot_in, replica.slot_out in
-  if (slot_in < slot_out + window) && (not (List.is_empty replica.requests))
+  if (slot_in < slot_out + window) && (not (Queue.is_empty replica.requests))
   then
     (* Select a request *)
-    let c = List.hd_exn replica.requests in
+    let c = Queue.peek_exn replica.requests in
 
     (* See if there is a command in the window that is a reconfig *)
     (* If there is then perform a reconfiguration *)
