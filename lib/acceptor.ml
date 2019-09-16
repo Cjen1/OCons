@@ -2,12 +2,13 @@
 
 open Lwt.Infix
 open Log.Logger
+open Core
 
 (* Types of acceptors *)
 type t = {
   id : Types.unique_id;
   mutable ballot_num : Ballot.t;
-  mutable accepted : Pval.t list
+  accepted : (Types.slot_number, Pval.t) Base.Hashtbl.t
 }
 
 (* Useful helper functions *)
@@ -18,7 +19,7 @@ let (=) = Ballot.equal
 let initialize () = {
   id = Uuid_unix.create ();
   ballot_num = Ballot.bottom ();
-  accepted = []
+  accepted = Base.Hashtbl.create (module Int)
 }
 
 let callback1_mutex = Core.Mutex.create ()
@@ -49,8 +50,8 @@ let phase1_callback (a : t) (b : Ballot.t) =
         (
           fun pval -> write_to_log INFO ("\t\t\t\t" ^ Pval.to_string pval)
           ) 
-        a.accepted 
-      in Lwt.return (a.id, a.ballot_num, a.accepted)
+        (Base.Hashtbl.data a.accepted) 
+      in Lwt.return (a.id, a.ballot_num, Base.Hashtbl.data a.accepted)
       )
     )
 
@@ -61,16 +62,20 @@ let phase2_callback (a : t) (p : Pval.t) =
     Lwt_main.run (
       let%lwt () = write_to_log INFO "\n" in
       let%lwt () = write_with_timestamp INFO ("Receive Phase2 callback with pvalue " ^ (Pval.to_string p)) in
-      let (b,_,_) = p in
+      let (b,s,_) = p in
       let%lwt () = 
         if b = a.ballot_num 
         then
           (
             let%lwt () = write_with_timestamp INFO ("Accept pvalue " ^ (Pval.to_string p)) in
-            if not (Core.List.mem a.accepted p ~equal:(Pval.equal))
-              then Lwt.return (a.accepted <- p :: a.accepted)
-              else Lwt.return ()
-            )
+              Lwt.return (
+                (*Conditional Update*)
+                Base.Hashtbl.change a.accepted s (fun opt -> match opt with
+                  | None -> Some p
+                  | Some (b',_,_) -> if (Ballot.less_than b' b) then Some p else opt
+                )
+              )
+          )
         else Lwt.return ()
       in
       let%lwt () = write_with_timestamp INFO ("Reply to phase2 message with: (" ^ (Types.string_of_id a.id) ^ "," ^ (Ballot.to_string a.ballot_num) ^ ")") in
