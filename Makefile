@@ -1,3 +1,3 @@
 build:
-	dune build @install
-	dune install
+	dune build @install -x  profiling
+	dune install -x profiling

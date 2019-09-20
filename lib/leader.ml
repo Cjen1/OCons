@@ -5,6 +5,8 @@ open Lwt.Infix
 open Core
 open Log.Logger
 
+
+
 (* Types of leaders *)
 type t = {
   id : leader_id;
@@ -12,7 +14,9 @@ type t = {
   mutable acceptor_uris : Uri.t list;
   mutable ballot_num : Ballot.t;
   mutable active : bool;
-  mutable proposals : proposal list
+  mutable proposals : proposal list;
+  replica_slot_outs : (replica_id, slot_number) Hashtbl.t;
+  f : int
 }
 
 (* Types of responses that can be returned by scout and commander sub-processes *)
@@ -20,7 +24,7 @@ type process_response = Adopted of Ballot.t * Pval.t list
                       | Preempted of Ballot.t
 
 (* Create a new leader *)
-let initialize replica_uris acceptor_uris =
+let initialize replica_uris leader_uris acceptor_uris =
   let id = create_id ()
   in {
     id;
@@ -28,7 +32,17 @@ let initialize replica_uris acceptor_uris =
     acceptor_uris;
     ballot_num = Ballot.init id;
     active = false;
-    proposals = [] 
+    proposals = [];
+    (* Initially create empty map. This will eventually get populated with <id,
+     * slot> pairs and no garbage collection will be carried out until sufficiently
+     * many replica_ids have been collected.
+     *)
+    replica_slot_outs = Base.Hashtbl.create (module Uuid);
+    (* Potentially overestimating nr of failures is admissible here because we 
+     * only use the value of f to determine when to garbage collect. This means
+     * that we can safely ignore the number of leaders here. 
+     *)
+    f = min ((List.length acceptor_uris -1)/2) (min (List.length replica_uris - 1) (List.length leader_uris))
   }
 
 (* Given a list of pvalues, return the pvalue with the greatest ballot number.
@@ -70,14 +84,14 @@ module Scout = struct
     mutable quorum : (Uri.t, Types.unique_id) Quorum.t
   }
 
-  let receive_phase1b scout b (a,b',pvals) send =
+  let receive_phase1b scout b (a,b',pvals,sl_gc) send =
     (* Attempt to lock mutex will either cause this scout to hold the lock
        or block until another scout holding the lock terminates *)
     Lwt_mutex.lock scout.receive_lock >>= fun () ->
     (* Check that, not including this acceptor's response, we already have a majority quorum *)
     (if not (Quorum.is_majority scout.quorum) then
       if Ballot.equal b b' then
-        (scout.pvalues <- List.append pvals scout.pvalues; 
+        (scout.pvalues <- List.append pvals (List.filter ~f:(fun (_,s,_) -> s >= sl_gc) scout.pvalues); 
          scout.quorum <- Quorum.add scout.quorum a; 
         (* Check if we have a majority now we've added this acceptor *)
         if Quorum.is_majority scout.quorum then
@@ -247,12 +261,14 @@ let receive_proposal (leader : t) (p : Types.proposal) =
   else
     Lwt.ignore_result ( write_with_timestamp INFO ("Receive and ignore proposal " ^ Types.string_of_proposal p) )
 
-
-
-
-
-
-
+let recv_so_update (leader : t) ((slot, rep) : slot_number * replica_id) = 
+  Base.Hashtbl.set leader.replica_slot_outs rep slot;
+  let sl_os = Base.Hashtbl.data leader.replica_slot_outs in
+  let unique_cons  xs x = if (List.mem ~equal:(=) xs x) then xs else x :: xs in
+  let vals = List.stable_sort ~compare:(fun x -> fun y -> y-x) (List.fold_left ~f:unique_cons ~init:[] sl_os) in 
+  let max_slot_out = List.hd (List.filter ~f:(fun x -> (List.count ~f:(fun y -> y >= x) sl_os > leader.f)) vals) in
+  let safe_to_gc = match max_slot_out with | None -> 1 | Some v -> v in
+  leader.proposals <- List.filter ~f:(fun (s, _) -> s >= safe_to_gc) leader.proposals
 
 
 
@@ -268,11 +284,11 @@ let print_uri uri =
 
 (* Initialize a server for a given leader on a given host and port *)
 let start_server (leader : t) (host : string) (port : int) =
-  Message.start_new_server ~proposal_callback:(receive_proposal leader) host port;;
+  Message.start_new_server ~proposal_callback:(receive_proposal leader) ~slot_out_update_callback:(recv_so_update leader) host port;;
 
-let new_leader host port replica_uris acceptor_uris = 
+let new_leader host port replica_uris leader_uris acceptor_uris = 
   (* Initialize a new leader *)
-  let leader = initialize replica_uris acceptor_uris in
+  let leader = initialize replica_uris leader_uris acceptor_uris in
   
   (* Return a Lwt thread that is the main execution context
      of the leader *)

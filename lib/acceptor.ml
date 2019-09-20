@@ -8,7 +8,10 @@ open Core
 type t = {
   id : Types.unique_id;
   mutable ballot_num : Ballot.t;
-  accepted : (Types.slot_number, Pval.t) Base.Hashtbl.t
+  accepted : (Types.slot_number, Pval.t) Base.Hashtbl.t;
+  mutable gc_threshold : Types.slot_number ; 
+  replica_slot_outs : (Types.replica_id, Types.slot_number) Base.Hashtbl.t ; 
+  f : int
 }
 
 (* Useful helper functions *)
@@ -16,14 +19,18 @@ let (<) = Ballot.less_than
 let (=) = Ballot.equal
 
 (* Initialize a new acceptor *)
-let initialize () = {
+let initialize replica_uris leader_uris acceptor_uris = {
   id = Uuid_unix.create ();
   ballot_num = Ballot.bottom ();
-  accepted = Base.Hashtbl.create (module Int)
+  accepted = Base.Hashtbl.create (module Int);
+  gc_threshold = 1;
+  replica_slot_outs = Base.Hashtbl.create (module Uuid);
+  f = min ((List.length acceptor_uris -1)/2) (min (List.length replica_uris - 1) (List.length leader_uris))
 }
 
 let callback1_mutex = Core.Mutex.create ()
 let callback2_mutex = Core.Mutex.create ()
+let callback3_mutex = Core.Mutex.create ()
 
 (* This callback occurs when an acceptor receives a phase1 message.
 
@@ -51,7 +58,7 @@ let phase1_callback (a : t) (b : Ballot.t) =
           fun pval -> write_to_log INFO ("\t\t\t\t" ^ Pval.to_string pval)
           ) 
         (Base.Hashtbl.data a.accepted) 
-      in Lwt.return (a.id, a.ballot_num, Base.Hashtbl.data a.accepted)
+      in Lwt.return (a.id, a.ballot_num, Base.Hashtbl.data a.accepted, a.gc_threshold)
       )
     )
 
@@ -83,16 +90,25 @@ let phase2_callback (a : t) (p : Pval.t) =
       )
   )
 
+let recv_so_update (a:t) ((slot, rep) : Types.slot_number * Types.replica_id) = 
+        Base.Hashtbl.set a.replica_slot_outs rep slot;
+        let sl_os = Base.Hashtbl.data a.replica_slot_outs in
+        let unique_cons xs x = if (List.mem ~equal:(=) xs x) then xs else x::xs in
+        let vals = Base.Hashtbl.keys a.accepted in
+        let tb_gc = List.filter ~f:(fun x -> (List.count ~f:(fun y -> y >= x) sl_os > a.f)) vals in
+        List.iter ~f:(fun k -> Base.Hashtbl.remove a.accepted k) tb_gc
+
 (* Initialize a server for a given acceptor  on a given host and port *)
 let start_server (acceptor : t) (host : string) (port : int) =
   Message.start_new_server host port ~phase1_callback:(phase1_callback acceptor)
                                      ~phase2_callback:(phase2_callback acceptor)
+                                     ~slot_out_update_callback:(recv_so_update acceptor)
 
 
 (* Creating a new acceptor consists of initializing a record for it and
    starting a server for accepting incoming messages *)
-let new_acceptor host port =
-  let acceptor = initialize () in
+let new_acceptor host port replica_uris leader_uris acceptor_uris =
+  let acceptor = initialize replica_uris leader_uris acceptor_uris in
   start_server acceptor host port >>= fun uri ->
   write_to_log INFO ("Initializing new acceptor: \n\tURI " ^ (Uri.to_string uri)) >>= fun () ->
   Lwt.wait () |> fst

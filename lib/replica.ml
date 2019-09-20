@@ -37,11 +37,15 @@ type t = {
   mutable decisions : Types.proposal list;
 
   (* Set of leader ids that the replica has in its current configuration *)
-  mutable leaders : Uri.t list;
+  mutable leaders : Uri.t list; 
+
+  mutable acceptors : Uri.t list;
+
+  f:int;
 };;
 
 (* Function new_replica returns a new replica given a list of leader ids *)
-let initialize leader_ids = {
+let initialize replica_uris leader_uris acceptor_uris = {
   id = Uuid_unix.create ();
   app_state = Types.initial_state;
   slot_in   = 1;
@@ -49,7 +53,9 @@ let initialize leader_ids = {
   requests  = Queue.create ();
   proposals = [];
   decisions = [];
-  leaders   = leader_ids;
+  leaders   = leader_uris;
+  acceptors = acceptor_uris;
+  f = min ((List.length acceptor_uris -1)/2) (min (List.length replica_uris - 1) (List.length leader_uris))
 };;
 
 (* Print debug information pertaining to a replica *)
@@ -111,9 +117,15 @@ let perform replica c =
   (match List.Assoc.find decisions_inv ~equal:(fun c1 -> fun c2 -> Types.commands_equal c1 c2) c with
   | None -> false
   | Some s -> s < slot_out) in
-  if is_lower_slot || isreconfig op  then
-    replica.slot_out <- replica.slot_out + 1
-  else
+  if is_lower_slot || isreconfig op  then begin
+    replica.slot_out <- replica.slot_out + 1;
+    if replica.slot_out mod 10 = 0 then begin
+      Lwt_list.iter_p  (fun uri -> 
+        let msg = Message.SlotOutUpdateMessage (replica.slot_out, replica.id) in
+        Message.send_request msg uri  
+      ) (List.concat [replica.leaders; replica.acceptors]) |> Lwt.ignore_result; 
+    end
+  end else
     (* ATOMIC - May need to make this an atomic execution block *)
     (* Update application state *)
 
@@ -232,9 +244,9 @@ let do_proposal (c : Types.command) (replica : t) =
     write_with_timestamp INFO ("Propose " ^ (Types.string_of_proposal (replica.slot_in,c))));
 
   (* Finally broadcast a message to all of the leaders notifying them of proposal *)
-  List.iter replica.leaders ~f:(fun uri ->
+  Lwt_list.iter_p (fun uri ->
     let msg = Message.ProposalMessage (replica.slot_in, c) in
-    Message.send_request msg uri |> Lwt.ignore_result)
+    Message.send_request msg uri) replica.leaders |> Lwt.ignore_result
 
 
 (* Function attempts to take one request and propose it.
@@ -284,8 +296,8 @@ let rec propose_lwt replica =
   propose_lwt replica;;
 
 (* Initialize a new replica and its lwt threads *)
-let new_replica host port leader_uris =
-  let replica = initialize leader_uris in
+let new_replica host port replica_uris leader_uris acceptor_uris =
+  let replica = initialize replica_uris leader_uris acceptor_uris in
   Lwt.join [
     (* Start the server on the specified (host,port) pair.
        Print the URI representing the Capnp sturdy ref

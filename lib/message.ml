@@ -10,11 +10,12 @@ let sturdy_refs = Hashtbl.create 10
 
 
 
-let serialize_phase1_response acceptor_id ballot_num accepted : Yojson.Basic.json =
+let serialize_phase1_response acceptor_id ballot_num accepted sl_gc : Yojson.Basic.json =
   let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in
   let ballot_json = Yojson.Basic.Util.to_assoc (Ballot.serialize ballot_num) in
   let pvalues_json = Yojson.Basic.Util.to_assoc ( (`Assoc [("pvalues", Pval.serialize_list accepted)])) in
-  let response_json = `Assoc ( acceptor_id :: (Core.List.concat [ballot_json; pvalues_json]) ) in
+  let sl_gc_json =  ("sl_gc", `Int sl_gc) in 
+  let response_json = `Assoc ( acceptor_id :: sl_gc_json :: (Core.List.concat [ballot_json; pvalues_json]) ) in
   `Assoc [ ("response", response_json )]
 
 let deserialize_phase1_response (response_json : Yojson.Basic.json) =
@@ -22,9 +23,10 @@ let deserialize_phase1_response (response_json : Yojson.Basic.json) =
   let acceptor_id_json = Yojson.Basic.Util.member "acceptor_id" inner_json in
   let ballot_number_json = Yojson.Basic.Util.member "ballot_num" inner_json in
   let pvalues_json = Yojson.Basic.Util.member "pvalues" inner_json in
+  let sl_gc = Yojson.Basic.Util.member "sl_gc" inner_json in 
   (acceptor_id_json |> Yojson.Basic.Util.to_string |> Types.id_of_string,
    Ballot.deserialize (`Assoc [("ballot_num",ballot_number_json)]),
-   Pval.deserialize_list pvalues_json)
+   Pval.deserialize_list pvalues_json, Yojson.Basic.Util.to_int sl_gc)
 
 let serialize_phase2_response acceptor_id ballot_num : Yojson.Basic.json =
   let acceptor_id = ("acceptor_id", `String (Types.string_of_id acceptor_id)) in
@@ -66,13 +68,24 @@ module Api = Message_api.MakeRPC(Capnp_rpc_lwt);;
 let local ?(request_callback : (command -> unit) option)
           ?(proposal_callback : (proposal -> unit) option)
           ?(response_callback : ((command_id * result) -> unit) option)
-          ?(phase1_callback : (Ballot.t -> (Types.unique_id * Ballot.t * Pval.t list)) option)
+          ?(phase1_callback : (Ballot.t -> (Types.unique_id * Ballot.t * Pval.t list * Types.slot_number)) option)
           ?(phase2_callback : (Pval.t -> (Types.unique_id * Ballot.t)) option)
+          ?(slot_out_update_callback : ((slot_number * replica_id) -> unit) option)
           () =
 
   let module Message = Api.Service.Message in
   Message.local @@ object
     inherit Message.service
+
+    method slot_out_update_impl params release_param_caps = 
+      let open Message.SlotOutUpdate in
+      let module Params = Message.SlotOutUpdate.Params in
+      let slot_out = Params.slot_out_get params in
+      let rep_id = Uuid.of_string (Params.replica_id_get params) in
+        release_param_caps ();
+        match slot_out_update_callback with Some f ->
+        f(slot_out, rep_id);
+        Service.return_empty ();
 
     method phase2_impl params release_param_caps =
       let open Message.Phase2 in
@@ -97,8 +110,8 @@ let local ?(request_callback : (command -> unit) option)
                               |> Ballot.deserialize in
       release_param_caps ();
       match phase1_callback with Some f ->
-      let (acceptor_id, ballot_num', pvalues)  = f(ballot_number) in
-      let json = serialize_phase1_response acceptor_id ballot_num' pvalues in
+      let (acceptor_id, ballot_num', pvalues, sl_gc)  = f(ballot_number) in
+      let json = serialize_phase1_response acceptor_id ballot_num' pvalues sl_gc in
       let result_str = Yojson.Basic.to_string json in
       let response, results = Service.Response.create Results.init_pointer in
       Results.result_set results result_str;
@@ -417,6 +430,39 @@ let decision_rpc t (p : Types.proposal) =
       | Error e -> Hashtbl.clear sturdy_refs
 
 
+let slot_out_update_rpc t (s : slot_number) (rep_id : replica_id) =
+  let open Api.Client.Message.SlotOutUpdate in
+  let request, params = Capability.Request.create Params.init_pointer in
+  let open Api.Builder.Message in 
+    Params.slot_out_set_exn params s;
+    Params.replica_id_set params (Uuid.to_string rep_id);
+    Capability.call_for_unit t method_id request >|=
+      function | Ok () -> ()
+               | Error e -> Hashtbl.clear sturdy_refs
+    
+
+(*
+
+let phase1_rpc t (b : Ballot.t) =
+  let open Api.Client.Message.Phase1 in
+  let request, params = Capability.Request.create Params.init_pointer in
+  let open Api.Builder.Message in
+  Params.ballot_number_set params (b |> Ballot.serialize |> Yojson.Basic.to_string);
+  Capability.call_for_value_exn t method_id request >|=
+  Results.result_get >|=
+  Yojson.Basic.from_string >|=
+  deserialize_phase1_response
+
+(* TODO: Pattern matching here exhaustive *)
+let send_phase1_message (b : Ballot.t) uri =
+  service_from_uri uri >>= function
+  | Some service ->
+  phase1_rpc service b;;
+
+
+
+ *)
+
 let proposal_rpc t (p : Types.proposal) =
   let open Api.Client.Message.SendProposal in
   let request, params = Capability.Request.create Params.init_pointer in
@@ -475,12 +521,13 @@ type message = ClientRequestMessage of command
              | ProposalMessage of proposal
              | DecisionMessage of proposal
              | ClientResponseMessage of command_id * result
+             | SlotOutUpdateMessage of slot_number * replica_id
           (* | ... further messages will be added *)
 
 (* Start a new server advertised at address (host,port)
    This server does not serve with TLS and the service ID for the
    server is derived from its address *)
-let start_new_server ?request_callback ?proposal_callback ?response_callback ?phase1_callback ?phase2_callback host port =
+let start_new_server ?request_callback ?proposal_callback ?response_callback ?phase1_callback ?phase2_callback ?slot_out_update_callback host port =
     let listen_address = `TCP (host, port) in
     let config = Capnp_rpc_unix.Vat_config.create ~serve_tls:false ~secret_key:`Ephemeral listen_address in
     (* let service_id = Capnp_rpc_unix.Vat_config.derived_id config "main" in *)
@@ -536,7 +583,9 @@ let send_request message uri =
   | ProposalMessage p ->
     proposal_rpc service p;
   | ClientResponseMessage (cid, result) ->
-    client_response_rpc service cid result)
+    client_response_rpc service cid result;
+  | SlotOutUpdateMessage (s, rep_id) ->
+    slot_out_update_rpc service s rep_id)
 
 (*---------------------------------------------------------------------------*)
 
