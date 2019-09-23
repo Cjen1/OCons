@@ -74,6 +74,9 @@ let ( << ) xs ys =
   append ys (filter xs ~f:(fun x -> not (mem ys x ~equal:proposals_equal)))
 
 module Scout = struct
+  (* Accumulates 1b responses from acceptors in quorum until
+     a majority is achieved.
+   * *)
   type t' =
     { receive_lock: Lwt_mutex.t
     ; mutable pvalues: Pval.t list
@@ -82,22 +85,25 @@ module Scout = struct
   let receive_phase1b scout b (a, b', pvals, sl_gc) send =
     (* Attempt to lock mutex will either cause this scout to hold the lock
        or block until another scout holding the lock terminates *)
-    Lwt_mutex.lock scout.receive_lock
-    >>= fun () ->
+    let%lwt () = Lwt_mutex.lock scout.receive_lock in
     (* Check that, not including this acceptor's response, we already have a majority quorum *)
-    ( if not (Quorum.is_majority scout.quorum) then
-      if Ballot.equal b b' then (
-        scout.pvalues <-
-          List.append pvals
-            (List.filter ~f:(fun (_, s, _) -> s >= sl_gc) scout.pvalues) ;
-        scout.quorum <- Quorum.add scout.quorum a ;
-        (* Check if we have a majority now we've added this acceptor *)
-        if Quorum.is_majority scout.quorum then
-          send @@ Adopted (b, scout.pvalues)
-        else Lwt.return_unit )
-      else send @@ Preempted b'
-    else Lwt.return_unit )
-    >>= fun () -> Lwt_mutex.unlock scout.receive_lock |> Lwt.return
+    let%lwt () =
+      if not (Quorum.is_majority scout.quorum) then
+        match Ballot.equal b b' with
+        | true ->
+            scout.pvalues <-
+              List.append pvals
+                (List.filter ~f:(fun (_, s, _) -> s >= sl_gc) scout.pvalues) ;
+            scout.quorum <- Quorum.add scout.quorum a ;
+            (* Check if we have a majority now we've added this acceptor *)
+            if Quorum.is_majority scout.quorum then
+              send (Adopted (b, scout.pvalues))
+            else Lwt.return_unit
+        | false ->
+            send @@ Preempted b'
+      else Lwt.return_unit
+    in
+    Lwt_mutex.unlock scout.receive_lock |> Lwt.return
 
   (* Computation performed by the scout sub-process involves sending out phase1 requests
      and waiting for a majority of responses *)
@@ -106,8 +112,8 @@ module Scout = struct
        and call a function to operate over the response *)
     Lwt_list.iter_p
       (fun uri ->
-        Message.send_phase1_message b uri
-        >>= fun response -> receive_phase1b scout b response send)
+        let%lwt response = Message.send_phase1_message b uri in
+        receive_phase1b scout b response send)
       leader.acceptor_uris
 
   (* Spawn a new scout sub-process *)
@@ -297,12 +303,10 @@ let new_leader host port replica_uris leader_uris acceptor_uris =
   (* Initialize a new leader *)
   let leader = initialize replica_uris leader_uris acceptor_uris in
   (* Return a Lwt thread that is the main execution context
-     of the leader *)
+     of the leader and which cannot ever exit *)
   Lwt.join
-    [ ( start_server leader host port
-      >>= fun uri ->
-      print_uri uri
-      >>= fun () ->
-      Scout.spawn leader (Ballot.init leader.id) send ;
-      Lwt.wait () |> fst )
+    [ (let%lwt uri = start_server leader host port in
+       let%lwt () = print_uri uri in
+       Scout.spawn leader (Ballot.init leader.id) send)
+      (* An unresolvable promise *)
     ; receive leader ]
