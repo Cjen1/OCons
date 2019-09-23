@@ -1,4 +1,5 @@
 (lang dune 1.11)
+(using fmt 1.2)
 (name ocaml-paxos)
 (source (github chrislomaxjones/part-ii-project))
 (authors "Chris Jones" "Chris Jensen")
@@ -14,12 +15,3 @@
     uri 
     capnp-rpc-lwt 
     capnp-rpc-unix))
-
-;(package
-;  (name ocaml-paxos)
-;  (synopsis "A server using ocaml-paxos")
-;  (depends
-;    core
-;    lwt
-;    uri
-;    lwt_ppx))
