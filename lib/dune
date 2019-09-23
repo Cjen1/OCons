@@ -1,22 +1,25 @@
 (library
-  (name lib)
-  (public_name ocaml-paxos)
-  (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix lwt_ppx)
-  (preprocess (pps ppx_jane lwt_ppx))
-  (modules (:standard \ tests))
-  )
+ (name lib)
+ (public_name ocaml-paxos)
+ (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix
+   lwt_ppx)
+ (preprocess
+  (pps ppx_jane lwt_ppx))
+ (modules
+  (:standard \ tests)))
 
 (executable
-  (name tests)
-  (libraries oUnit lib)
-  (modules tests)
-  )
+ (name tests)
+ (libraries oUnit lib)
+ (modules tests))
 
 (rule
  (targets message_api.ml message_api.mli)
  (deps message_api.capnp)
- (action (bash "capnp compile -o ocaml message_api.capnp")))
+ (action
+  (bash "capnp compile -o ocaml message_api.capnp")))
 
 (env
  (dev
-  (flags (:standard -warn-error -A))))
+  (flags
+   (:standard -warn-error -A))))
