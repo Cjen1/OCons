@@ -13,7 +13,7 @@ type t =
   ; mutable ballot_num: Ballot.t
   ; mutable active: bool
   ; mutable proposals: proposal list
-  ; replica_slot_outs: (replica_id, slot_number) Hashtbl.t
+  ; mutable replica_slot_outs: (replica_id, slot_number, UUID.comparator_witness) Base.Map.t
   ; f: int }
 
 (* Types of responses that can be returned by scout and commander sub-processes *)
@@ -34,7 +34,7 @@ let initialize replica_uris leader_uris acceptor_uris =
      * slot> pairs and no garbage collection will be carried out until sufficiently
      * many replica_ids have been collected.
      *)
-    replica_slot_outs= Base.Hashtbl.create (module Uuid)
+    replica_slot_outs= Base.Map.empty (module Uuid)
   ; (* Potentially overestimating nr of failures is admissible here because we 
      * only use the value of f to determine when to garbage collect. This means
      * that we can safely ignore the number of leaders here. 
@@ -266,8 +266,8 @@ let receive_proposal (leader : t) (p : Types.proposal) =
          ("Receive and ignore proposal " ^ Types.string_of_proposal p))
 
 let recv_so_update (leader : t) ((slot, rep) : slot_number * replica_id) =
-  Base.Hashtbl.set leader.replica_slot_outs rep slot ;
-  let sl_os = Base.Hashtbl.data leader.replica_slot_outs in
+  leader.replica_slot_outs <- Base.Map.set leader.replica_slot_outs rep slot ;
+  let sl_os = Base.Map.data leader.replica_slot_outs in
   let unique_cons xs x = if List.mem ~equal:( = ) xs x then xs else x :: xs in
   let vals =
     List.stable_sort
