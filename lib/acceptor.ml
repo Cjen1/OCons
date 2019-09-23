@@ -34,8 +34,6 @@ let callback1_mutex = Core.Mutex.create ()
 
 let callback2_mutex = Core.Mutex.create ()
 
-let callback3_mutex = Core.Mutex.create ()
-
 (* This callback occurs when an acceptor receives a phase1 message.
 
    The message will contain a ballot number that a leader is attempting
@@ -62,6 +60,7 @@ let phase2_callback (a : t) (p : Pval.t) =
                 Some p
             | Some (b', _, _) ->
                 if Ballot.less_than b' b then Some p else opt) ;
+      (*p |> [%sexp_of Pval.t] |> Sexp.to_string_mach |> write_to_wal; TODO*)
       (a.id, a.ballot_num))
 
 let recv_so_update (a : t) ((slot, rep) : Types.slot_number * Types.replica_id)
@@ -74,7 +73,8 @@ let recv_so_update (a : t) ((slot, rep) : Types.slot_number * Types.replica_id)
     List.filter ~f:(fun x -> List.count ~f:(fun y -> y >= x) sl_os > a.f) vals
   in
   List.iter ~f:(fun k -> Base.Hashtbl.remove a.accepted k) tb_gc
-    (* TODO optimise out Base.Hashtbl.data *)
+
+(* TODO optimise out Base.Hashtbl.data *)
 
 (* Initialize a server for a given acceptor  on a given host and port *)
 let start_server (acceptor : t) (host : string) (port : int) =
