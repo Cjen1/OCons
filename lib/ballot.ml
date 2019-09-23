@@ -65,8 +65,7 @@ let compare b b' =
 
 (* Function tests if ballot b is less than b'.
    Along with equalaity function we have a total order on ballots *)
-let less_than b b' =
-  compare b b' < 0
+let less_than b b' = compare b b' < 0
 
 (* Convert a ballot to a string *)
 let to_string = function
