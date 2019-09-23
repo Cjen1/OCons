@@ -71,21 +71,21 @@ let run_leader' host port replica_uris acceptor_uris =
   let log_directory = "leader-" ^ host ^ "-" ^ string_of_int port in
   Lwt_main.run
     ( Logger.initialize_default log_directory
-    >>= fun () -> Leader.new_leader host port replica_uris acceptor_uris )
+    >>= fun () -> Leader.new_leader host port replica_uris acceptor_uris [] )
 
 (* Sample replica code *)
 let run_replica' host port uris =
   let log_directory = "replica-" ^ host ^ "-" ^ string_of_int port in
   Lwt_main.run
     ( Logger.initialize_default log_directory
-    >>= fun () -> Replica.new_replica host port uris )
+    >>= fun () -> Replica.new_replica host port uris [] [] )
 
 (* Sample acceptor code *)
 let run_acceptor' host port =
   let log_directory = "acceptor-" ^ host ^ "-" ^ string_of_int port in
   Lwt_main.run
     ( Logger.initialize_default log_directory
-    >>= fun () -> Acceptor.new_acceptor host port )
+    >>= fun () -> Acceptor.new_acceptor host port [] [] [] )
 
 (* Run this application as a client, serving over the (host,port) address
    under a global configuration given in config *)
