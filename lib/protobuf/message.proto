@@ -1,0 +1,82 @@
+syntax="proto3";
+
+message Phase1A {
+	Ballot ballot = 1;
+}
+
+message Phase1B {
+	string   acc_id       = 1;
+	Ballot   ballot       = 2;
+	int32    gc_threshold = 4;
+	repeated Pvalue pvals = 3;
+}
+
+message Phase2A {
+	string leader_id = 1;
+	Pvalue pval      = 2;
+}
+
+message Phase2B {
+	string acc_id = 1;
+	Ballot ballot = 2;
+}
+
+message Ballot {
+	string leader_id = 1;
+	int32 ballot_num = 2;
+}
+
+message Pvalue {
+	Ballot  ballot     = 1;
+	int32   slot_num   = 2;
+	Command command    = 3;
+}
+
+message ClientId {
+	string cl_id  = 1;
+	string cl_uri = 2;
+}
+
+message Command {
+	ClientId  client    = 1;
+	int32     CommandId = 2;
+	Operation Op        = 3;
+}
+
+
+message Operation { 
+	oneof op {
+		Nop    nop    = 1;
+		Create create = 2;
+		Read   read   = 3;
+		Update update = 4;
+		Remove remove = 5;
+	}
+	
+	message Nop {}
+	message Create{
+		int32  key   = 1;
+		string value = 2;
+	}
+	message Read{
+		int32 key = 1;
+	}
+	message Update{
+		int32  key   = 1;
+		string value = 2;
+	}
+	message Remove{
+		int32 key = 1;
+	}
+
+}
+
+message Result {
+	oneof outcome{
+		Success Success = 1;
+		Failure Failure = 2;
+		string  Read    = 3;
+	}
+	message Success {};
+	message Failure {};
+}

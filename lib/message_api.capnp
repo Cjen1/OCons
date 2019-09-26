@@ -102,7 +102,7 @@ interface Message {
   #     send) so no point in writing lots of serialization code when
   #     it will change in the future anyway
 
-  slotOutUpdate @6 (slotOut :UInt16, replicaId :Text);
+  slotOutUpdate @6 (slotOut :UInt16, replicaId :Text) -> ();
   # Method slotOutUpdate aims to implement the notification of the value of 
   # slot_out for leaders and acceptors suggested in PMMC. 
 }
