@@ -46,19 +46,6 @@ let equal b b' =
   | _, _ ->
       false
 
-(* Function tests if ballot b is less than b'.
-   Along with equalaity function we have a total order on ballots *)
-let less_than b b' =
-  match (b, b') with
-  | Bottom, Bottom ->
-      false
-  | Bottom, _ ->
-      true
-  | _, Bottom ->
-      false
-  | Number (n, lid), Number (n', lid') ->
-      if n = n' then lid < lid' else n < n'
-
 (* Comparison function for ballots.
 
   For reference on how comparisons should behave, from Real World OCaml...
@@ -73,9 +60,12 @@ let compare b b' =
       -1
   | _, Bottom ->
       1
-  | Number (n, lid), Number (n', lid') ->
-      let int_comp = Core.Int.compare n n' in
-      if int_comp = 0 then Uuid.compare lid lid' else int_comp
+  | Number (n, lid), Number (n', lid') -> (
+    match Core.Int.compare n n' with 0 -> Uuid.compare lid lid' | n -> n )
+
+(* Function tests if ballot b is less than b'.
+   Along with equalaity function we have a total order on ballots *)
+let less_than b b' = compare b b' < 0
 
 (* Convert a ballot to a string *)
 let to_string = function
