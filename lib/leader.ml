@@ -13,7 +13,7 @@ type t =
   ; mutable ballot_num: Ballot.t
   ; mutable active: bool
   ; mutable proposals: proposal list
-  ; mutable replica_slot_outs: (replica_id, slot_number, UUID.comparator_witness) Base.Map.t
+  ; mutable replica_slot_outs: (replica_id, slot_number, Uuid.comparator_witness) Base.Map.t
   ; f: int }
 
 (* Types of responses that can be returned by scout and commander sub-processes *)
