@@ -54,6 +54,12 @@ let pvalue_of_message (pv:Message_types.pvalue) : Pval.t =
     let command = command_of_message c in
     ballot , Int32.to_int pv.slot_num , command;;
 
+let slot_out_update_of_message (sou:Message_types.slot_out_update)
+                               : Types.slot_out_update =
+  let sl_num = Int32.to_int sou.slot_num in
+  let open Core in
+  let rep_id = Uuid.of_string sou.replica_id in
+  sl_num , rep_id;;
 
 let operation_message (op:Types.operation) : Message_types.operation =
   let open Message_types in
@@ -141,3 +147,11 @@ let result_message (res:Types.result) : Message_types.result =
   | Failure -> Failure
   | ReadSuccess (s) -> Read (s);;
 
+let slot_out_update_message (sou:Types.slot_out_update) 
+                            : Message_types.slot_out_update =
+  let s, r = sou in
+  let slot = Int32.of_int s in
+  let open Core in
+  let rep = Uuid.to_string r in
+  { slot_num=slot
+  ; replica_id=rep };;
