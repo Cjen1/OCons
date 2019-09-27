@@ -80,3 +80,8 @@ message Result {
 	message Success {};
 	message Failure {};
 }
+
+message SlotOutUpdate{
+	int32  slot_num   = 1;
+	string replica_id = 2;
+}
