@@ -24,7 +24,7 @@ module Phase1Server = Make_Server (struct
       Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
    fun (ic, oc) (acceptor : t) ->
     let* msg = Lwt_io.read_line ic in
-    let ballot = msg |> (assert false) in
+    let ballot = msg |> assert false in
     let* () =
       critical_section acceptor.resp_mutex ~f:(fun () ->
           Lwt.return
@@ -36,7 +36,7 @@ module Phase1Server = Make_Server (struct
       , Base.Hashtbl.data acceptor.accepted (* TODO reduce this? *)
       , acceptor.gc_threshold )
     in
-    let marshalled_resp = resp |> (assert false) in
+    let marshalled_resp = resp |> assert false in
     (* TODO write to wal *)
     Lwt_io.write_line oc marshalled_resp
 end)
@@ -50,25 +50,24 @@ module Phase2Server = Make_Server (struct
       Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
    fun (ic, oc) (acceptor : t) ->
     let* msg = Lwt_io.read_line ic in
-    let ((ib, is, _) as ipval) = msg |> (assert false) in
+    let ((ib, is, _) as ipval) = msg |> assert false in
     try
       let* () =
         critical_section acceptor.resp_mutex ~f:(fun () ->
-            ( if ib = acceptor.ballot_num then
+            if ib = acceptor.ballot_num then
               match Base.Hashtbl.find acceptor.accepted is with
               | Some (b', _, _) ->
                   if
                     Ballot.less_than b' ib
                     (* If more up to date ballot number was received *)
-                  then
-                    Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
+                  then Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
               | None ->
-                Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval 
-              else raise (Preempted ib) ) ;
+                  Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
+            else raise (Preempted ib) ;
             Lwt.return_unit)
       in
       let resp = (acceptor.id, acceptor.ballot_num) in
-      let marshalled_resp = resp |> (assert false) in
+      let marshalled_resp = resp |> assert false in
       (* TODO write to wal *)
       Lwt_io.write_line oc marshalled_resp
     with Preempted b ->
