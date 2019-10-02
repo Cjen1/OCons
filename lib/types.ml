@@ -261,3 +261,5 @@ let string_of_result result =
       "Success"
   | ReadSuccess v ->
       "Read success, value " ^ v
+
+type slot_out_update = slot_number * replica_id
