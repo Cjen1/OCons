@@ -27,7 +27,9 @@ end = struct
   let create () =
     {m= Lwt_mutex.create (); c= Lwt_condition.create (); q= Queue.create ()}
 
-  let add e t = Queue.add e t.q ; Lwt_condition.signal t.c ()
+  let add e t =
+    Queue.add e t.q ;
+    Lwt_condition.signal t.c ()
 
   let take t =
     let* () = Lwt_mutex.lock t.m in
@@ -40,12 +42,10 @@ end = struct
 end
 
 (* TODO move create_socket out of critical path? *)
-let connect uri = 
+let connect uri =
   (* TODO change out from TCP? *)
   let sock = Lwt_unix.socket Lwt_unix.PF_INET Lwt_unix.SOCK_STREAM 0 in
   let* () = Lwt_unix.connect sock uri in
-  Lwt.return (
-    Lwt_io.of_fd ~mode:Lwt_io.Input sock,
-    Lwt_io.of_fd ~mode:Lwt_io.Output sock
-  )
-
+  Lwt.return
+    ( Lwt_io.of_fd ~mode:Lwt_io.Input sock
+    , Lwt_io.of_fd ~mode:Lwt_io.Output sock )
