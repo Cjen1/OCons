@@ -10,6 +10,12 @@
  (action
   (bash "capnp compile -o ocaml message_api.capnp")))
 
+(rule
+ (targets message_pb.ml message_pb.mli message_types.ml message_types.mli)
+ (deps protobuf/message.proto)
+ (action (bash "ocaml-protoc -binary -ml_out . protobuf/message.proto"))
+ )
+
 (env
  (dev
   (flags
