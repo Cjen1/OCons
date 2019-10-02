@@ -1,93 +1,108 @@
 (* acceptor.ml *)
 
-open Lwt.Infix
-open Log.Logger
-open Core
+open Server
+open Utils
 
 (* Types of acceptors *)
 type t =
   { id: Types.unique_id
   ; mutable ballot_num: Ballot.t
-  ; accepted: (Types.slot_number, Pval.t) Base.Hashtbl.t
+  ; accepted: (int, Pval.t) Base.Hashtbl.t
   ; mutable gc_threshold: Types.slot_number
   ; replica_slot_outs: (Types.replica_id, Types.slot_number) Base.Hashtbl.t
-  ; f: int }
+        (* Uppermost slot known by replica *)
+  ; fault_tolerance: int
+  ; resp_mutex: Lwt_mutex.t
+  ; wal: Lwt_io.output_channel * Unix.file_descr }
 
-(* Useful helper functions *)
-let ( < ) = Ballot.less_than
+(* TODO exploit cooperative threading to remove mutexes *)
 
-let ( = ) = Ballot.equal
+module Phase1Server = Make_Server (struct
+  type nonrec t = t
+
+  let connected_callback :
+      Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
+   fun (ic, oc) (acceptor : t) ->
+    let* msg = Lwt_io.read_line ic in
+    let ballot = msg |> (assert false) in
+    let* () =
+      critical_section acceptor.resp_mutex ~f:(fun () ->
+          Lwt.return
+          @@ if acceptor.ballot_num < ballot then acceptor.ballot_num <- ballot)
+    in
+    let resp =
+      ( acceptor.id
+      , acceptor.ballot_num
+      , Base.Hashtbl.data acceptor.accepted (* TODO reduce this? *)
+      , acceptor.gc_threshold )
+    in
+    let marshalled_resp = resp |> (assert false) in
+    (* TODO write to wal *)
+    Lwt_io.write_line oc marshalled_resp
+end)
+
+module Phase2Server = Make_Server (struct
+  type nonrec t = t
+
+  exception Preempted of Ballot.t
+
+  let connected_callback :
+      Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
+   fun (ic, oc) (acceptor : t) ->
+    let* msg = Lwt_io.read_line ic in
+    let ((ib, is, _) as ipval) = msg |> (assert false) in
+    try
+      let* () =
+        critical_section acceptor.resp_mutex ~f:(fun () ->
+            ( if ib = acceptor.ballot_num then
+              match Base.Hashtbl.find acceptor.accepted is with
+              | Some (b', _, _) ->
+                  if
+                    Ballot.less_than b' ib
+                    (* If more up to date ballot number was received *)
+                  then
+                    Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
+              | None ->
+                Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval 
+              else raise (Preempted ib) ) ;
+            Lwt.return_unit)
+      in
+      let resp = (acceptor.id, acceptor.ballot_num) in
+      let marshalled_resp = resp |> (assert false) in
+      (* TODO write to wal *)
+      Lwt_io.write_line oc marshalled_resp
+    with Preempted b ->
+      let nack = b |> assert false in
+      Lwt_io.write_line oc nack
+end)
 
 (* Initialize a new acceptor *)
-let initialize replica_uris leader_uris acceptor_uris =
+let create fault_tolerance wal_location =
   { id= Uuid_unix.create ()
   ; ballot_num= Ballot.bottom ()
-  ; accepted= Base.Hashtbl.create (module Int)
+  ; accepted= Base.Hashtbl.create (module Base.Int)
   ; gc_threshold= 1
   ; replica_slot_outs= Base.Hashtbl.create (module Uuid)
-  ; f=
-      min
-        ((List.length acceptor_uris - 1) / 2)
-        (min (List.length replica_uris - 1) (List.length leader_uris)) }
+  ; fault_tolerance
+  ; resp_mutex= Lwt_mutex.create ()
+  ; wal=
+      (let fd =
+         Unix.openfile wal_location [Unix.O_RDWR; Unix.O_CREAT]
+         @@ int_of_string "0x660"
+       in
+       let chan =
+         Lwt_io.of_fd ~mode:Lwt_io.Output (Lwt_unix.of_unix_file_descr fd)
+       in
+       (chan, fd)) }
 
-let callback1_mutex = Core.Mutex.create ()
-
-let callback2_mutex = Core.Mutex.create ()
-
-(* This callback occurs when an acceptor receives a phase1 message.
-
-   The message will contain a ballot number that a leader is attempting
-   to obtain a majority quorum over. The acceptor will adopt the ballot
-   number if it is greater than the one it is currently storing.
-
-   In either case, the acceptor replies with its current state (this
-   may be the new ballot number it has adopted) *)
-let phase1_callback (a : t) (b : Ballot.t) =
-  Core.Mutex.critical_section callback2_mutex ~f:(fun () ->
-      if a.ballot_num < b then a.ballot_num <- b ;
-      (a.id, a.ballot_num, Base.Hashtbl.data a.accepted, a.gc_threshold))
-
-(* This callback occurs when an acceptor receives a phase2 message
-   ... *)
-let phase2_callback (a : t) (p : Pval.t) =
-  Core.Mutex.critical_section callback2_mutex ~f:(fun () ->
-      let b, s, _ = p in
-      if b = a.ballot_num then
-        (*Conditional Update*)
-        Base.Hashtbl.change a.accepted s ~f:(fun opt ->
-            match opt with
-            | None ->
-                Some p
-            | Some (b', _, _) ->
-                if Ballot.less_than b' b then Some p else opt) ;
-      (*p |> [%sexp_of Pval.t] |> Sexp.to_string_mach |> write_to_wal; TODO*)
-      (a.id, a.ballot_num))
-
-let recv_so_update (a : t) ((slot, rep) : Types.slot_number * Types.replica_id)
-    =
-  Base.Hashtbl.set a.replica_slot_outs ~key:rep ~data:slot ;
-  let sl_os = Base.Hashtbl.data a.replica_slot_outs in
-  let unique_cons xs x = if List.mem ~equal:( = ) xs x then xs else x :: xs in
-  let vals = Base.Hashtbl.keys a.accepted in
-  let tb_gc =
-    List.filter ~f:(fun x -> List.count ~f:(fun y -> y >= x) sl_os > a.f) vals
-  in
-  List.iter ~f:(fun k -> Base.Hashtbl.remove a.accepted k) tb_gc
-
-(* TODO optimise out Base.Hashtbl.data *)
-
-(* Initialize a server for a given acceptor  on a given host and port *)
-let start_server (acceptor : t) (host : string) (port : int) =
-  Message.start_new_server host port
-    ~phase1_callback:(phase1_callback acceptor)
-    ~phase2_callback:(phase2_callback acceptor)
-    ~slot_out_update_callback:(recv_so_update acceptor)
+let start acceptor host p1_port p2_port =
+  Lwt.join
+    [ Phase1Server.start host p1_port acceptor
+    ; Phase2Server.start host p2_port acceptor ]
 
 (* Creating a new acceptor consists of initializing a record for it and
    starting a server for accepting incoming messages *)
-let new_acceptor host port replica_uris leader_uris acceptor_uris =
-  let acceptor = initialize replica_uris leader_uris acceptor_uris in
-  start_server acceptor host port
-  >>= fun uri ->
-  write_to_log INFO ("Initializing new acceptor: \n\tURI " ^ Uri.to_string uri)
-  >>= fun () -> Lwt.wait () |> fst
+let create_and_start_acceptor host p1_port p2_port failure_tolerance
+    wal_location =
+  let acceptor = create failure_tolerance wal_location in
+  start acceptor host p1_port p2_port

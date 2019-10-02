@@ -1,7 +1,5 @@
-type ('a, 'b) t
+type 'b t = int * 'b list
 
-val add : ('a, 'b) t -> 'b -> ('a, 'b) t
+val add : 'b t -> 'b -> 'b t
 
-val is_majority : ('a, 'b) t -> bool
-
-val from_list : 'a list -> ('a, 'b) t
+val is_majority : 'b t -> bool
