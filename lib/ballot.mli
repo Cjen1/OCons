@@ -18,8 +18,14 @@ val less_than : t -> t -> bool
 
 val compare : t -> t -> int
 
-val serialize : t -> Basic.json
+val serialize : t -> Basic.t
 
-val deserialize : Basic.json -> t
+val deserialize : Basic.t -> t
 
 val to_string : t -> string
+
+module Infix : sig
+  val ( < ) : t -> t -> bool
+
+  val ( = ) : t -> t -> bool
+end
