@@ -98,3 +98,9 @@ let deserialize (ballot_json : Basic.t) : t =
       Number (n, id_of_string lid)
   | _ ->
       raise BallotDeserializationError
+
+module Infix = struct
+  let ( < ) = less_than
+
+  let ( = ) = equal
+end

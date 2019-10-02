@@ -1,17 +1,8 @@
 (library
  (name lib)
  (public_name ocaml-paxos)
- (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix
-   lwt_ppx ocaml-protoc)
- (preprocess
-  (pps ppx_jane lwt_ppx))
- (modules
-  (:standard \ tests)))
-
-(executable
- (name tests)
- (libraries oUnit lib)
- (modules tests))
+ (libraries oUnit core core.uuid lwt yojson uri logs.lwt logs.fmt fmt.tty)
+ (modules server acceptor types ballot pval utils leader_replica quorum))
 
 (rule
  (targets message_api.ml message_api.mli)
