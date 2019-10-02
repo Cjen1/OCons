@@ -1,8 +1,7 @@
 (library
  (name lib)
  (public_name ocaml-paxos)
- (libraries oUnit core core.uuid lwt yojson uri capnp-rpc-lwt capnp-rpc-unix
-   logs.lwt logs.fmt fmt.tty)
+ (libraries oUnit core core.uuid lwt yojson uri logs.lwt logs.fmt fmt.tty)
  (modules server acceptor types ballot pval utils leader_replica quorum))
 
 (rule
