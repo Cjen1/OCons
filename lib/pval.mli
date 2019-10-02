@@ -7,10 +7,10 @@ val equal : t -> t -> bool
 
 val to_string : t -> string
 
-val serialize : t -> Basic.json
+val serialize : t -> Basic.t
 
-val deserialize : Basic.json -> t
+val deserialize : Basic.t -> t
 
-val serialize_list : t list -> Basic.json
+val serialize_list : t list -> Basic.t
 
-val deserialize_list : Basic.json -> t list
+val deserialize_list : Basic.t -> t list
