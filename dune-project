@@ -4,6 +4,8 @@
 (source (github chrislomaxjones/part-ii-project))
 (authors "Chris Jones" "Chris Jensen")
 
+(allow_approximate_merlin)
+
 (package
   (name ocaml-paxos)
   (synopsis "An ocaml implementation of the Paxos protocol")
