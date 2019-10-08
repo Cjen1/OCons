@@ -1,10 +1,10 @@
 (* ballot.ml *)
 
 open Types
-open Yojson
 
 (* Types of ballots *)
-type t = Bottom | Number of int * leader_id
+type t = Bottom [@key 1] | Number of int * leader_id [@key 2]
+[@@deriving protobuf]
 
 val bottom : unit -> t
 
@@ -18,9 +18,11 @@ val less_than : t -> t -> bool
 
 val compare : t -> t -> int
 
+(*
 val serialize : t -> Basic.t
 
 val deserialize : Basic.t -> t
+   *)
 
 val to_string : t -> string
 

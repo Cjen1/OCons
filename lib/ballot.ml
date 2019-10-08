@@ -1,7 +1,6 @@
 (* ballot.ml *)
 
 open Types
-open Yojson
 
 (* Ballots are identified uniquely by their ballot number
 
@@ -16,7 +15,8 @@ open Yojson
 *)
 
 (* Types of ballots *)
-type t = Bottom | Number of int * leader_id
+type t = Bottom [@key 1] | Number of int * leader_id [@key 2]
+[@@deriving protobuf]
 
 (* Function bottom returns bottom ballot *)
 let bottom () = Bottom
@@ -42,7 +42,7 @@ let equal b b' =
   | Bottom, Bottom ->
       true
   | Number (n, l), Number (n', l') ->
-      n = n' && leader_ids_equal l l'
+      n = n' && String.equal l l'
   | _, _ ->
       false
 
@@ -61,7 +61,7 @@ let compare b b' =
   | _, Bottom ->
       1
   | Number (n, lid), Number (n', lid') -> (
-    match Core.Int.compare n n' with 0 -> Uuid.compare lid lid' | n -> n )
+    match Int.compare n n' with 0 -> String.compare lid lid' | n -> n )
 
 (* Function tests if ballot b is less than b'.
    Along with equalaity function we have a total order on ballots *)
@@ -72,32 +72,7 @@ let to_string = function
   | Bottom ->
       "Bottom"
   | Number (n, lid) ->
-      "Number(" ^ string_of_int n ^ "," ^ string_of_id lid ^ ")"
-
-(* Serialize a ballot into JSON *)
-let serialize (b : t) : Basic.t =
-  let ballot_json =
-    match b with
-    | Bottom ->
-        `String "bottom"
-    | Number (n, lid) ->
-        `Assoc [("id", `Int n); ("leader_id", `String (string_of_id lid))]
-  in
-  `Assoc [("ballot_num", ballot_json)]
-
-(* Deserialize a ballot, reutnring to the type of ballots.
-   May throw an exception if the JSON does not represent a ballot *)
-
-exception BallotDeserializationError
-
-let deserialize (ballot_json : Basic.t) : t =
-  match Basic.Util.member "ballot_num" ballot_json with
-  | `String "bottom" ->
-      Bottom
-  | `Assoc [("id", `Int n); ("leader_id", `String lid)] ->
-      Number (n, id_of_string lid)
-  | _ ->
-      raise BallotDeserializationError
+      "Number(" ^ string_of_int n ^ "," ^ lid ^ ")"
 
 module Infix = struct
   let ( < ) = less_than
