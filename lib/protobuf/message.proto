@@ -2,12 +2,12 @@ syntax="proto3";
 
 message Phase1A {
 	Ballot ballot = 1;
+	int32 high_slot = 2;
 }
 
 message Phase1B {
-	string   acc_id       = 1;
-	Ballot   ballot       = 2;
-	int32    gc_threshold = 4;
+	Ballot   ballot       = 1;
+	int32    gc_threshold = 2;
 	repeated Pvalue pvals = 3;
 }
 
@@ -32,13 +32,7 @@ message Pvalue {
 	Command command    = 3;
 }
 
-message ClientId {
-	string cl_id  = 1;
-	string cl_uri = 2;
-}
-
 message Command {
-	ClientId  client    = 1;
 	int32     CommandId = 2;
 	Operation Op        = 3;
 }

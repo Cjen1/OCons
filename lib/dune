@@ -1,20 +1,10 @@
 (library
  (name lib)
  (public_name ocaml-paxos)
- (libraries oUnit core core.uuid lwt yojson uri logs.lwt logs.fmt fmt.tty)
- (modules server acceptor types ballot pval utils leader_replica quorum))
-
-(rule
- (targets message_api.ml message_api.mli)
- (deps message_api.capnp)
- (action
-  (bash "capnp compile -o ocaml message_api.capnp")))
-
-(rule
- (targets message_pb.ml message_pb.mli message_types.ml message_types.mli)
- (deps protobuf/message.proto)
- (action (bash "ocaml-protoc -binary -ml_out . protobuf/message.proto"))
- )
+ (libraries oUnit core.uuid lwt lwt.unix yojson uri logs.lwt logs.fmt fmt.tty
+   ocaml-protoc ppx_deriving_protobuf)
+ (preprocess
+  (pps ppx_deriving_protobuf)))
 
 (env
  (dev

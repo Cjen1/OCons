@@ -22,14 +22,14 @@ end = struct
     let oc = Lwt_io.of_fd ~mode:Lwt_io.Output fd in
     let callback =
       (* Need to ensure to close both filei descriptors after call*)
-      let* () = Logs_lwt.info (fun m -> m "Connection initialised") in
+      let* () = Logs_lwt.debug (fun m -> m "Connection initialised") in
       let* () =
         Logs_lwt.debug (fun m ->
             m "Connection initialised from %s" (string_of_sockaddr sockaddr))
       in
       let* () = S.connected_callback (ic, oc) t in
       (* let* () = Lwt_io.close ic and* () = Lwt_io.close oc in *)
-      let* () = Logs_lwt.info (fun m -> m "Connection finished") in
+      let* () = Logs_lwt.debug (fun m -> m "Connection finished") in
       Lwt.return_unit
     in
     let () =
@@ -37,7 +37,7 @@ end = struct
           Logs.err (fun m -> m "%s" (Printexc.to_string e)))
     in
     let* () = Lwt.pause () in
-    Logs_lwt.info (fun m -> m "New connection")
+    Logs_lwt.debug (fun m -> m "New connection")
 
   let create_server sock (t : S.t) =
     let rec serve () =
@@ -55,9 +55,6 @@ end = struct
     Lwt.return sock
 
   let start listen_address port (t : S.t) =
-    let serve =
-      let* sock = create_socket listen_address port in
-      create_server sock t ()
-    in
-    serve
+    let* sock = create_socket listen_address port in
+    create_server sock t ()
 end
