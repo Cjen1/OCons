@@ -1,35 +1,40 @@
 (* main.ml *)
 open Lib
-open Lwt.Infix
-open Core
-open Log
-
-(* Sample replica code *)
-let run_replica host port replica_uris leader_uris acceptor_uris log_dir =
-  let log_directory =
-    log_dir ^ "op_replica-" ^ host ^ "-" ^ string_of_int port
-  in
-  Lwt_main.run
-    ( Logger.initialize_default log_directory
-    >>= fun () ->
-    Replica.new_replica host port replica_uris leader_uris acceptor_uris )
 
 (* Handle the command line arguments and run application is specified mode *)
 let command =
-  Command.basic ~summary:"Replica for Ocaml Paxos"
-    Command.Let_syntax.(
+  Core.Command.basic ~summary:"Acceptor for Ocaml Paxos"
+    Core.Command.Let_syntax.(
       let%map_open endpoints = anon ("endpoints" %: string)
-      and log_dir = anon ("log_directory" %: string) in
+      and client_port = anon ("client_port" %: int)
+      and decision_port = anon ("decision_port" %: int)
+      and leader_port = anon ("leader_port" %: int) in
       fun () ->
-        let ips = String.split endpoints ~on:',' in
-        let replica_uris =
-          List.map ips ~f:(fun ip -> Lib.Message.uri_from_address ip 2381)
-        and leader_uris =
-          List.map ips ~f:(fun ip -> Lib.Message.uri_from_address ip 2380)
-        and acceptor_uris =
-          List.map ips ~f:(fun ip -> Lib.Message.uri_from_address ip 2379)
+        let endpoints = Base.String.split ~on:',' endpoints in
+        let leader_uris =
+          Base.List.map endpoints ~f:(fun str ->
+              Utils.uri_of_string_and_port str leader_port)
         in
-        run_replica "127.0.0.1" 2381 replica_uris leader_uris acceptor_uris
-          log_dir)
+        let host_inet_addr = Unix.inet_addr_of_string "127.0.0.1" in
+        Lwt_main.run
+        @@ Replica.create_and_start host_inet_addr client_port decision_port
+             leader_uris)
 
-let () = Command.run command
+let reporter =
+  let report src level ~over k msgf =
+    let k _ = over () ; k () in
+    let src = Logs.Src.name src in
+    msgf
+    @@ fun ?header ?tags:_ fmt ->
+    Fmt.kpf k Fmt.stdout
+      ("%a %a @[" ^^ fmt ^^ "@]@.")
+      Fmt.(styled `Magenta string)
+      (Printf.sprintf "%14s" src)
+      Logs_fmt.pp_header (level, header)
+  in
+  {Logs.report}
+
+let () =
+  Fmt_tty.setup_std_outputs () ;
+  Logs.(set_level (Some Info)) ;
+  Logs.set_reporter reporter ; Core.Command.run command

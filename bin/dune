@@ -1,13 +1,4 @@
 (executable
- (name main)
- (public_name ocaml-paxos)
- (package ocaml-paxos)
- (libraries lib core lwt uri lwt_ppx)
- (preprocess
-  (pps ppx_jane))
- (modules main))
-
-(executable
  (name acceptor)
  (public_name ocaml-paxos-acceptor)
  (libraries lib core lwt uri lwt_ppx)
