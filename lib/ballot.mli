@@ -10,7 +10,7 @@ val bottom : unit -> t
 
 val init : leader_id -> t
 
-val succ_exn : t -> t
+val succ_exn : t -> leader_id -> t
 
 val equal : t -> t -> bool
 
