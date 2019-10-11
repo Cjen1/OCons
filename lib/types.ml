@@ -121,7 +121,7 @@ type proposal = slot_number * command [@@deriving protobuf]
 let commands_equal (c : command) (c' : command) : bool =
   let command_id, oper = c in
   let command_id', oper' = c' in
-  String.equal command_id command_id' && Base.phys_equal oper oper'
+  String.equal command_id command_id' && Stdlib.compare oper oper' == 0
 
 let proposals_equal (p : proposal) (p' : proposal) : bool =
   let slot_out, c = p in

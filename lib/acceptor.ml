@@ -19,22 +19,23 @@ module Phase1Server = Server.Make_Server (struct
   let connected_callback :
       Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
    fun (ic, oc) (acceptor : t) ->
-    let* msg = Lwt_io.read_line ic in
+    let* msg = Lwt_io.read_value ic in
     let p1a : p1a =
       Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1a_from_protobuf
     in
+    let* () =
+      Logs_lwt.debug (fun m ->
+          m "p1: received request for ballot: %s" (Ballot.to_string p1a.ballot))
+    in
     let* p1b =
       critical_section acceptor.resp_mutex ~f:(fun () ->
-          let p1b : p1b =
-            { ballot= acceptor.ballot_num
-            ; accepted=
-                Base.Hashtbl.data acceptor.accepted
-                (* TODO reduce this? Can be done by including a high water mark in p1a message decisions *)
-            }
-          in
           let* () =
-            if acceptor.ballot_num < p1a.ballot then
+            if Ballot.less_than acceptor.ballot_num p1a.ballot then
               (*Ordering of wal vs update is important for durability *)
+              let* () =
+                Logs_lwt.debug (fun m ->
+                    m "p1: updating ballot to %s" (Ballot.to_string p1a.ballot))
+              in
               let* () =
                 acceptor.ballot_num |> Ballot.to_string
                 |> write_to_wal acceptor.wal
@@ -42,12 +43,19 @@ module Phase1Server = Server.Make_Server (struct
               Lwt.return @@ (acceptor.ballot_num <- p1a.ballot)
             else Lwt.return ()
           in
+          let p1b : p1b =
+            { ballot= acceptor.ballot_num
+            ; accepted=
+                Base.Hashtbl.data acceptor.accepted
+                (* TODO reduce this? Can be done by including a high water mark in p1a message decisions *)
+            }
+          in
           Lwt.return p1b)
     in
     let p1b_string =
       p1b |> Protobuf.Encoder.encode_exn p1b_to_protobuf |> Bytes.to_string
     in
-    Lwt_io.write_line oc p1b_string
+    Lwt_io.write_value oc p1b_string
 end)
 
 module Phase2Server = Server.Make_Server (struct
@@ -58,34 +66,50 @@ module Phase2Server = Server.Make_Server (struct
   let connected_callback :
       Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
    fun (ic, oc) (acceptor : t) ->
-    let* msg = Lwt_io.read_line ic in
+    let* msg = Lwt_io.read_value ic in
     let p2a : p2a =
       msg |> Bytes.of_string |> Protobuf.Decoder.decode_exn p2a_from_protobuf
     in
     let ((ib, is, _) as ipval) = p2a.pval in
-    try
+    let* () =
+      Logs_lwt.debug (fun m ->
+          m "p2_callback: got pval from leader: %s" (Pval.to_string ipval))
+    in
+    try%lwt
       let* () =
         critical_section acceptor.resp_mutex ~f:(fun () ->
-            if ib = acceptor.ballot_num then
+            if not (Ballot.less_than ib acceptor.ballot_num) then
               let should_update =
-                match Base.Hashtbl.find acceptor.accepted is with
+                (*match Base.Hashtbl.find acceptor.accepted is with
                 | Some (b', _, _) ->
                     if
-                      Ballot.less_than b' ib
+                      not (Ballot.less_than ib b') (* ~(ib < b') = ib >= b' *)
                       (* If more up to date ballot number was received *)
                     then true
-                    else assert false
+                    else (
+                      Logs.debug (fun m ->
+                          m
+                            "phase2server: assert incomming ballot = current \
+                             ballot: (%s = %s)"
+                            (Ballot.to_string ib)
+                            (Ballot.to_string acceptor.ballot_num)) ;
+                      assert false )
                 (* if else branch then there exists a ballot with a ballot > ballot_num which has been accepted already *)
                 | None ->
                     true
+                  *)
+                true
               in
-              let* () =
-                if should_update then
-                  write_to_wal acceptor.wal @@ Pval.to_string ipval
-                else Lwt.return_unit
-              in
-              Lwt.return
-              @@ Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
+              if should_update then
+                let* () = Logs_lwt.debug (fun m -> m "p2: writing to wal") in
+                let* () = write_to_wal acceptor.wal @@ Pval.to_string ipval in
+                let* () =
+                  Logs_lwt.debug (fun m ->
+                      m "p2: Committed %s" (Pval.to_string ipval))
+                in
+                Lwt.return
+                @@ Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
+              else Lwt.return_unit
             else raise (Preempted acceptor.ballot_num))
       in
       let p2b : p2b =
@@ -94,13 +118,17 @@ module Phase2Server = Server.Make_Server (struct
       let marshalled_resp =
         p2b |> Protobuf.Encoder.encode_exn p2b_to_protobuf |> Bytes.to_string
       in
-      Lwt_io.write_line oc marshalled_resp
+      Lwt_io.write_value oc marshalled_resp
     with Preempted b ->
+      let* () =
+        Logs_lwt.debug (fun m ->
+            m "p2: preempted by ballot: %s" (Ballot.to_string b))
+      in
       let nack : nack = {ballot= b} in
       let nack_string =
         nack |> Protobuf.Encoder.encode_exn nack_to_protobuf |> Bytes.to_string
       in
-      Lwt_io.write_line oc nack_string
+      Lwt_io.write_value oc nack_string
 end)
 
 (* Initialize a new acceptor *)
@@ -127,5 +155,6 @@ let start acceptor host p1_port p2_port =
 (* Creating a new acceptor consists of initializing a record for it and
    starting a server for accepting incoming messages *)
 let create_and_start_acceptor host p1_port p2_port wal_location =
+  let* () = Logs_lwt.info (fun m -> m "Spinning up acceptor") in
   let acceptor = create wal_location in
   start acceptor host p1_port p2_port

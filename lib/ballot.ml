@@ -26,11 +26,12 @@ let init id = Number (0, id)
 
 (* Generates the successor of a given ballot. This can result in an exception if the ballot is
    Bottom, as the bottom ballot has no successor *)
-let succ_exn = function
+let succ_exn bal id =
+  match bal with
   | Bottom ->
       failwith "Error: Bottom ballot has no successor"
-  | Number (n, l) ->
-      Number (n + 1, l)
+  | Number (n, _) ->
+      Number (n + 1, id)
 
 (* To ensure the total ordering on ballot, two functions are provided to test
    equality of ballots and the partial ordering of ballots.
