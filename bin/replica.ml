@@ -5,15 +5,13 @@ open Lib
 let command =
   Core.Command.basic ~summary:"Acceptor for Ocaml Paxos"
     Core.Command.Let_syntax.(
-      let%map_open endpoints = anon ("endpoints" %: string)
+      let%map_open leader_uris = anon ("Leader uris" %: string)
       and client_port = anon ("client_port" %: int)
-      and decision_port = anon ("decision_port" %: int)
-      and leader_port = anon ("leader_port" %: int) in
+      and decision_port = anon ("decision_port" %: int) in
       fun () ->
-        let endpoints = Base.String.split ~on:',' endpoints in
         let leader_uris =
-          Base.List.map endpoints ~f:(fun str ->
-              Utils.uri_of_string_and_port str leader_port)
+          leader_uris |> Base.String.split ~on:','
+          |> Base.List.map ~f:Utils.uri_of_string
         in
         let host_inet_addr = Unix.inet_addr_of_string "127.0.0.1" in
         Lwt_main.run
@@ -36,5 +34,5 @@ let reporter =
 
 let () =
   Fmt_tty.setup_std_outputs () ;
-  Logs.(set_level (Some Info)) ;
+  Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run command
