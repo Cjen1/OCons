@@ -7,8 +7,8 @@ let command =
     Core.Command.Let_syntax.(
       let%map_open acceptor_uris_p1 = anon ("Phase 1 acceptor uris" %: string)
       and acceptor_uris_p2 = anon ("Phase 2 acceptor uris" %: string)
-      and replica_uris = anon ("Replica uris" %: string)
-      and client_port = anon ("Client port" %: int) in
+      and replica_decision_uris = anon ("Replica uris" %: string)
+      and replica_port = anon ("Replica request port" %: int) in
       fun () ->
         let acceptor_uris_p1 =
           acceptor_uris_p1 |> Base.String.split ~on:','
@@ -18,15 +18,15 @@ let command =
           acceptor_uris_p2 |> Base.String.split ~on:','
           |> Base.List.map ~f:Utils.uri_of_string
         in
-        let replica_uris =
-          replica_uris |> Base.String.split ~on:','
+        let replica_decision_uris =
+          replica_decision_uris |> Base.String.split ~on:','
           |> Base.List.map ~f:Utils.uri_of_string
         in
         let initial_timeout = 5. in
         let host_inet_addr = Unix.inet_addr_of_string "127.0.0.1" in
         Lwt_main.run
-        @@ Leader.create_and_start_leader host_inet_addr client_port
-             acceptor_uris_p1 acceptor_uris_p2 replica_uris initial_timeout)
+        @@ Leader.create_and_start_leader host_inet_addr replica_port
+             acceptor_uris_p1 acceptor_uris_p2 replica_decision_uris initial_timeout)
 
 let reporter =
   let report src level ~over k msgf =

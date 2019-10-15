@@ -3,7 +3,7 @@ open Lib
 
 (* Handle the command line arguments and run application is specified mode *)
 let command =
-  Core.Command.basic ~summary:"Acceptor for Ocaml Paxos"
+  Core.Command.basic ~summary:"Replica for Ocaml Paxos"
     Core.Command.Let_syntax.(
       let%map_open leader_uris = anon ("Leader uris" %: string)
       and client_port = anon ("client_port" %: int)
