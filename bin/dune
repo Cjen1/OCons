@@ -21,3 +21,12 @@
  (preprocess
   (pps ppx_jane))
  (modules replica))
+
+(executable
+ (name client)
+ (public_name ocaml-paxos-client)
+ (libraries lib core lwt uri lwt_ppx)
+ (preprocess
+  (pps ppx_jane))
+ (modules client))
+
