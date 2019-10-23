@@ -8,55 +8,56 @@ module type Server = sig
     Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t
 end
 
+let server = Logs.Src.create "Server" ~doc:"Server module"
+module Log = (val Logs_lwt.src_log server : Logs_lwt.LOG)
+
+
 module Make_Server (S : Server) : sig
   val start : Unix.inet_addr -> int -> S.t -> unit Lwt.t
 end = struct
-  let string_of_sockaddr s =
-    match s with
-    | Lwt_unix.ADDR_UNIX s ->
-        s
-    | Lwt_unix.ADDR_INET (inet, p) ->
-        Unix.string_of_inet_addr inet ^ ":" ^ Int.to_string p
 
-  let accept_connection (fd, sockaddr) (t : S.t) =
-    let ic = Lwt_io.of_fd ~mode:Lwt_io.Input fd in
-    let oc = Lwt_io.of_fd ~mode:Lwt_io.Output fd in
-    let* () =
-      Logs_lwt.debug (fun m ->
-          m "Connection initialised from %s" (string_of_sockaddr sockaddr))
-    in
-    let* () = S.connected_callback (ic, oc) t in
-    (* let* () = Lwt_io.close ic and* () = Lwt_io.close oc in *)
-    let* () = Logs_lwt.debug (fun m -> m "Connection finished") in
-    Lwt.return_unit
+  let handle_connection (sock, sockaddr) (t : S.t) () =
+    let open Lwt_io in
+    let open Lwt_unix in
+    (
+      try%lwt 
+        let ic = of_fd ~mode:Input sock in
+        let oc = of_fd ~mode:Output sock in
+        Logs.debug (fun m ->
+            m "handle_conn: Connection initialised from %s" (string_of_sockaddr sockaddr));
+        let* () = S.connected_callback (ic, oc) t in
+        shutdown sock SHUTDOWN_ALL;
+        Log.debug (fun m -> m "Connection finished")
+      with
+      | Unix.Unix_error (e, f, p) ->
+        Log.debug (fun m ->
+            m "handle_conn: failed with %s calling %s with parameter %s"
+              (Unix.error_message e) f p)
+      | End_of_file ->
+        Log.debug (fun m ->
+            m "handle_conn: connection closed while writing")
+    )[%lwt.finally (Lwt_unix.close sock)]
 
   let create_server sock (t : S.t) =
     let rec serve () =
       let* conn = Lwt_unix.accept sock in
-      let p =
-        try%lwt accept_connection conn t with
-        | Unix.Unix_error (e, f, p) ->
-            Logs_lwt.debug (fun m ->
-                m "Server: failed with %s calling %s with parameter %s"
-                  (Unix.error_message e) f p)
-        | End_of_file ->
-            Logs_lwt.debug (fun m ->
-                m "Server: connection closed while writing")
-      in
-      Lwt.join [p; serve ()]
+      Lwt.async(handle_connection conn t);
+      serve ()
     in
     serve
 
-  let create_socket listen_address port =
+  let create_bind_socket listen_address port =
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
-    setsockopt sock SO_REUSEADDR true ;
-    let* () = bind sock @@ ADDR_INET (listen_address, port) in
-    let max_pending = 20 in
-    Lwt_unix.listen sock max_pending ;
-    Lwt.return sock
+    try
+      setsockopt sock SO_REUSEADDR true ;
+      let* () = bind sock @@ ADDR_INET (listen_address, port) in
+      let max_pending = 20 in
+      Lwt_unix.listen sock max_pending ;
+      Lwt.return sock
+    with z -> (let* () = close sock in raise z)
 
   let start listen_address port (t : S.t) =
-    let* sock = create_socket listen_address port in
+    let* sock = create_bind_socket listen_address port in
     create_server sock t ()
 end
