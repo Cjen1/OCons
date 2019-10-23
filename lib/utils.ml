@@ -123,6 +123,14 @@ let uri_of_string_and_port ip port =
   let ip = Unix.inet_addr_of_string ip in
   Unix.ADDR_INET (ip, port)
 
+let string_of_sockaddr s =
+  match s with
+  | Lwt_unix.ADDR_UNIX s ->
+    s
+  | Lwt_unix.ADDR_INET (inet, p) ->
+    Unix.string_of_inet_addr inet ^ ":" ^ Int.to_string p
+
+
 module Semaphore = struct
   type t = {m_count: Lwt_mutex.t; m_queue: Lwt_mutex.t; mutable n: int}
 
