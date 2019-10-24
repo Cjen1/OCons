@@ -8,7 +8,8 @@ let command =
       let%map_open acceptor_uris_p1 = anon ("Phase 1 acceptor uris" %: string)
       and acceptor_uris_p2 = anon ("Phase 2 acceptor uris" %: string)
       and replica_decision_uris = anon ("Replica uris" %: string)
-      and replica_port = anon ("Replica request port" %: int) in
+      and replica_port = anon ("Replica request port" %: int) 
+      and host = anon ("Host address" %: string) in
       fun () ->
         let acceptor_uris_p1 =
           acceptor_uris_p1 |> Base.String.split ~on:','
@@ -23,7 +24,7 @@ let command =
           |> Base.List.map ~f:Utils.uri_of_string
         in
         let initial_timeout = 5. in
-        let host_inet_addr = Unix.inet_addr_of_string "127.0.0.1" in
+        let host_inet_addr = Unix.inet_addr_of_string host in
         Lwt_main.run
         @@ Leader.create_and_start_leader host_inet_addr replica_port
              acceptor_uris_p1 acceptor_uris_p2 replica_decision_uris initial_timeout)

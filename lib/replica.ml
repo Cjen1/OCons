@@ -55,7 +55,6 @@ type t =
         (* not the lwt based utils one *)
   ; proposals: (int, Types.result Lwt.u * command) Base.Hashtbl.t
   ; decisions: DecisionSet.t
-  ; fulfillers: (int, Types.result Lwt.u) Base.Hashtbl.t
   ; mutable leader_uris: Lwt_unix.sockaddr list
   ; window: int }
 
@@ -76,7 +75,9 @@ let send_to_leaders t (s, c) =
           |> Protobuf.Decoder.decode_exn
                Messaging.decision_response_from_protobuf
         in
-        Logs.debug (fun m -> m "send_to_leaders_callback: got decision back for slot: %d" res.slot_num);
+        Logs.debug (fun m ->
+            m "send_to_leaders_callback: got decision back for slot: %d"
+              res.slot_num) ;
         Lwt.return
         @@ Queue.add (Decision (res.slot_num, res.command)) t.msg_queue)
   in
@@ -87,48 +88,67 @@ let send_to_leaders t (s, c) =
   in
   Lwt.return_unit
 
-let alert_fulfiller_if_exist t s res =
-  match Hashtbl.find t.fulfillers s with
+let alert_fulfiller = Logs.Src.create "alert_fulfiller" ~doc:""
+
+module Log_alert = (val Logs.src_log alert_fulfiller : Logs.LOG)
+
+let alert_fulfiller_if_exist o_f res =
+  match o_f with
   | Some f ->
-    Logs.debug (fun m -> m "alert_fulfiller: fulfilling request with slot: %d" s) ;
+      Log_alert.debug (fun m -> m "alert_fulfiller: fulfilling request") ;
       Lwt.wakeup_later f res
   | None ->
-    Logs.debug (fun m -> m "alert_fulfiller: no fulfiller found for slot %d" s) ;
+      Log_alert.debug (fun m -> m "alert_fulfiller: no fulfiller found") ;
       ()
+
+let perform = Logs.Src.create "perform" ~doc:""
+
+module Log_perform = (val Logs.src_log perform : Logs.LOG)
 
 let rec perform t =
   match DecisionSet.find_slot t.decisions t.slot_out with
   | Some command ->
-      ( ( match Hashtbl.find t.proposals t.slot_out with
-        | Some (f, c'') ->
-            Hashtbl.remove t.proposals t.slot_out ;
-            if not (commands_equal command c'') then
-              Base.Queue.enqueue t.requests (f, c'')
-        | None ->
-            () ) ;
-        (* Check to see if command has been decided upon before *)
-        match (DecisionSet.find_command t.decisions command, command) with
-        | _, (_, Reconfigure _) ->
-            t.slot_out <- t.slot_out + 1
-        | Some s, _ when s < t.slot_out ->
-            t.slot_out <- t.slot_out + 1
-        | _, (_, op) ->
-            (* Not been seen decision before *)
-            let result = Types.apply t.state op in
-            let slot = t.slot_out in
-            t.slot_out <- t.slot_out + 1 ;
-            Logs.debug (fun m -> m "perform: Sending alert: slot=%d" slot) ;
-            alert_fulfiller_if_exist t slot result ) ;
+      (let o_f =
+         match Hashtbl.find t.proposals t.slot_out with
+         | Some (f, c'') -> (
+             Hashtbl.remove t.proposals t.slot_out ;
+             match commands_equal command c'' with
+             | true ->
+                 Some f
+             | false ->
+                 Base.Queue.enqueue t.requests (f, c'') ;
+                 None )
+         | None ->
+             None
+       in
+       (* Check to see if command has been decided upon before *)
+       match (DecisionSet.find_command t.decisions command, command) with
+       | _, (_, Reconfigure _) ->
+           Log_perform.debug (fun m -> m "Reconfigure in slot: %d " t.slot_out) ;
+           t.slot_out <- t.slot_out + 1
+       | Some s, _ when s < t.slot_out ->
+           Log_perform.debug (fun m -> m "Command already performed") ;
+           t.slot_out <- t.slot_out + 1
+       | _, (_, op) ->
+           let result = Types.apply t.state op in
+           let slot = t.slot_out in
+           t.slot_out <- t.slot_out + 1 ;
+           Log_perform.debug (fun m -> m "Sending alert: slot=%d" slot) ;
+           alert_fulfiller_if_exist o_f result) ;
       perform t
   | None ->
       ()
 
+let propose = Logs.Src.create "propose" ~doc:""
+
+module Log_propose = (val Logs.src_log propose : Logs.LOG)
+
 let rec propose t =
   if t.slot_in < t.slot_out + t.window then
     match Base.Queue.dequeue t.requests with
-    | Some ((f, c) as fc) ->
-        Logs.debug (fun m ->
-            m "propose: got request for %s" (string_of_command c)) ;
+    | Some ((_, c) as fc) ->
+        Log_propose.debug (fun m -> m "got request for %s" (string_of_command c)) ;
+        (* Do reconfigure if required *)
         let () =
           match DecisionSet.find_slot t.decisions (t.slot_in - t.window) with
           | Some (_, Reconfigure leaders) ->
@@ -136,14 +156,14 @@ let rec propose t =
           | _ ->
               ()
         in
+        (* Either send request to leaders with slot, or requeue it *)
         let () =
           match DecisionSet.find_slot t.decisions t.slot_in with
           | None ->
-              Logs.debug (fun m ->
-                  m "propose: No command in slot, proposing %s"
-                    (string_of_command c)) ;
+              Log_propose.debug (fun m ->
+                  m "No command in slot, proposing %s" (string_of_command c)) ;
               Hashtbl.set t.proposals ~key:t.slot_in ~data:fc ;
-              Hashtbl.set t.fulfillers ~key:t.slot_in ~data:f;
+              (*Hashtbl.set t.fulfillers ~key:t.slot_in ~data:f ;*)
               Lwt.async (fun () -> send_to_leaders t (t.slot_in, c))
           | Some _ ->
               Base.Queue.enqueue t.requests fc
@@ -151,7 +171,7 @@ let rec propose t =
         t.slot_in <- t.slot_in + 1 ;
         propose t
     | None ->
-      ()
+        ()
   else ()
 
 let rec msg_loop t =
@@ -167,7 +187,7 @@ let rec msg_loop t =
       let () = DecisionSet.set t.decisions s c in
       perform t ) ;
   Logs.debug (fun m -> m "ml: proposing possible messages") ;
-  propose t;
+  propose t ;
   msg_loop t
 
 module ClientRequestServer = Server.Make_Server (struct
@@ -225,7 +245,6 @@ let create leader_uris =
   ; requests= Base.Queue.create ()
   ; proposals= Base.Hashtbl.create (module Int)
   ; decisions= DecisionSet.create ()
-  ; fulfillers= Base.Hashtbl.create (module Int)
   ; leader_uris
   ; window= 100 }
 
