@@ -7,9 +7,10 @@ let command =
     Core.Command.Let_syntax.(
       let%map_open p1_port = anon ("phase_1_port" %: int)
       and p2_port = anon ("phase_2_port" %: int)
-      and log_dir = anon ("log_directory" %: string) in
+      and log_dir = anon ("log_directory" %: string) 
+      and host = anon ("local address" %: string ) in
       fun () ->
-        let host_inet_addr = Unix.inet_addr_of_string "127.0.0.1" in
+        let host_inet_addr = Unix.inet_addr_of_string host in
         Lwt_main.run
         @@ Acceptor.create_and_start_acceptor host_inet_addr p1_port p2_port
              log_dir)
