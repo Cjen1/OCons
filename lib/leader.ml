@@ -42,6 +42,7 @@ let achieve_quorum acceptor_uris promises =
     if Quorum.is_majority q then Lwt.return_unit
     else
       let* found, rem = Lwt.nchoose_split rem_list in
+      Logs.debug(fun m -> m "Found %d" (List.length found));
       let q =
         List.fold found ~init:q ~f:(fun q (_, uri) -> Quorum.add q uri)
       in
@@ -74,11 +75,15 @@ let p1 (t : t) =
     in
     let p_p1b_uris =
       List.map t.acceptor_uris_p1 ~f:(fun uri ->
+          Logs.debug (fun m -> m "Sending p1a");
           let* p1b_bytes = comm uri p1a_bytes in
+          Logs.debug (fun m -> m "Got p1b");
           let p1b = parse_exn @@ Bytes.of_string p1b_bytes in
           Lwt.return (p1b, uri))
     in
+    Logs.debug (fun m -> m "Attempting to achieve quorum");
     let* p1bs = achieve_quorum t.acceptor_uris_p1 p_p1b_uris in
+    Logs.debug (fun m -> m "Achieved Quorum");
     let pvals =
       List.concat
       @@ List.map p1bs ~f:(fun p1b ->

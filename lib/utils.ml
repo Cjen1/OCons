@@ -98,9 +98,13 @@ let unix_error_handler (e, f, p) tag =
 
 let comm uri msg =
   try%lwt
+    Logs.debug(fun m -> m "comm: connect");
     let* ic, oc = connect uri in
+    Logs.debug(fun m -> m "comm: send");
     let* () = Bytes.to_string msg |> Lwt_io.write_value oc in
+    Logs.debug(fun m -> m "comm: waiting resp");
     let* bytes = Lwt_io.read_value ic in
+    Logs.debug(fun m -> m "comm: got resp");
     Lwt.return bytes
   with Unix.Unix_error (e, f, p) -> unix_error_handler (e, f, p) "comm"
 
