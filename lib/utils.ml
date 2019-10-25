@@ -98,13 +98,13 @@ let unix_error_handler (e, f, p) tag =
 
 let comm uri msg =
   try%lwt
-    Logs.debug(fun m -> m "comm: connect");
+    Logs.debug (fun m -> m "comm: connect") ;
     let* ic, oc = connect uri in
-    Logs.debug(fun m -> m "comm: send");
+    Logs.debug (fun m -> m "comm: send") ;
     let* () = Bytes.to_string msg |> Lwt_io.write_value oc in
-    Logs.debug(fun m -> m "comm: waiting resp");
+    Logs.debug (fun m -> m "comm: waiting resp") ;
     let* bytes = Lwt_io.read_value ic in
-    Logs.debug(fun m -> m "comm: got resp");
+    Logs.debug (fun m -> m "comm: got resp") ;
     Lwt.return bytes
   with Unix.Unix_error (e, f, p) -> unix_error_handler (e, f, p) "comm"
 
@@ -130,10 +130,9 @@ let uri_of_string_and_port ip port =
 let string_of_sockaddr s =
   match s with
   | Lwt_unix.ADDR_UNIX s ->
-    s
+      s
   | Lwt_unix.ADDR_INET (inet, p) ->
-    Unix.string_of_inet_addr inet ^ ":" ^ Int.to_string p
-
+      Unix.string_of_inet_addr inet ^ ":" ^ Int.to_string p
 
 module Semaphore = struct
   type t = {m_count: Lwt_mutex.t; m_queue: Lwt_mutex.t; mutable n: int}

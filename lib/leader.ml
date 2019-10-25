@@ -42,7 +42,7 @@ let achieve_quorum acceptor_uris promises =
     if Quorum.is_majority q then Lwt.return_unit
     else
       let* found, rem = Lwt.nchoose_split rem_list in
-      Logs.debug(fun m -> m "Found %d" (List.length found));
+      Logs.debug (fun m -> m "Found %d" (List.length found)) ;
       let q =
         List.fold found ~init:q ~f:(fun q (_, uri) -> Quorum.add q uri)
       in
@@ -75,15 +75,15 @@ let p1 (t : t) =
     in
     let p_p1b_uris =
       List.map t.acceptor_uris_p1 ~f:(fun uri ->
-          Logs.debug (fun m -> m "Sending p1a");
+          Logs.debug (fun m -> m "Sending p1a") ;
           let* p1b_bytes = comm uri p1a_bytes in
-          Logs.debug (fun m -> m "Got p1b");
+          Logs.debug (fun m -> m "Got p1b") ;
           let p1b = parse_exn @@ Bytes.of_string p1b_bytes in
           Lwt.return (p1b, uri))
     in
-    Logs.debug (fun m -> m "Attempting to achieve quorum");
+    Logs.debug (fun m -> m "Attempting to achieve quorum") ;
     let* p1bs = achieve_quorum t.acceptor_uris_p1 p_p1b_uris in
-    Logs.debug (fun m -> m "Achieved Quorum");
+    Logs.debug (fun m -> m "Achieved Quorum") ;
     let pvals =
       List.concat
       @@ List.map p1bs ~f:(fun p1b ->
@@ -137,7 +137,8 @@ let p2 t (pval : Pval.t) (fulfiller : unit Lwt_condition.t) : unit Lwt.t =
           let* p2b_bytes = comm uri p2a_bytes in
           let* () =
             Logs_lwt.debug (fun m ->
-                m "2b_callback: received bytes from response for pval: %s" (Pval.to_string pval))
+                m "2b_callback: received bytes from response for pval: %s"
+                  (Pval.to_string pval))
           in
           let p2b = parse_exn @@ Bytes.of_string p2b_bytes in
           Lwt.return (p2b, uri))
@@ -227,14 +228,9 @@ let rec leader_queue_loop t =
   in
   Lwt.join [p_process; leader_queue_loop t]
 
-module Replica_Request_Server = Server.Make_Server (struct
-  type nonrec t = t
-
-  let connected_callback :
-      Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
-   fun (ic, oc) (t : t) ->
+  let client_server_callback (read,write) (t : t) =
     let* () = Logs_lwt.debug (fun m -> m "replica_server: awaiting request") in
-    let* msg = Lwt_io.read_value ic in
+    let* msg = read () in
     let rep_req =
       msg |> Bytes.of_string
       |> Protobuf.Decoder.decode_exn Messaging.replica_request_from_protobuf
@@ -266,9 +262,8 @@ module Replica_Request_Server = Server.Make_Server (struct
     List.iter t.replica_uris ~f:(fun uri ->
         Lwt.async (fun () -> Utils.send uri decision_response_string)) ;
     let* () = Logs_lwt.debug (fun m -> m "replica_server: sending response") in
-    let* () = Lwt_io.write_value oc decision_response_string in
+    let* () = write decision_response_string in
     Logs_lwt.debug (fun m -> m "replica_server: Sent response")
-end)
 
 let create acceptor_uris_p1 acceptor_uris_p2 replica_uris timeout_s =
   Base.Random.self_init () ;
@@ -288,7 +283,7 @@ let create acceptor_uris_p1 acceptor_uris_p2 replica_uris timeout_s =
   ; aimd_md= 1.2 }
 
 let start t host port =
-  Lwt.join [p1 t; leader_queue_loop t; Replica_Request_Server.start host port t]
+  Lwt.join [p1 t; leader_queue_loop t; Server.start host port t client_server_callback]
 
 let create_and_start_leader host client_port acceptor_uris_p1 acceptor_uris_p2
     replica_uris initial_timeout =

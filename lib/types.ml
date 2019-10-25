@@ -74,10 +74,12 @@ type result =
 [@@deriving protobuf]
 
 let result_to_string = function
-  | Success -> "Success"
-  | Failure -> "Failure"
-  | ReadSuccess(v) -> Printf.sprintf "ReadSuccess(%s)" v
-
+  | Success ->
+      "Success"
+  | Failure ->
+      "Failure"
+  | ReadSuccess v ->
+      Printf.sprintf "ReadSuccess(%s)" v
 
 (* Indicates read success with associated value *)
 

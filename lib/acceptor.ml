@@ -13,77 +13,66 @@ type t =
 
 (* TODO exploit cooperative threading to remove mutexes *)
 
-module Phase1Server = Server.Make_Server (struct
-  type nonrec t = t
+let phase_1_server_callback (read, write) (acceptor : t) =
+  Logs.debug (fun m -> m "Receiving p1a") ;
+  let* msg = read () in
+  let p1a : p1a =
+    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1a_from_protobuf
+  in
+  let* () =
+    Logs_lwt.debug (fun m ->
+        m "p1: received request for ballot: %s" (Ballot.to_string p1a.ballot))
+  in
+  let* p1b =
+    critical_section acceptor.resp_mutex ~f:(fun () ->
+        let* () =
+          if Ballot.less_than acceptor.ballot_num p1a.ballot then
+            (*Ordering of wal vs update is important for durability *)
+            let* () =
+              Logs_lwt.debug (fun m ->
+                  m "p1: updating ballot to %s" (Ballot.to_string p1a.ballot))
+            in
+            let* () =
+              acceptor.ballot_num |> Ballot.to_string
+              |> write_to_wal acceptor.wal
+            in
+            Lwt.return @@ (acceptor.ballot_num <- p1a.ballot)
+          else Lwt.return ()
+        in
+        let p1b : p1b =
+          { ballot= acceptor.ballot_num
+          ; accepted=
+              Base.Hashtbl.data acceptor.accepted
+              (* TODO reduce this? Can be done by including a high water mark in p1a message decisions *)
+          }
+        in
+        Lwt.return p1b)
+  in
+  Logs.debug (fun m -> m "Sending p1b") ;
+  let p1b_string =
+    p1b |> Protobuf.Encoder.encode_exn p1b_to_protobuf |> Bytes.to_string
+  in
+  let* () = write p1b_string in
+  Logs_lwt.debug (fun m -> m "Sent p1b")
 
-  let connected_callback :
-      Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
-   fun (ic, oc) (acceptor : t) ->
-    Logs.debug (fun m -> m "Receiving p1a");
-    let* msg = Lwt_io.read_value ic in
-    let p1a : p1a =
-      Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1a_from_protobuf
-    in
+exception Preempted of Ballot.t
+
+let phase_2_server_callback (read, write) (acceptor : t) =
+  let* msg = read () in
+  let p2a : p2a =
+    msg |> Bytes.of_string |> Protobuf.Decoder.decode_exn p2a_from_protobuf
+  in
+  let ((ib, is, _) as ipval) = p2a.pval in
+  let* () =
+    Logs_lwt.debug (fun m ->
+        m "p2_callback: got pval from leader: %s" (Pval.to_string ipval))
+  in
+  try%lwt
     let* () =
-      Logs_lwt.debug (fun m ->
-          m "p1: received request for ballot: %s" (Ballot.to_string p1a.ballot))
-    in
-    let* p1b =
       critical_section acceptor.resp_mutex ~f:(fun () ->
-          let* () =
-            if Ballot.less_than acceptor.ballot_num p1a.ballot then
-              (*Ordering of wal vs update is important for durability *)
-              let* () =
-                Logs_lwt.debug (fun m ->
-                    m "p1: updating ballot to %s" (Ballot.to_string p1a.ballot))
-              in
-              let* () =
-                acceptor.ballot_num |> Ballot.to_string
-                |> write_to_wal acceptor.wal
-              in
-              Lwt.return @@ (acceptor.ballot_num <- p1a.ballot)
-            else Lwt.return ()
-          in
-          let p1b : p1b =
-            { ballot= acceptor.ballot_num
-            ; accepted=
-                Base.Hashtbl.data acceptor.accepted
-                (* TODO reduce this? Can be done by including a high water mark in p1a message decisions *)
-            }
-          in
-          Lwt.return p1b)
-    in
-    Logs.debug (fun m -> m "Sending p1b");
-    let p1b_string =
-      p1b |> Protobuf.Encoder.encode_exn p1b_to_protobuf |> Bytes.to_string
-    in
-    let* () = Lwt_io.write_value oc p1b_string in
-    Logs_lwt.debug (fun m -> m "Sent p1b")
-end)
-
-module Phase2Server = Server.Make_Server (struct
-  type nonrec t = t
-
-  exception Preempted of Ballot.t
-
-  let connected_callback :
-      Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
-   fun (ic, oc) (acceptor : t) ->
-    let* msg = Lwt_io.read_value ic in
-    let p2a : p2a =
-      msg |> Bytes.of_string |> Protobuf.Decoder.decode_exn p2a_from_protobuf
-    in
-    let ((ib, is, _) as ipval) = p2a.pval in
-    let* () =
-      Logs_lwt.debug (fun m ->
-          m "p2_callback: got pval from leader: %s" (Pval.to_string ipval))
-    in
-    try%lwt
-      let* () =
-        critical_section acceptor.resp_mutex ~f:(fun () ->
-            if not (Ballot.less_than ib acceptor.ballot_num) then
-              let should_update =
-                (*match Base.Hashtbl.find acceptor.accepted is with
+          if not (Ballot.less_than ib acceptor.ballot_num) then
+            let should_update =
+              (*match Base.Hashtbl.find acceptor.accepted is with
                 | Some (b', _, _) ->
                     if
                       not (Ballot.less_than ib b') (* ~(ib < b') = ib >= b' *)
@@ -92,7 +81,7 @@ module Phase2Server = Server.Make_Server (struct
                     else (
                       Logs.debug (fun m ->
                           m
-                            "phase2server: assert incomming ballot = current \
+                            "phase_2_server_callback: assert incomming ballot = current \
                              ballot: (%s = %s)"
                             (Ballot.to_string ib)
                             (Ballot.to_string acceptor.ballot_num)) ;
@@ -101,38 +90,35 @@ module Phase2Server = Server.Make_Server (struct
                 | None ->
                     true
                   *)
-                true
+              true
+            in
+            if should_update then
+              let* () = Logs_lwt.debug (fun m -> m "p2: writing to wal") in
+              let* () = write_to_wal acceptor.wal @@ Pval.to_string ipval in
+              let* () =
+                Logs_lwt.debug (fun m ->
+                    m "p2: Committed %s" (Pval.to_string ipval))
               in
-              if should_update then
-                let* () = Logs_lwt.debug (fun m -> m "p2: writing to wal") in
-                let* () = write_to_wal acceptor.wal @@ Pval.to_string ipval in
-                let* () =
-                  Logs_lwt.debug (fun m ->
-                      m "p2: Committed %s" (Pval.to_string ipval))
-                in
-                Lwt.return
-                @@ Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
-              else Lwt.return_unit
-            else raise (Preempted acceptor.ballot_num))
-      in
-      let p2b : p2b =
-        {acceptor_id= acceptor.id; ballot= acceptor.ballot_num}
-      in
-      let marshalled_resp =
-        p2b |> Protobuf.Encoder.encode_exn p2b_to_protobuf |> Bytes.to_string
-      in
-      Lwt_io.write_value oc marshalled_resp
-    with Preempted b ->
-      let* () =
-        Logs_lwt.debug (fun m ->
-            m "p2: preempted by ballot: %s" (Ballot.to_string b))
-      in
-      let nack : nack = {ballot= b} in
-      let nack_string =
-        nack |> Protobuf.Encoder.encode_exn nack_to_protobuf |> Bytes.to_string
-      in
-      Lwt_io.write_value oc nack_string
-end)
+              Lwt.return
+              @@ Base.Hashtbl.set acceptor.accepted ~key:is ~data:ipval
+            else Lwt.return_unit
+          else raise (Preempted acceptor.ballot_num))
+    in
+    let p2b : p2b = {acceptor_id= acceptor.id; ballot= acceptor.ballot_num} in
+    let marshalled_resp =
+      p2b |> Protobuf.Encoder.encode_exn p2b_to_protobuf |> Bytes.to_string
+    in
+    write marshalled_resp
+  with Preempted b ->
+    let* () =
+      Logs_lwt.debug (fun m ->
+          m "p2: preempted by ballot: %s" (Ballot.to_string b))
+    in
+    let nack : nack = {ballot= b} in
+    let nack_string =
+      nack |> Protobuf.Encoder.encode_exn nack_to_protobuf |> Bytes.to_string
+    in
+    write nack_string
 
 (* Initialize a new acceptor *)
 let create wal_location =
@@ -152,8 +138,8 @@ let create wal_location =
 
 let start acceptor host p1_port p2_port =
   Lwt.join
-    [ Phase1Server.start host p1_port acceptor
-    ; Phase2Server.start host p2_port acceptor ]
+    [ Server.start host p1_port acceptor phase_1_server_callback
+    ; Server.start host p2_port acceptor phase_2_server_callback ]
 
 (* Creating a new acceptor consists of initializing a record for it and
    starting a server for accepting incoming messages *)

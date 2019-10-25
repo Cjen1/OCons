@@ -8,7 +8,7 @@ let command =
       let%map_open acceptor_uris_p1 = anon ("Phase 1 acceptor uris" %: string)
       and acceptor_uris_p2 = anon ("Phase 2 acceptor uris" %: string)
       and replica_decision_uris = anon ("Replica uris" %: string)
-      and replica_port = anon ("Replica request port" %: int) 
+      and replica_port = anon ("Replica request port" %: int)
       and host = anon ("Host address" %: string) in
       fun () ->
         let acceptor_uris_p1 =
@@ -27,7 +27,8 @@ let command =
         let host_inet_addr = Unix.inet_addr_of_string host in
         Lwt_main.run
         @@ Leader.create_and_start_leader host_inet_addr replica_port
-             acceptor_uris_p1 acceptor_uris_p2 replica_decision_uris initial_timeout)
+             acceptor_uris_p1 acceptor_uris_p2 replica_decision_uris
+             initial_timeout)
 
 let reporter =
   let report src level ~over k msgf =
@@ -44,7 +45,7 @@ let reporter =
   {Logs.report}
 
 let () =
-  Lwt_engine.set (new Lwt_engine.libev ());
+  Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run command

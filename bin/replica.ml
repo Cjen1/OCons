@@ -7,7 +7,7 @@ let command =
     Core.Command.Let_syntax.(
       let%map_open leader_uris = anon ("Leader uris" %: string)
       and client_port = anon ("client_port" %: int)
-      and decision_port = anon ("decision_port" %: int) 
+      and decision_port = anon ("decision_port" %: int)
       and host = anon ("Host" %: string) in
       fun () ->
         let leader_uris =
@@ -34,7 +34,7 @@ let reporter =
   {Logs.report}
 
 let () =
-  Lwt_engine.set (new Lwt_engine.libev ());
+  Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run command
