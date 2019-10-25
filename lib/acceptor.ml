@@ -19,6 +19,7 @@ module Phase1Server = Server.Make_Server (struct
   let connected_callback :
       Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
    fun (ic, oc) (acceptor : t) ->
+    Logs.debug (fun m -> m "Receiving p1a");
     let* msg = Lwt_io.read_value ic in
     let p1a : p1a =
       Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1a_from_protobuf
@@ -52,10 +53,12 @@ module Phase1Server = Server.Make_Server (struct
           in
           Lwt.return p1b)
     in
+    Logs.debug (fun m -> m "Sending p1b");
     let p1b_string =
       p1b |> Protobuf.Encoder.encode_exn p1b_to_protobuf |> Bytes.to_string
     in
-    Lwt_io.write_value oc p1b_string
+    let* () = Lwt_io.write_value oc p1b_string in
+    Logs_lwt.debug (fun m -> m "Sent p1b")
 end)
 
 module Phase2Server = Server.Make_Server (struct

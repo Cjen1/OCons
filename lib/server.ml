@@ -23,11 +23,9 @@ end = struct
       try%lwt 
         let ic = of_fd ~mode:Input sock in
         let oc = of_fd ~mode:Output sock in
-        Logs.debug (fun m ->
-            m "handle_conn: Connection initialised from %s" (string_of_sockaddr sockaddr));
-        let* () = S.connected_callback (ic, oc) t in
-        shutdown sock SHUTDOWN_ALL;
-        Log.debug (fun m -> m "Connection finished")
+        let* ()= Log.debug (fun m ->
+            m "handle_conn: Connection initialised from %s" (string_of_sockaddr sockaddr)) in
+        S.connected_callback (ic, oc) t
       with
       | Unix.Unix_error (e, f, p) ->
         Log.debug (fun m ->
@@ -36,7 +34,11 @@ end = struct
       | End_of_file ->
         Log.debug (fun m ->
             m "handle_conn: connection closed while writing")
-    )[%lwt.finally (Lwt_unix.close sock)]
+    )[%lwt.finally (
+      (*shutdown sock SHUTDOWN_ALL;
+      let* () = close sock in *)
+      Log.debug (fun m -> m "Connection finished")
+    )]
 
   let create_server sock (t : S.t) =
     let rec serve () =
@@ -53,7 +55,7 @@ end = struct
       setsockopt sock SO_REUSEADDR true ;
       let* () = bind sock @@ ADDR_INET (listen_address, port) in
       let max_pending = 20 in
-      Lwt_unix.listen sock max_pending ;
+      listen sock max_pending ;
       Lwt.return sock
     with z -> (let* () = close sock in raise z)
 
