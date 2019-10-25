@@ -147,7 +147,8 @@ let rec propose t =
   if t.slot_in < t.slot_out + t.window then
     match Base.Queue.dequeue t.requests with
     | Some ((_, c) as fc) ->
-        Log_propose.debug (fun m -> m "got request for %s" (string_of_command c)) ;
+        Log_propose.debug (fun m ->
+            m "got request for %s" (string_of_command c)) ;
         (* Do reconfigure if required *)
         let () =
           match DecisionSet.find_slot t.decisions (t.slot_in - t.window) with
@@ -190,13 +191,8 @@ let rec msg_loop t =
   propose t ;
   msg_loop t
 
-module ClientRequestServer = Server.Make_Server (struct
-  type nonrec t = t
-
-  let connected_callback :
-      Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
-   fun (ic, oc) (t : t) ->
-    let* msg = Lwt_io.read_value ic in
+  let client_request_callback (read,write) (t : t) = 
+    let* msg = read () in 
     let c =
       ( msg |> Bytes.of_string
       |> Protobuf.Decoder.decode_exn Messaging.client_request_from_protobuf )
@@ -217,16 +213,11 @@ module ClientRequestServer = Server.Make_Server (struct
       |> Protobuf.Encoder.encode_exn Messaging.client_response_to_protobuf
       |> Bytes.to_string
     in
-    Lwt_io.write_value oc resp
-end)
+    write resp
 
-module DecisionServer = Server.Make_Server (struct
-  type nonrec t = t
-
-  let connected_callback :
-      Lwt_io.input_channel * Lwt_io.output_channel -> t -> unit Lwt.t =
-   fun (ic, _) (t : t) ->
-    let* msg = Lwt_io.read_value ic in
+  let decision_callback 
+   (read, _) (t : t) =
+    let* msg = read () in
     let res =
       msg |> Bytes.of_string
       |> Protobuf.Decoder.decode_exn Messaging.decision_response_from_protobuf
@@ -235,7 +226,6 @@ module DecisionServer = Server.Make_Server (struct
         m "decision_server: got decision for slot: %d" res.slot_num) ;
     Queue.add (Decision (res.slot_num, res.command)) t.msg_queue ;
     Lwt.return_unit
-end)
 
 let create leader_uris =
   { state= Types.initial_state ()
@@ -250,8 +240,8 @@ let create leader_uris =
 
 let start t host client_port decision_port =
   Lwt.join
-    [ ClientRequestServer.start host client_port t
-    ; DecisionServer.start host decision_port t
+    [ Server.start host client_port t client_request_callback
+    ; Server.start host decision_port t decision_callback
     ; msg_loop t ]
 
 let create_and_start host client_port decision_port leader_uris =
