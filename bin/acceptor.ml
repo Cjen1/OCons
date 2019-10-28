@@ -30,7 +30,7 @@ let reporter =
   {Logs.report}
 
 let () =
-  Lwt_engine.set (new Lwt_engine.libev ()) ;
+  Lwt_engine.set (new Lwt_engine.libev ());
   Fmt_tty.setup_std_outputs () ;
   Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run command

@@ -2,6 +2,6 @@ build:
 	eval `opam env` && \
 	dune build @install && \
 	dune install 
-	rm ../bin/*
+	rm -v ../bin/*
 	cp _build/install/default/bin/* ../bin/
 
