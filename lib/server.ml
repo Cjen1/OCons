@@ -6,18 +6,17 @@ let server = Logs.Src.create "Server" ~doc:"Server module"
 module Log = (val Logs_lwt.src_log server : Logs_lwt.LOG)
 
 let handle_connection (sock, sockaddr) t connected_callback () =
-  let open Lwt_io in
-  let open Lwt_unix in
-  ( try%lwt
-      let ic = of_fd ~mode:Input sock in
-      let read () = Lwt_io.read_value ic in
-      let oc = of_fd ~mode:Output sock in
-      let write = Lwt_io.write_value oc in
-      let* () =
+     let* () =
         Log.debug (fun m ->
             m "handle_conn: Connection initialised from %s"
               (string_of_sockaddr sockaddr))
       in
+  let open Lwt_io in
+  let ic = of_fd ~mode:Input sock in
+  let oc = of_fd ~mode:Output sock in
+  ( try%lwt
+      let read () = Lwt_io.read_value ic in
+      let write msg = Lwt_io.write_value oc msg in
       connected_callback (read, (write : 'b -> unit Lwt.t)) t
     with
   | Unix.Unix_error (e, f, p) ->
@@ -27,7 +26,9 @@ let handle_connection (sock, sockaddr) t connected_callback () =
   | End_of_file ->
       Log.debug (fun m -> m "handle_conn: connection closed while writing") )
     [%lwt.finally
-      shutdown sock SHUTDOWN_ALL ;
+      let open Lwt_unix in
+      let* () = flush oc in
+      let () = shutdown sock SHUTDOWN_ALL in
       let* () = close sock in
       Log.debug (fun m -> m "Connection finished")]
 
