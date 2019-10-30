@@ -15,13 +15,15 @@ type leader_msg =
   | Adopted of Ballot.t * Pval.t list (* This is probably just a single element *)
   | Preempted of Ballot.t
 
+type leader_state = Leader | Not_Leader | Undecided
+
 type t =
   { id: leader_id
   ; acceptor_uris_p1: Lwt_unix.sockaddr list
   ; acceptor_uris_p2: Lwt_unix.sockaddr list
   ; replica_uris: Lwt_unix.sockaddr list
   ; mutable ballot_num: Ballot.t
-  ; mutable is_leader: bool
+  ; mutable leader_state: leader_state
   ; decided_log: (Types.slot_number, Pval.t) Base.Hashtbl.t
   ; mutable slot_out: int
   ; mutable current_proposals:
@@ -167,25 +169,31 @@ let rec leader_queue_loop t =
         ( Base.Hashtbl.find t.decided_log s
         , Base.Hashtbl.find t.current_proposals s )
       with
-      | None, None ->
+      | None, None -> (
           let* () =
             Logs_lwt.debug (fun m ->
                 m "leader_queue_loop: Got request not already received")
           in
           (* doesn't get added to proposals since a thread is either spawned or or pawned off on another leader *)
           (*Base.Hashtbl.set t.current_proposals ~key:s ~data:fc ;*)
-          if t.is_leader then
+          match t.leader_state with
+          | Leader ->
             let f, c = fc in
             let* () =
               Logs_lwt.debug (fun m -> m "leader_queue_loop: start p2")
             in
             p2 t (t.ballot_num, s, c) f
-          else
+          | Not_Leader ->
             let* () =
               Logs_lwt.debug (fun m ->
                   m "leader_queue_loop: Not leader so ignoring request")
             in
             Lwt.return_unit
+          | Undecided -> 
+                          (*If undecided loop msg until decided*)
+            Utils.Queue.add msg t.leader_queue;
+            leader_queue_loop t
+        )
       | _ ->
           Lwt.return_unit )
     | Adopted (b, ps) ->
@@ -205,7 +213,7 @@ let rec leader_queue_loop t =
                         Some pval))
           in
           advance_minimum_slot t ;
-          t.is_leader <- true ;
+          t.leader_state <- Leader ;
           let current_proposals = Base.Hashtbl.to_alist t.current_proposals in
           t.current_proposals <- Base.Hashtbl.create (module Base.Int) ;
           (* Spawn a new thread for each proposal *)
@@ -220,8 +228,8 @@ let rec leader_queue_loop t =
               m "leader_queue_loop: Preempted by ballot %s"
               @@ Ballot.to_string b)
         in
-        if Ballot.less_than t.ballot_num b then (
-          t.is_leader <- false ;
+        if not (Ballot.less_than b t.ballot_num)then (
+          t.leader_state <- Not_Leader;
           t.ballot_num <- Ballot.succ_exn b t.id ;
           p1 t )
         else Lwt.return_unit
@@ -273,7 +281,7 @@ let create acceptor_uris_p1 acceptor_uris_p2 replica_uris timeout_s =
   ; acceptor_uris_p2
   ; replica_uris
   ; ballot_num= Ballot.init id
-  ; is_leader= false
+  ; leader_state=Undecided 
   ; decided_log= Base.Hashtbl.create (module Int)
   ; slot_out= 0
   ; current_proposals= Base.Hashtbl.create (module Int)
