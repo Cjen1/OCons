@@ -14,10 +14,10 @@ let critical_section mutex ~f =
     let* () = Logs_lwt.debug (fun m -> m "Entering cs") in
     raise e
 
-let write_to_wal (oc, fd) line =
-  let* res = Lwt_io.write_line oc line in
-  let () = Unix.fsync fd in
-  Lwt.return res
+let write_to_wal (fd) line =
+  let written = Unix.write_substring fd line 0 (String.length line) in
+  assert (written = (String.length line)); 
+  Unix.fsync fd
 
 module Queue : sig
   type 'a t
