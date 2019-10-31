@@ -13,8 +13,8 @@ val init : leader_id -> t
 val succ_exn : t -> leader_id -> t
 
 val equal : t -> t -> bool
-
 val less_than : t -> t -> bool
+val greater_than : t -> t -> bool
 
 val compare : t -> t -> int
 
