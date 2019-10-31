@@ -2,7 +2,7 @@
  (name lib)
  (public_name ocaml-paxos)
  (libraries oUnit core.uuid lwt lwt.unix lwt_ppx yojson uri logs.lwt logs.fmt
-   fmt.tty ocaml-protoc ppx_deriving_protobuf)
+   fmt.tty ocaml-protoc ppx_deriving_protobuf zmq zmq-lwt)
  (preprocess
   (pps ppx_deriving_protobuf lwt_ppx)))
 
