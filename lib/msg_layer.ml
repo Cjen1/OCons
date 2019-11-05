@@ -5,8 +5,7 @@ let msg_layer = Logs.Src.create "Msg_layer" ~doc:"messaging layer"
 module MLog = (val Logs.src_log msg_layer : Logs.LOG)
 
 type t =
-  { nodes: string list
-  ; local_location: string
+  { nodes: string list ; local_location: string
   ; last_rec: (string, float) Base.Hashtbl.t
   ; alive_timeout: float
   ; context: Zmq.Context.t
@@ -62,7 +61,7 @@ let retry ?(tag = "") ~finished ~timeout f =
     in
     f () ;
     let%lwt res =
-      Lwt.choose
+      Lwt.pick
         [ (let%lwt res = finished in
            Lwt.return_some res)
         ; tmout ]
@@ -116,18 +115,25 @@ let node_dead_watch t ~node ~callback =
   MLog.debug (fun m -> m "Attached dead_node watch to %s" node) ;
   Ok (Lwt.async p)
 
-let one_use_socket ~callback ~address t =
-  let socket = Zmq.Socket.create t.context Zmq.Socket.router in
-  let () = Zmq.Socket.bind socket ("tcp://" ^ address) in
-  let socket = Zmq_lwt.Socket.of_socket socket in
+let one_use_socket ~callback ~address_sub ~address_pub t =
+  let sub_socket = Zmq.Socket.create t.context Zmq.Socket.sub in
+  let pub_socket = Zmq.Socket.create t.context Zmq.Socket.pub in
+  let () = Zmq.Socket.bind pub_socket ("tcp://" ^ address_pub) in
+  let () = Zmq.Socket.bind sub_socket ("tcp://" ^ address_sub) in
+  Zmq.Socket.subscribe sub_socket "*";
+  let sub_socket = Zmq_lwt.Socket.of_socket sub_socket in
+  let pub_socket = Zmq_lwt.Socket.of_socket pub_socket in
   let open Zmq_lwt in
   let rec loop () =
-    MLog.debug (fun m -> m "one_use_socket: awaiting conn on %s" address) ;
-    let%lwt addr = Socket.recv socket in
-    let%lwt _ = Socket.recv socket in
-    let%lwt msg = Socket.recv socket in
-    let%lwt res = callback msg in
-    Lwt.async (fun () -> Zmq_lwt.Socket.send_all socket [addr; ""; res]) ;
+    MLog.debug (fun m -> m "one_use_socket: awaiting conn on %s" address_sub) ;
+    let%lwt addr, msg = 
+      let%lwt resp = Socket.recv_all sub_socket in
+      match resp with
+      | [addr; msg] -> Lwt.return @@ (addr,msg)
+      | _ -> assert false
+    in 
+    MLog.debug (fun m -> m "one_use_socket: got req from %s" addr) ;
+    let%lwt () = callback msg (fun msg -> Socket.send_all pub_socket [addr;msg]) in
     loop ()
   in
   loop ()

@@ -211,7 +211,7 @@ let p2b_callback t msg =
       () ) ;
   Lwt.return_unit
 
-let client t msg =
+let client t msg writer =
   LLog.debug (fun m ->
       m "%s: Got client request" @@ string_of_leader_state t.leader_state) ;
   let client_request =
@@ -223,15 +223,14 @@ let client t msg =
       let slot = Utils.PQueue.take t.slot_queue in
       let%lwt result = p2a t (ballot, slot, client_request.command) () in
       let client_response =
-        {result= Some result}
+        {result= result}
         |> Protobuf.Encoder.encode_exn client_response_to_protobuf
         |> Bytes.to_string
       in
-      Lwt.return client_response
+      Lwt.async(fun () -> writer client_response);
+      Lwt.return_unit
   | _ ->
-      {result= None}
-      |> Protobuf.Encoder.encode_exn client_response_to_protobuf
-      |> Bytes.to_string |> Lwt.return
+    Lwt.return_unit
 
 let decision_callback t msg =
   LLog.debug (fun m -> m "Got a decision") ;
@@ -329,7 +328,7 @@ let preempt_nack_p2 t msg =
   preempt_p2 t incomming_ballot ballot ;
   Lwt.return_unit
 
-let create msg_layer local nodes client_address =
+let create msg_layer local nodes ~cpub_address ~csub_address =
   let quorum_p1, quorum_p2 = Quorum.majority nodes in
   let leader_state = Not_Leader {ballot= Ballot.init local} in
   let timeout = 3. in
@@ -367,12 +366,12 @@ let create msg_layer local nodes client_address =
     ~callback:(preempt_nack_p2 t) ;
   let sp = state_advancer t () in
   let p =
-    Msg_layer.one_use_socket ~callback:(client t) ~address:client_address
+    Msg_layer.one_use_socket ~callback:(client t) ~address_pub:cpub_address ~address_sub:csub_address
       msg_layer
   in
   (t, Lwt.join [p; sp; p1a t ()])
 
-let create_independent local nodes client_address alive_timeout =
+let create_independent local nodes ~cpub_address ~csub_address alive_timeout =
   let msg, psml = Msg_layer.create ~node_list:nodes ~local ~alive_timeout in
-  let t, psa = create msg local nodes client_address in
+  let t, psa = create msg local nodes ~cpub_address ~csub_address in
   (t, Lwt.join [psml; psa])
