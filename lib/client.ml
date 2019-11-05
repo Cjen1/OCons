@@ -1,75 +1,62 @@
-open Utils
+open Base
 
-type t = {leader_uris: Lwt_unix.sockaddr list}
+type t = {context: Zmq.Context.t; socket: [`Req] Zmq_lwt.Socket.t}
 
 let new_client endpoints =
-  { leader_uris=
-      endpoints |> Base.String.split ~on:','
-      |> Base.List.map ~f:Utils.uri_of_string }
+  let context = Zmq.Context.create () in
+  let socket = Zmq.Socket.create context Zmq.Socket.req in
+  let () =
+    List.iter endpoints ~f:(fun endpoint ->
+        let addr = "tcp://" ^ endpoint in
+        Zmq.Socket.connect socket addr)
+  in
+  let socket = Zmq_lwt.Socket.of_socket socket in
+  {context; socket}
 
-let serialise_request operation =
+let serialise_request op =
   let cid = Types.create_id () in
-  let (c : Messaging.client_request) = {command= (cid, operation)} in
-  c |> Protobuf.Encoder.encode_exn Messaging.client_request_to_protobuf
+  let cmd : Messaging.client_request = {command= {op; id= cid}} in
+  cmd
+  |> Protobuf.Encoder.encode_exn Messaging.client_request_to_protobuf
+  |> Bytes.to_string
 
 let deserialise_response response =
   ( response |> Bytes.of_string
   |> Protobuf.Decoder.decode_exn Messaging.client_response_from_protobuf )
     .result
 
-let send_to_all_replicas t msg =
-  let msg = serialise_request msg in
-  Lwt_main.run
-  @@ Lwt.pick
-       (Base.List.map t.leader_uris ~f:(fun uri ->
-            let* resp = Utils.comm uri msg in
-            Lwt.return @@ deserialise_response resp))
+open State_machine
 
-let op_nop t =
-  let op = Types.Nop in
-  send_to_all_replicas t op
+let print_endline = Stdio.print_endline
 
-let op_create t k v =
-  let op = Types.Create (k, v) in
-  send_to_all_replicas t op
+let send t op =
+  let msg = serialise_request op in
+  let p =
+    let rec loop () =
+      try
+        print_endline "Trying to connect" ;
+        let%lwt () = Zmq_lwt.Socket.send t.socket msg in
+        let%lwt resp = Zmq_lwt.Socket.recv t.socket in
+        match deserialise_response resp with
+        | Some v ->
+            Lwt.return v
+        | None ->
+          let%lwt () = Lwt_unix.sleep 0.01 in
+            loop ()
+      with Zmq.ZMQ_exception (_, s) -> print_endline s ; loop ()
+    in
+    loop ()
+  in
+  p
 
-let op_read t k =
-  let op = Types.Read k in
-  send_to_all_replicas t op
+let op_read_lwt t k =
+  let op = StateMachine.Read k in
+  send t op
 
-let op_update t k v =
-  let op = Types.Update (k, v) in
-  send_to_all_replicas t op
+let op_read t k = Lwt_main.run @@ op_read_lwt t k
 
-let op_remove t k =
-  let op = Types.Remove k in
-  send_to_all_replicas t op
+let op_write_lwt t k v =
+  let op = StateMachine.Write (k, v) in
+  send t op
 
-module C_Lwt = struct
-  let send_to_all_replicas t msg =
-    let msg = serialise_request msg in
-    Lwt.pick
-      (Base.List.map t.leader_uris ~f:(fun uri ->
-           let* resp = Utils.comm uri msg in
-           Lwt.return @@ deserialise_response resp))
-
-  let op_nop t =
-    let op = Types.Nop in
-    send_to_all_replicas t op
-
-  let op_create t k v =
-    let op = Types.Create (k, v) in
-    send_to_all_replicas t op
-
-  let op_read t k =
-    let op = Types.Read k in
-    send_to_all_replicas t op
-
-  let op_update t k v =
-    let op = Types.Update (k, v) in
-    send_to_all_replicas t op
-
-  let op_remove t k =
-    let op = Types.Remove k in
-    send_to_all_replicas t op
-end
+let op_write t k v = Lwt_main.run @@ op_write_lwt t k v
