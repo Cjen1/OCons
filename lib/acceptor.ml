@@ -35,12 +35,11 @@ let p1a_callback t msg =
     |> Protobuf.Encoder.encode_exn p1b_to_protobuf
     |> Bytes.to_string
     |> Msg_layer.send_msg t.msg_layer ~filter:"p1b" )
-  else (
-    {ballot=t.ballot_num}
-    |> Protobuf.Encoder.encode_exn nack_to_protobuf
+  else
+    {ballot= t.ballot_num}
+    |> Protobuf.Encoder.encode_exn nack_p1_to_protobuf
     |> Bytes.to_string
-    |> Msg_layer.send_msg t.msg_layer ~filter:"nack" 
-  )
+    |> Msg_layer.send_msg t.msg_layer ~filter:"nack_p1"
 
 let p2a_callback t msg =
   ALog.debug (fun m -> m "Got p2a msg") ;
@@ -48,7 +47,7 @@ let p2a_callback t msg =
     Bytes.of_string msg |> Protobuf.Decoder.decode_exn p2a_from_protobuf
   in
   let ((ib, is, _) as ipval) = p2a.pval in
-  let ( >= ) a b = Ballot.less_than a b || Ballot.equal a b  in
+  let ( >= ) a b = Ballot.less_than a b || Ballot.equal a b in
   if ib >= t.ballot_num then (
     write_to_wal t.wal @@ Pval.to_string ipval ;
     Base.Hashtbl.set t.accepted ~key:is ~data:ipval ;
@@ -58,8 +57,11 @@ let p2a_callback t msg =
     |> Bytes.to_string
     |> Msg_layer.send_msg t.msg_layer ~filter:"p2b" )
   else (
-    ALog.debug (fun m -> m "Is incorrect ballot, not responding") ;
-    Lwt.return_unit )
+    ALog.debug (fun m -> m "Is incorrect ballot") ;
+    {ballot= t.ballot_num}
+    |> Protobuf.Encoder.encode_exn nack_p1_to_protobuf
+    |> Bytes.to_string
+    |> Msg_layer.send_msg t.msg_layer ~filter:"nack_p2" )
 
 let create wal_loc msg_layer local =
   let t =
