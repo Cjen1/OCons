@@ -1,302 +1,337 @@
 open Types
-open Utils
 open Base
 open Messaging
+open State_machine
 
-(* TODO implement *)
-type state
+let leader = Logs.Src.create "Leader" ~doc:"Leader module"
 
-type 'a fulfilable_command = 'a Lwt_condition.t * command
+module LLog = (val Logs.src_log leader : Logs.LOG)
 
-let to_command : 'a fulfilable_command -> command = fun (_, c) -> c
+type leader_state =
+  | Leader of {ballot: Ballot.t}
+  | Not_Leader of {ballot: Ballot.t}
+  | Deciding of
+      {ballot: Ballot.t; quorum: string Quorum.t; fulfiller: unit Lwt.u}
 
-type leader_msg =
-  | Propose of slot_number * unit fulfilable_command
-  | Adopted of Ballot.t * Pval.t list (* This is probably just a single element *)
-  | Preempted of Ballot.t
+let string_of_leader_state = function
+  | Leader {ballot} ->
+      Printf.sprintf "(Leader %s)" @@ Ballot.to_string ballot
+  | Not_Leader {ballot} ->
+      Printf.sprintf "(Not_Leader %s)" @@ Ballot.to_string ballot
+  | Deciding {ballot; _} ->
+      Printf.sprintf "(Deciding %s)" @@ Ballot.to_string ballot
 
-type leader_state = Leader | Not_Leader | Undecided
+type in_flight = {quorum: string Quorum.t; pval: Pval.t; fulfiller: unit Lwt.u}
 
 type t =
   { id: leader_id
-  ; acceptor_uris_p1: Lwt_unix.sockaddr list
-  ; acceptor_uris_p2: Lwt_unix.sockaddr list
-  ; replica_uris: Lwt_unix.sockaddr list
-  ; mutable ballot_num: Ballot.t
   ; mutable leader_state: leader_state
-  ; decided_log: (Types.slot_number, Pval.t) Base.Hashtbl.t
-  ; mutable slot_out: int
-  ; mutable current_proposals:
-      (Types.slot_number, unit fulfilable_command) Base.Hashtbl.t
-  ; mutable leader_queue: leader_msg Utils.Queue.t
-  ; mutable timeout_s: float
-  ; aimd_ai: float
-  ; aimd_md: float }
+  ; msg_layer: Msg_layer.t
+  ; quorum_p1: unit -> string Quorum.t
+  ; quorum_p2: unit -> string Quorum.t
+  ; proposals: StateMachine.command Hash_set.t
+  ; in_flight: (int, in_flight) Hashtbl.t
+  ; awaiting_sm: (int, StateMachine.op_result Lwt.u) Hashtbl.t
+  ; decided_log: (int, StateMachine.command) Hashtbl.t
+  ; slot_queue: Utils.PQueue.t
+  ; slot_committed: unit Lwt_condition.t
+  ; state: StateMachine.t
+  ; mutable highest_undecided_slot: int
+  ; timeout: float
+  ; mutable preemption_timeout: float
+  ; preemption_coefficient: float }
 
-let aimd_ai t = t.timeout_s <- t.timeout_s -. t.aimd_ai
-
-let aimd_md t = t.timeout_s <- t.timeout_s *. t.aimd_md
-
-exception ExnPreempted of Ballot.t
-
-let achieve_quorum acceptor_uris promises =
-  let rec wait_until_quorum q rem_list =
-    if Quorum.is_majority q then Lwt.return_unit
-    else
-      let* found, rem = Lwt.nchoose_split rem_list in
-      Logs.debug (fun m -> m "Found %d" (List.length found)) ;
-      let q =
-        List.fold found ~init:q ~f:(fun q (_, uri) -> Quorum.add q uri)
+let p1a (t : t) () =
+  LLog.debug (fun m -> m "Sending p1a msgs") ;
+  match t.leader_state with
+  | Not_Leader {ballot} ->
+      let ballot = Ballot.succ_exn ballot t.id in
+      let p1a =
+        ({ballot} : Messaging.p1a)
+        |> Protobuf.Encoder.encode_exn Messaging.p1a_to_protobuf
+        |> Bytes.to_string
       in
-      wait_until_quorum q rem
+      let promise, fulfiller = Lwt.task () in
+      t.leader_state <- Deciding {ballot; quorum= t.quorum_p1 (); fulfiller} ;
+      LLog.debug (fun m -> m "p1a: awaiting quorum") ;
+      let%lwt () =
+        Lwt_unix.sleep @@ Random.float_range 0. t.preemption_timeout
+      in
+      Msg_layer.send_msg t.msg_layer p1a ~finished:promise ~filter:"p1a"
+  | _ ->
+      LLog.debug (fun m -> m "Not sending p1a, wrong state") ;
+      (* Either already leader, or already sent p1a *)
+      Lwt.return_unit
+
+let p1b_callback t msg =
+  let p1b =
+    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1b_from_protobuf
   in
-  let* () = wait_until_quorum (List.length acceptor_uris, []) promises in
-  let* resps, _ = Lwt.nchoose_split promises in
-  Lwt.return @@ List.map resps ~f:fst
+  LLog.debug (fun m ->
+      m "%s: Got p1b for ballot = %s"
+        (string_of_leader_state t.leader_state)
+        (Ballot.to_string p1b.ballot)) ;
+  ( match t.leader_state with
+  | Deciding {ballot; quorum; fulfiller; _}
+    when Ballot.phys_equal p1b.ballot ballot ->
+      quorum.add p1b.id ;
+      if quorum.sufficient () then (
+        LLog.debug (fun m ->
+            m "p1b: got quorum, now leader of ballot %s"
+            @@ Ballot.to_string ballot) ;
+        t.leader_state <- Leader {ballot} ;
+        Lwt.wakeup_later fulfiller () ;
+        t.preemption_timeout <- t.timeout )
+  | _ ->
+      () ) ;
+  Lwt.return_unit
 
-let rec advance_minimum_slot t =
-  match Hashtbl.find t.decided_log t.slot_out with
-  | Some _ ->
-      t.slot_out <- t.slot_out + 1 ;
-      advance_minimum_slot t
-  | None ->
-      ()
-
-(* Scout in Paxos made moderately complex terminology *)
-let p1 (t : t) =
-  let* () = Logs_lwt.debug (fun m -> m "Attempting to attain leadership.") in
-  let p1a : p1a = {ballot= t.ballot_num} in
-  let p1a_bytes = Protobuf.Encoder.encode_exn p1a_to_protobuf p1a in
-  try%lwt
-    let parse_exn p1b_bytes =
-      let p1b : p1b =
-        Protobuf.Decoder.decode_exn p1b_from_protobuf p1b_bytes
-      in
-      if Ballot.equal p1b.ballot t.ballot_num then p1b
-      else raise (ExnPreempted p1b.ballot)
-    in
-    let p_p1b_uris =
-      List.map t.acceptor_uris_p1 ~f:(fun uri ->
-          Logs.debug (fun m -> m "Sending p1a") ;
-          let* p1b_bytes = comm uri p1a_bytes in
-          Logs.debug (fun m -> m "Got p1b") ;
-          let p1b = parse_exn @@ Bytes.of_string p1b_bytes in
-          Lwt.return (p1b, uri))
-    in
-    Logs.debug (fun m -> m "Attempting to achieve quorum") ;
-    let* p1bs = achieve_quorum t.acceptor_uris_p1 p_p1b_uris in
-    Logs.debug (fun m -> m "Achieved Quorum") ;
-    let pvals =
-      List.concat
-      @@ List.map p1bs ~f:(fun p1b ->
-             let pvals = p1b.accepted in
-             pvals)
-    in
-    let ballot =
-      List.fold p1bs ~init:(Ballot.bottom ()) ~f:(fun bmax p1b ->
-          if Ballot.less_than bmax p1b.ballot then p1b.ballot else bmax)
-    in
-    let* () =
-      Logs_lwt.debug (fun m ->
-          m "Achieved leadership over ballot %s." @@ Ballot.to_string ballot)
-    in
-    Lwt.return @@ Utils.Queue.add (Adopted (ballot, pvals)) t.leader_queue
-  with ExnPreempted b ->
-    let* () = Lwt_unix.sleep @@ Random.float_range 0. t.timeout_s in
-    aimd_md t ;
-    Lwt.return @@ Utils.Queue.add (Preempted b) t.leader_queue
-
-(* Commander in Paxos made moderately complex terminology *)
-let p2 t (pval : Pval.t) (fulfiller : unit Lwt_condition.t) : unit Lwt.t =
-  let p2a : p2a = {pval} in
-  let p2a_bytes = Protobuf.Encoder.encode_exn p2a_to_protobuf p2a in
-  let* () =
-    Logs_lwt.debug (fun m ->
-        m "p2: Proposing command for pval: %s" @@ Pval.to_string pval)
+let p1b_preempted_callback t msg =
+  let p1b =
+    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1b_from_protobuf
   in
-  try%lwt
-    let parse_exn p2b_bytes =
-      let p2b =
-        match Protobuf.Decoder.decode p2b_from_protobuf p2b_bytes with
-        | Some v ->
-            v
-        | None ->
-            let nack =
-              Protobuf.Decoder.decode_exn nack_from_protobuf p2b_bytes
-            in
-            let () =
-              Logs.debug (fun m ->
-                  m "p2b_parse: Preempted by ballot: %s"
-                  @@ Ballot.to_string nack.ballot)
-            in
-            raise (ExnPreempted nack.ballot)
-      in
-      p2b
-    in
-    let p_p2b_uris =
-      List.map t.acceptor_uris_p2 ~f:(fun uri ->
-          let* () = Logs_lwt.debug (fun m -> m "p2 sending p2a") in
-          let* p2b_bytes = comm uri p2a_bytes in
-          let* () =
-            Logs_lwt.debug (fun m ->
-                m "2b_callback: received bytes from response for pval: %s"
-                  (Pval.to_string pval))
-          in
-          let p2b = parse_exn @@ Bytes.of_string p2b_bytes in
-          Lwt.return (p2b, uri))
-    in
-    let* _ = achieve_quorum t.acceptor_uris_p1 p_p2b_uris in
-    let* () = Logs_lwt.debug (fun m -> m "Achieved quorum over request") in
-    let _, s, _ = pval in
-    Hashtbl.set t.decided_log ~key:s ~data:pval ;
-    aimd_ai t ;
-    Lwt_condition.broadcast fulfiller () ;
-    advance_minimum_slot t ;
-    Lwt.return_unit
-  with ExnPreempted b ->
-    t.timeout_s <- t.timeout_s *. t.aimd_md ;
-    (* If preempted by a ballot while waiting for quorum *)
-    Utils.Queue.add (Preempted b) t.leader_queue ;
-    Lwt.return_unit
-
-(* Receive messages from client, p1 and p2 processes *)
-let rec leader_queue_loop t =
-  let* msg = Utils.Queue.take t.leader_queue in
-  let p_process =
-    match msg with
-    | Propose (s, fc) -> (
+  let ( >= ) a b = not @@ Ballot.less_than a b in
+  ( match t.leader_state with
+  | Deciding {ballot; fulfiller; _}
+    when p1b.ballot >= ballot && not (Ballot.phys_equal p1b.ballot ballot) ->
+      t.leader_state <- Not_Leader {ballot= p1b.ballot} ;
+      Lwt.wakeup_later fulfiller () ;
+      t.preemption_timeout <- t.preemption_timeout *. t.preemption_coefficient ;
+      LLog.debug (fun m -> m "Leader duel in progress, sending p1a") ;
+      Lwt.async (p1a t)
+  | Leader {ballot} when Ballot.greater_than p1b.ballot ballot -> (
+      (*Preempted thus wait for new leader to die then p1a *)
+      t.leader_state <- Not_Leader {ballot= p1b.ballot} ;
+      LLog.debug (fun m -> m "Got preempted, setting p1a") ;
       match
-        ( Base.Hashtbl.find t.decided_log s
-        , Base.Hashtbl.find t.current_proposals s )
+        Msg_layer.node_dead_watch t.msg_layer
+          ~node:(Ballot.get_leader_id_exn p1b.ballot)
+          ~callback:(p1a t)
       with
-      | None, None -> (
-          let* () =
-            Logs_lwt.debug (fun m ->
-                m "leader_queue_loop: Got request not already received")
+      | Ok _ ->
+          ()
+      | Error `NodeNotFound ->
+          assert false )
+  | Not_Leader {ballot} when Ballot.greater_than p1b.ballot ballot -> (
+      t.leader_state <- Not_Leader{ballot}
+    )
+  | _ ->
+      () ) ;
+  Lwt.return_unit
+
+let p2a t pval () =
+  LLog.debug (fun m -> m "Sending p2a msgs") ;
+  match t.leader_state with
+  | Leader _ ->
+      let p2a =
+        {pval}
+        |> Protobuf.Encoder.encode_exn p2a_to_protobuf
+        |> Bytes.to_string
+      in
+      let promise, fulfiller = Lwt.task () in
+      let result, result_fulfiller = Lwt.task () in
+      let quorum = t.quorum_p2 () in
+      ( match
+          ( Hashtbl.add t.in_flight ~key:(Pval.get_slot pval)
+              ~data:{quorum; pval; fulfiller}
+          , Hashtbl.add t.awaiting_sm ~key:(Pval.get_slot pval)
+              ~data:result_fulfiller )
+        with
+      | `Ok, `Ok ->
+          ()
+      | _ (*res1, res2*) ->
+          (*
+        let err_to_string = function
+            | `Ok ->
+                "Ok"
+            | `Duplicate ->
+                "Duplicate"
           in
-          (* doesn't get added to proposals since a thread is either spawned or or pawned off on another leader *)
-          (*Base.Hashtbl.set t.current_proposals ~key:s ~data:fc ;*)
-          match t.leader_state with
-          | Leader ->
-            let f, c = fc in
-            let* () =
-              Logs_lwt.debug (fun m -> m "leader_queue_loop: start p2")
-            in
-            p2 t (t.ballot_num, s, c) f
-          | Not_Leader ->
-            let* () =
-              Logs_lwt.debug (fun m ->
-                  m "leader_queue_loop: Not leader so ignoring request")
-            in
-            Lwt.return_unit
-          | Undecided -> 
-                          (*If undecided loop msg until decided*)
-            Utils.Queue.add msg t.leader_queue;
-            leader_queue_loop t
-        )
+          LLog.debug (fun m ->
+              m "res1: %s\n res2: %s\n" (res1 |> err_to_string)
+                (res2 |> err_to_string)) ;
+            *)
+          assert false ) ;
+      let%lwt () =
+        Msg_layer.send_msg t.msg_layer p2a ~finished:promise ~filter:"p2a"
+      in
+      result
+  | Not_Leader _ | Deciding _ ->
+      Lwt.return @@ StateMachine.op_result_failure ()
+
+let broadcast_decision t pval =
+  let slot = Pval.get_slot pval in
+  let command = Pval.get_cmd pval in
+  let decision_response =
+    {slot; command}
+    |> Protobuf.Encoder.encode_exn decision_response_to_protobuf
+    |> Bytes.to_string
+  in
+  Lwt.async
+  @@ fun () ->
+  Msg_layer.send_msg t.msg_layer ~filter:"decision" decision_response
+
+let update_state t slot command =
+  LLog.debug (fun m -> m "Updating state for slot: %d" slot) ;
+  Hashtbl.remove t.in_flight slot ;
+  Hashtbl.set t.decided_log ~key:slot ~data:command ;
+  Lwt_condition.broadcast t.slot_committed ()
+
+let p2b_callback t msg =
+  LLog.debug (fun m ->
+      m "%s: Got p1b " (string_of_leader_state t.leader_state)) ;
+  let p2b =
+    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p2b_from_protobuf
+  in
+  ( match Hashtbl.find t.in_flight (Pval.get_slot p2b.pval) with
+  | Some {quorum; pval; fulfiller; _} when Pval.equal pval p2b.pval ->
+      quorum.add p2b.id ;
+      if quorum.sufficient () then (
+        update_state t (Pval.get_slot p2b.pval) (Pval.get_cmd p2b.pval) ;
+        Lwt.wakeup_later fulfiller () ;
+        broadcast_decision t p2b.pval )
+  | Some {pval; _} when not (Pval.equal pval p2b.pval) ->
+      assert false
+  | _ ->
+      () ) ;
+  Lwt.return_unit
+
+let client t msg =
+  LLog.debug (fun m -> m "%s: Got client request" @@ string_of_leader_state t.leader_state) ;
+  let client_request =
+    msg |> Bytes.of_string
+    |> Protobuf.Decoder.decode_exn client_request_from_protobuf
+  in
+  match t.leader_state with
+  | Leader {ballot} ->
+      let slot = Utils.PQueue.take t.slot_queue in
+      let%lwt result = p2a t (ballot, slot, client_request.command) () in
+      let client_response =
+        {result= Some result}
+        |> Protobuf.Encoder.encode_exn client_response_to_protobuf
+        |> Bytes.to_string
+      in
+      Lwt.return client_response
+  | _ ->
+      {result= None}
+      |> Protobuf.Encoder.encode_exn client_response_to_protobuf
+      |> Bytes.to_string |> Lwt.return
+
+let decision_callback t msg =
+  LLog.debug (fun m -> m "Got a decision") ;
+  let decision_response =
+    msg |> Bytes.of_string
+    |> Protobuf.Decoder.decode_exn decision_response_from_protobuf
+  in
+  update_state t decision_response.slot decision_response.command ;
+  Lwt.return_unit
+
+let state_advancer t () =
+  let rec loop () =
+    let%lwt () = Lwt_condition.wait t.slot_committed in
+    let rec inner_loop () = 
+      LLog.debug (fun m -> m "Attempting to advance state") ;
+      let slot = t.highest_undecided_slot in
+      match Hashtbl.find t.decided_log slot with
+      | Some command ->
+          LLog.debug (fun m -> m "Advancing state for slot %d" slot) ;
+          t.highest_undecided_slot <- slot + 1 ;
+          let res = StateMachine.update t.state command in
+          ( match Hashtbl.find t.awaiting_sm slot with
+          | Some fulfiller ->
+              Lwt.wakeup_later fulfiller res ;
+              Hashtbl.remove t.awaiting_sm slot
+          | None ->
+              () ) ;
+          inner_loop ()
+      | None ->
+          Lwt.return_unit
+    in 
+    let%lwt () = inner_loop () in
+    loop ()
+  in
+  loop ()
+
+let preempted t msg_type msg =
+  let ballot =
+    match t.leader_state with
+    | Leader {ballot} | Not_Leader {ballot; _} | Deciding {ballot; _} ->
+        ballot
+  in
+  let incomming_ballot =
+    let msg = Bytes.of_string msg in
+    match msg_type with
+    | `p2a ->
+        let p2a = msg |> Protobuf.Decoder.decode_exn p2a_from_protobuf in
+        p2a.pval |> Pval.get_ballot
+    | `p2b ->
+        let p2b = msg |> Protobuf.Decoder.decode_exn p2b_from_protobuf in
+        p2b.ballot
+    | `nack ->
+        let nack = msg |> Protobuf.Decoder.decode_exn nack_from_protobuf in
+        nack.ballot
+  in
+  let () =
+    if Ballot.compare incomming_ballot ballot > 0 then (
+      ( match t.leader_state with
+      | Deciding {fulfiller; _} ->
+          Lwt.wakeup_later fulfiller ()
       | _ ->
-          Lwt.return_unit )
-    | Adopted (b, ps) ->
-        let* () =
-          Logs_lwt.debug (fun m -> m "leader_queue_loop: Adoopted new ballot")
-        in
-        if Ballot.equal b t.ballot_num then (
-          (* ballot b that has been accepted, and all adopted pvals before b*)
-          let () =
-            (* Update decided_values with most recent value *)
-            List.iter ps ~f:(fun ((b, s, _) as pval) ->
-                Base.Hashtbl.change t.decided_log s ~f:(fun data ->
-                    match data with
-                    | Some ((b', _, _) as pval') ->
-                        if Ballot.less_than b' b then Some pval else Some pval'
-                    | None ->
-                        Some pval))
-          in
-          advance_minimum_slot t ;
-          t.leader_state <- Leader ;
-          let current_proposals = Base.Hashtbl.to_alist t.current_proposals in
-          t.current_proposals <- Base.Hashtbl.create (module Base.Int) ;
-          (* Spawn a new thread for each proposal *)
-          Lwt.join
-            (List.map current_proposals ~f:(fun (s, fc) ->
-                 let fulfiller, command = fc in
-                 p2 t (b, s, command) fulfiller)) )
-        else Lwt.return_unit
-    | Preempted b ->
-        let* () =
-          Logs_lwt.debug (fun m ->
-              m "leader_queue_loop: Preempted by ballot %s"
-              @@ Ballot.to_string b)
-        in
-        if not (Ballot.less_than b t.ballot_num)then (
-          t.leader_state <- Not_Leader;
-          t.ballot_num <- Ballot.succ_exn b t.id ;
-          p1 t )
-        else Lwt.return_unit
+          () ) ;
+      (*Preempted thus wait for new leader to die then p1a *)
+      t.leader_state <- Not_Leader {ballot= incomming_ballot} ;
+      LLog.debug (fun m -> m "%s: Got preempted, setting p1a" @@ string_of_leader_state t.leader_state) ;
+      match
+        Msg_layer.node_dead_watch t.msg_layer
+          ~node:(Ballot.get_leader_id_exn incomming_ballot)
+          ~callback:(p1a t)
+      with
+      | Ok _ ->
+          ()
+      | Error `NodeNotFound ->
+          assert false )
   in
-  Lwt.join [p_process; leader_queue_loop t]
+  Lwt.return_unit
 
-  let client_server_callback (read,write) (t : t) =
-    let* () = Logs_lwt.debug (fun m -> m "replica_server: awaiting request") in
-    let* msg = read () in
-    let rep_req =
-      msg |> Bytes.of_string
-      |> Protobuf.Decoder.decode_exn Messaging.replica_request_from_protobuf
-    in
-    let* () =
-      Logs_lwt.debug (fun m ->
-          m "replica_server: got request, adding to queue")
-    in
-    let fulfiller = Lwt_condition.create () in
-    Utils.Queue.add
-      (Propose (rep_req.slot_num, (fulfiller, rep_req.command)))
-      t.leader_queue ;
-    let* () = Lwt_condition.wait fulfiller in
-    let* () =
-      Logs_lwt.debug (fun m -> m "replica_server: Request fulfilled")
-    in
-    let decision_response =
-      {slot_num= rep_req.slot_num; command= rep_req.command}
-    in
-    let decision_response_string =
-      decision_response
-      |> Protobuf.Encoder.encode_exn Messaging.decision_response_to_protobuf
-      |> Bytes.to_string
-    in
-    let* () =
-      Logs_lwt.debug (fun m ->
-          m "replica_server: sending replica notifications async")
-    in
-    List.iter t.replica_uris ~f:(fun uri ->
-        Lwt.async (fun () -> Utils.send uri decision_response_string)) ;
-    let* () = Logs_lwt.debug (fun m -> m "replica_server: sending response") in
-    let* () = write decision_response_string in
-    Logs_lwt.debug (fun m -> m "replica_server: Sent response")
-
-let create acceptor_uris_p1 acceptor_uris_p2 replica_uris timeout_s =
-  Base.Random.self_init () ;
-  let id = Types.create_id () in
-  { id
-  ; acceptor_uris_p1
-  ; acceptor_uris_p2
-  ; replica_uris
-  ; ballot_num= Ballot.init id
-  ; leader_state=Undecided 
-  ; decided_log= Base.Hashtbl.create (module Int)
-  ; slot_out= 0
-  ; current_proposals= Base.Hashtbl.create (module Int)
-  ; leader_queue= Utils.Queue.create ()
-  ; timeout_s
-  ; aimd_ai= 0.1
-  ; aimd_md= 1.2 }
-
-let start t host port =
-  Lwt.join [p1 t; leader_queue_loop t; Server.start host port t client_server_callback]
-
-let create_and_start_leader host client_port acceptor_uris_p1 acceptor_uris_p2
-    replica_uris initial_timeout =
-  let* () = Logs_lwt.info (fun m -> m "Spinning up leader") in
+let create msg_layer local nodes client_address =
+  let quorum_p1, quorum_p2 = Quorum.majority nodes in
+  let leader_state = Not_Leader {ballot= Ballot.init local} in
   let t =
-    create acceptor_uris_p1 acceptor_uris_p2 replica_uris initial_timeout
+    { id= local
+    ; leader_state
+    ; msg_layer
+    ; quorum_p1
+    ; quorum_p2
+    ; proposals= Hash_set.Poly.create ()
+    ; in_flight= Hashtbl.create (module Int)
+    ; awaiting_sm= Hashtbl.create (module Int)
+    ; decided_log= Hashtbl.create (module Int)
+    ; slot_queue= Utils.PQueue.create ()
+    ; slot_committed= Lwt_condition.create ()
+    ; state= StateMachine.create ()
+    ; highest_undecided_slot= 0
+    ; timeout= 1.
+    ; preemption_timeout= 1.
+    ; preemption_coefficient= 1.5 }
   in
-  start t host client_port
+  Msg_layer.attach_watch t.msg_layer ~filter:"p1b" ~callback:(p1b_callback t) ;
+  Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(p2b_callback t) ;
+  Msg_layer.attach_watch t.msg_layer ~filter:"decision"
+    ~callback:(decision_callback t) ;
+  Msg_layer.attach_watch t.msg_layer ~filter:"p1b"
+    ~callback:(p1b_preempted_callback t) ;
+  Msg_layer.attach_watch t.msg_layer ~filter:"p2a" ~callback:(preempted t `p2a) ;
+  Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(preempted t `p2b) ;
+  Msg_layer.attach_watch t.msg_layer ~filter:"nack"
+    ~callback:(preempted t `nack) ;
+  let sp = state_advancer t () in
+  let p =
+    Msg_layer.one_use_socket ~callback:(client t) ~address:client_address
+      msg_layer
+  in
+  (t, Lwt.join [p; sp; p1a t ()])
+
+let create_independent local nodes client_address alive_timeout =
+  let msg, psml = Msg_layer.create ~node_list:nodes ~local ~alive_timeout in
+  let t, psa = create msg local nodes client_address in
+  (t, Lwt.join [psml; psa])

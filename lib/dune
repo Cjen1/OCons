@@ -4,7 +4,7 @@
  (libraries oUnit core.uuid lwt lwt.unix lwt_ppx yojson uri logs.lwt logs.fmt
    fmt.tty ocaml-protoc ppx_deriving_protobuf zmq zmq-lwt)
  (preprocess
-  (pps ppx_deriving_protobuf lwt_ppx)))
+  (pps ppx_deriving_protobuf lwt_ppx ppx_jane)))
 
 (env
  (dev

@@ -1,6 +1,7 @@
 (* ballot.ml *)
 
 open Types
+open Base
 
 (* Ballots are identified uniquely by their ballot number
 
@@ -15,8 +16,13 @@ open Types
 *)
 
 (* Types of ballots *)
-type t = Bottom [@key 1] | Number of int * leader_id [@key 2]
-[@@deriving protobuf]
+type t = Bottom [@key 1] | Number of int * string [@key 2]
+[@@deriving protobuf, sexp]
+
+exception BallotIsBottom
+
+let get_leader_id_exn ballot : leader_id =
+  match ballot with Bottom -> raise BallotIsBottom | Number (_, lid) -> lid
 
 (* Function bottom returns bottom ballot *)
 let bottom () = Bottom
@@ -38,7 +44,7 @@ let succ_exn bal id =
 
    Since integers and ids are totally ordered the pairing here is totally
    ordered *)
-let equal b b' =
+let phys_equal b b' =
   match (b, b') with
   | Bottom, Bottom ->
       true
@@ -61,20 +67,19 @@ let compare b b' =
       -1
   | _, Bottom ->
       1
-  | Number (n, lid), Number (n', lid') -> (
-    match Int.compare n n' with 0 -> String.compare lid lid' | n -> n )
+  | Number (n, _), Number (n', _) ->
+      Int.compare n n'
+
+let equal b b' = compare b b' = 0
 
 (* Function tests if ballot b is less than b'.
    Along with equalaity function we have a total order on ballots *)
 let less_than b b' = compare b b' < 0
+
 let greater_than b b' = compare b b' > 0
 
 (* Convert a ballot to a string *)
-let to_string = function
-  | Bottom ->
-      "Bottom"
-  | Number (n, lid) ->
-      "Number(" ^ string_of_int n ^ "," ^ lid ^ ")"
+let to_string b = b |> sexp_of_t |> Sexp.to_string_hum
 
 module Infix = struct
   let ( < ) = less_than

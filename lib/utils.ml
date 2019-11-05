@@ -1,22 +1,18 @@
-let ( let* ) = Lwt.bind
-
-let ( and* ) = Lwt.both
-
 let critical_section mutex ~f =
   try%lwt
-    let* () = Logs_lwt.debug (fun m -> m "Entering cs") in
-    let* () = Lwt_mutex.lock mutex in
-    let* res = f () in
+    let%lwt () = Logs_lwt.debug (fun m -> m "Entering cs") in
+    let%lwt () = Lwt_mutex.lock mutex in
+    let%lwt res = f () in
     let () = Lwt_mutex.unlock mutex in
     Lwt.return @@ res
   with e ->
     let () = Lwt_mutex.unlock mutex in
-    let* () = Logs_lwt.debug (fun m -> m "Entering cs") in
+    let%lwt () = Logs_lwt.debug (fun m -> m "Entering cs") in
     raise e
 
-let write_to_wal (fd) line =
+let write_to_wal fd line =
   let written = Unix.write_substring fd line 0 (String.length line) in
-  assert (written = (String.length line)); 
+  assert (written = String.length line) ;
   Unix.fsync fd
 
 module Queue : sig
@@ -38,8 +34,8 @@ end = struct
     Lwt_condition.signal t.c ()
 
   let take t =
-    let* () = Lwt_mutex.lock t.m in
-    let* () =
+    let%lwt () = Lwt_mutex.lock t.m in
+    let%lwt () =
       if Queue.is_empty t.q then Lwt_condition.wait ~mutex:t.m t.c
       else Lwt.return_unit
     in
@@ -51,45 +47,33 @@ module PQueue = struct
   open Core_kernel
   open Types
 
-  type t =
-    { mutable high_slot: slot_number
-    ; q: slot_number Core_kernel.Heap.t
-    ; m: Lwt_mutex.t
-    ; c: unit Lwt_condition.t
-    ; ongoing: int }
+  type t = {mutable high_slot: slot_number; q: slot_number Core_kernel.Heap.t}
 
-  let create () =
-    { m= Lwt_mutex.create ()
-    ; c= Lwt_condition.create ()
-    ; q= Heap.create ~cmp:Int.compare ()
-    ; high_slot= 0
-    ; ongoing= 0 }
+  let create () = {q= Heap.create ~cmp:Int.compare (); high_slot= 0}
 
-  let add e t =
-    Heap.add t.q e ;
-    Lwt_condition.signal t.c ()
+  let add e t = Heap.add t.q e
 
   let take t =
-    let* () = Lwt_mutex.lock t.m in
-    let* () =
-      if Heap.is_empty t.q then Lwt_condition.wait ~mutex:t.m t.c
-      else Lwt.return_unit
-    in
-    let e = Lwt.return (Heap.pop_exn t.q) in
-    Lwt_mutex.unlock t.m ; e
+    match Heap.is_empty t.q with
+    | false ->
+        Heap.pop_exn t.q
+    | true ->
+        let slot = t.high_slot in
+        t.high_slot <- t.high_slot + 1 ;
+        slot
 end
 
 (* TODO move create_socket out of critical path? *)
 let connect uri =
   (* TODO change out from TCP? *)
   let sock = Lwt_unix.socket Lwt_unix.PF_INET Lwt_unix.SOCK_STREAM 0 in
-  let* () = Lwt_unix.connect sock uri in
+  let%lwt () = Lwt_unix.connect sock uri in
   Lwt.return
     ( Lwt_io.of_fd ~mode:Lwt_io.Input sock
     , Lwt_io.of_fd ~mode:Lwt_io.Output sock )
 
 let unix_error_handler (e, f, p) tag =
-  let* () =
+  let%lwt () =
     Logs_lwt.debug (fun m ->
         m "%s: failed to communicate with %s calling %s with parameter %s" tag
           (Unix.error_message e) f p)
@@ -99,18 +83,18 @@ let unix_error_handler (e, f, p) tag =
 let comm uri msg =
   try%lwt
     Logs.debug (fun m -> m "comm: connect") ;
-    let* ic, oc = connect uri in
+    let%lwt ic, oc = connect uri in
     Logs.debug (fun m -> m "comm: send") ;
-    let* () = Bytes.to_string msg |> Lwt_io.write_value oc in
+    let%lwt () = Bytes.to_string msg |> Lwt_io.write_value oc in
     Logs.debug (fun m -> m "comm: waiting resp") ;
-    let* bytes = Lwt_io.read_value ic in
+    let%lwt bytes = Lwt_io.read_value ic in
     Logs.debug (fun m -> m "comm: got resp") ;
     Lwt.return bytes
   with Unix.Unix_error (e, f, p) -> unix_error_handler (e, f, p) "comm"
 
 let send uri msg =
   try%lwt
-    let* _, oc = connect uri in
+    let%lwt _, oc = connect uri in
     Lwt_io.write_value oc msg
   with Unix.Unix_error (e, f, p) -> unix_error_handler (e, f, p) "send"
 
@@ -142,20 +126,20 @@ module Semaphore = struct
     @@
     let m_count = Lwt_mutex.create () in
     let m_queue = Lwt_mutex.create () in
-    let* () = Lwt_mutex.lock m_queue in
+    let%lwt () = Lwt_mutex.lock m_queue in
     Lwt.return {n; m_count; m_queue}
 
   let wait t =
-    let* () = Lwt_mutex.lock t.m_count in
+    let%lwt () = Lwt_mutex.lock t.m_count in
     t.n <- t.n - 1 ;
-    let* () =
+    let%lwt () =
       if t.n < 0 then (Lwt_mutex.unlock t.m_count ; Lwt_mutex.lock t.m_queue)
       else Lwt.return_unit
     in
     Lwt.return @@ Lwt_mutex.unlock t.m_count
 
   let signal t =
-    let* () = Lwt_mutex.lock t.m_count in
+    let%lwt () = Lwt_mutex.lock t.m_count in
     t.n <- t.n + 1 ;
     if t.n <= 0 then Lwt_mutex.unlock t.m_queue |> Lwt.return
     else Lwt_mutex.unlock t.m_count |> Lwt.return

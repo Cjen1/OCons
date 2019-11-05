@@ -6,7 +6,7 @@ let server = Logs.Src.create "Server" ~doc:"Server module"
 module Log = (val Logs_lwt.src_log server : Logs_lwt.LOG)
 
 let handle_connection (sock, sockaddr) t connected_callback () =
-     let* () =
+     let%lwt () =
         Log.debug (fun m ->
             m "handle_conn: Connection initialised from %s"
               (string_of_sockaddr sockaddr))
@@ -27,14 +27,14 @@ let handle_connection (sock, sockaddr) t connected_callback () =
       Log.debug (fun m -> m "handle_conn: connection closed while writing") )
     [%lwt.finally
       let open Lwt_unix in
-      let* () = flush oc in
+      let%lwt () = flush oc in
       let () = shutdown sock SHUTDOWN_ALL in
-      let* () = close sock in
+      let%lwt () = close sock in
       Log.debug (fun m -> m "Connection finished")]
 
 let create_server sock t connected_callback =
   let rec serve () =
-    let* conn = Lwt_unix.accept sock in
+    let%lwt conn = Lwt_unix.accept sock in
     Lwt.async (handle_connection conn t connected_callback) ;
     serve ()
   in
@@ -45,11 +45,11 @@ let create_bind_socket listen_address port =
   let sock = socket PF_INET SOCK_STREAM 0 in
   try
     setsockopt sock SO_REUSEADDR true ;
-    let* () = bind sock @@ ADDR_INET (listen_address, port) in
+    let%lwt () = bind sock @@ ADDR_INET (listen_address, port) in
     let max_pending = 20 in
     listen sock max_pending ; Lwt.return sock
   with z ->
-    let* () = close sock in
+    let%lwt () = close sock in
     raise z
 
 let start :
@@ -59,5 +59,5 @@ let start :
     -> ((unit -> string Lwt.t) * (string -> unit Lwt.t) -> 'a -> unit Lwt.t)
     -> unit Lwt.t =
  fun listen_address port t connected_callback ->
-  let* sock = create_bind_socket listen_address port in
+  let%lwt sock = create_bind_socket listen_address port in
   create_server sock t connected_callback
