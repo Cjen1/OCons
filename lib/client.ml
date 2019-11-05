@@ -1,17 +1,26 @@
 open Base
 
-type t = {context: Zmq.Context.t; socket: [`Req] Zmq_lwt.Socket.t}
+type t = {cid: string; context: Zmq.Context.t; pub_socket: [`Pub] Zmq_lwt.Socket.t; sub_socket: [`Sub] Zmq_lwt.Socket.t}
 
-let new_client endpoints =
+let new_client ~sub_endpoints ~pub_endpoints =
+  let cid = Types.create_id () in
   let context = Zmq.Context.create () in
-  let socket = Zmq.Socket.create context Zmq.Socket.req in
+  let pub_socket = Zmq.Socket.create context Zmq.Socket.pub in
+  let sub_socket = Zmq.Socket.create context Zmq.Socket.sub in
   let () =
-    List.iter endpoints ~f:(fun endpoint ->
+    List.iter sub_endpoints ~f:(fun endpoint ->
         let addr = "tcp://" ^ endpoint in
-        Zmq.Socket.connect socket addr)
+        Zmq.Socket.connect sub_socket addr)
   in
-  let socket = Zmq_lwt.Socket.of_socket socket in
-  {context; socket}
+  let () =
+    List.iter pub_endpoints ~f:(fun endpoint ->
+        let addr = "tcp://" ^ endpoint in
+        Zmq.Socket.connect pub_socket addr)
+  in
+  Zmq.Socket.subscribe sub_socket cid;
+  let pub_socket = Zmq_lwt.Socket.of_socket pub_socket in
+  let sub_socket = Zmq_lwt.Socket.of_socket sub_socket in
+  {cid;context; pub_socket; sub_socket}
 
 let serialise_request op =
   let cid = Types.create_id () in
@@ -20,7 +29,7 @@ let serialise_request op =
   |> Protobuf.Encoder.encode_exn Messaging.client_request_to_protobuf
   |> Bytes.to_string
 
-let deserialise_response response =
+let deserialise_response response : State_machine.StateMachine.op_result =
   ( response |> Bytes.of_string
   |> Protobuf.Decoder.decode_exn Messaging.client_response_from_protobuf )
     .result
@@ -31,23 +40,19 @@ let print_endline = Stdio.print_endline
 
 let send t op =
   let msg = serialise_request op in
-  let p =
-    let rec loop () =
-      try
-        print_endline "Trying to connect" ;
-        let%lwt () = Zmq_lwt.Socket.send t.socket msg in
-        let%lwt resp = Zmq_lwt.Socket.recv t.socket in
-        match deserialise_response resp with
-        | Some v ->
-            Lwt.return v
-        | None ->
-          let%lwt () = Lwt_unix.sleep 0.01 in
-            loop ()
-      with Zmq.ZMQ_exception (_, s) -> print_endline s ; loop ()
-    in
-    loop ()
-  in
-  p
+  let finished, fulfiller = Lwt.task() in
+  let%lwt resp = Msg_layer.retry ~finished ~timeout:10. (fun () -> 
+      print_endline "Trying to connect" ;
+      Lwt.async (fun () -> 
+          try
+            let%lwt () = Zmq_lwt.Socket.send_all t.pub_socket [t.cid; msg] in
+            let%lwt resp = Zmq_lwt.Socket.recv t.sub_socket in
+            Lwt.wakeup fulfiller resp;
+            Lwt.return_unit
+          with Zmq.ZMQ_exception (_, s) -> (print_endline s; Lwt.return_unit)
+        )
+    )
+  in Lwt.return @@ deserialise_response resp
 
 let op_read_lwt t k =
   let op = StateMachine.Read k in

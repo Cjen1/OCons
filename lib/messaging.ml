@@ -31,5 +31,5 @@ type decision_response =
   {slot: Types.slot_number [@key 1]; command: StateMachine.command [@key 2]}
 [@@deriving protobuf]
 
-type client_response = {result: StateMachine.op_result option [@key 1]}
+type client_response = {result: StateMachine.op_result [@key 1]}
 [@@deriving protobuf]
