@@ -11,5 +11,5 @@
  (public_name ocaml-paxos-client)
  (libraries lib core lwt uri lwt_ppx)
  (preprocess
-  (pps ppx_jane))
+  (pps lwt_ppx ppx_jane))
  (modules client))

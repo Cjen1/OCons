@@ -5,7 +5,8 @@ let msg_layer = Logs.Src.create "Msg_layer" ~doc:"messaging layer"
 module MLog = (val Logs.src_log msg_layer : Logs.LOG)
 
 type t =
-  { nodes: string list ; local_location: string
+  { nodes: string list
+  ; local_location: string
   ; last_rec: (string, float) Base.Hashtbl.t
   ; alive_timeout: float
   ; context: Zmq.Context.t
@@ -30,8 +31,8 @@ let run t () =
   let rec loop () =
     let%lwt filter = Socket.recv sock in
     let%lwt node_name = Socket.recv sock in
-    Base.Hashtbl.set t.last_rec ~key:node_name ~data:(Unix.time ()) ;
     let%lwt msg = Socket.recv sock in
+    Base.Hashtbl.set t.last_rec ~key:node_name ~data:(Unix.time ()) ;
     let%lwt () =
       (* Cannot throw error since if subscribed then it exists *)
       Base.Hashtbl.find_exn t.subs filter
@@ -61,7 +62,7 @@ let retry ?(tag = "") ~finished ~timeout f =
     in
     f () ;
     let%lwt res =
-      Lwt.pick
+      Lwt.choose
         [ (let%lwt res = finished in
            Lwt.return_some res)
         ; tmout ]
@@ -99,15 +100,17 @@ let node_dead_watch t ~node ~callback =
   >>= fun _ ->
   let p () =
     let rec loop () =
+      let timeout_time = Hashtbl.find_exn t.last_rec node +. t.alive_timeout in
+      let current_time = Unix.time() in
       match
-        t.alive_timeout +. Hashtbl.find_exn t.last_rec node -. Unix.time ()
+        Float.(timeout_time > current_time)
       with
-      | n when Float.( > ) n 0. ->
-          let%lwt () = Lwt_unix.sleep n in
+      | true ->
+          let%lwt () = Lwt_unix.sleep (timeout_time -. current_time) in
           loop ()
       | _ ->
           MLog.debug (fun m ->
-              m "Node: %s timed out, calling leader election" node) ;
+              m "Node: %s timed out, executing callback" node) ;
           callback ()
     in
     loop ()
@@ -115,37 +118,44 @@ let node_dead_watch t ~node ~callback =
   MLog.debug (fun m -> m "Attached dead_node watch to %s" node) ;
   Ok (Lwt.async p)
 
-let one_use_socket ~callback ~address_sub ~address_pub t =
+let client_socket ~callback ~address_req ~address_rep t =
   let sub_socket = Zmq.Socket.create t.context Zmq.Socket.sub in
-  let pub_socket = Zmq.Socket.create t.context Zmq.Socket.pub in
-  let () = Zmq.Socket.bind pub_socket ("tcp://" ^ address_pub) in
-  let () = Zmq.Socket.bind sub_socket ("tcp://" ^ address_sub) in
-  Zmq.Socket.subscribe sub_socket "*";
+  let router_socket = Zmq.Socket.create t.context Zmq.Socket.router in
+  let () = Zmq.Socket.bind sub_socket ("tcp://" ^ address_req) in
+  let () = Zmq.Socket.bind router_socket ("tcp://" ^ address_rep) in
+  Zmq.Socket.subscribe sub_socket "" ;
   let sub_socket = Zmq_lwt.Socket.of_socket sub_socket in
-  let pub_socket = Zmq_lwt.Socket.of_socket pub_socket in
+  let router_socket = Zmq_lwt.Socket.of_socket router_socket in
   let open Zmq_lwt in
   let rec loop () =
-    MLog.debug (fun m -> m "one_use_socket: awaiting conn on %s" address_sub) ;
-    let%lwt addr, msg = 
+    MLog.debug (fun m -> m "one_use_socket: awaiting conn on %s" address_req) ;
+    let%lwt addr, rid, msg =
       let%lwt resp = Socket.recv_all sub_socket in
       match resp with
-      | [addr; msg] -> Lwt.return @@ (addr,msg)
-      | _ -> assert false
-    in 
+      | [addr; rid; msg] ->
+          Lwt.return @@ (addr, rid, msg)
+      | _ ->
+          assert false
+    in
     MLog.debug (fun m -> m "one_use_socket: got req from %s" addr) ;
-    let%lwt () = callback msg (fun msg -> Socket.send_all pub_socket [addr;msg]) in
+    Lwt.async (fun () ->
+        callback msg (fun msg ->
+            MLog.debug (fun m -> m "client_socket: sending [%s;%s]" addr rid) ;
+            Socket.send_all router_socket  [addr; rid; msg])) ;
     loop ()
   in
   loop ()
 
-let keep_alive t = 
-  let () = attach_watch t ~filter:"keepalive" ~callback:(fun _ -> Lwt.return_unit) in
-  let rec loop () = 
-    Lwt.async(fun () -> send_msg t ~filter:"keepalive" "");
+let keep_alive t =
+  let () =
+    attach_watch t ~filter:"keepalive" ~callback:(fun _ -> Lwt.return_unit)
+  in
+  let rec loop () =
+    Lwt.async (fun () -> send_msg t ~filter:"keepalive" "") ;
     let%lwt () = Lwt_unix.sleep (t.alive_timeout /. 2.) in
     loop ()
-  in loop ()
-
+  in
+  loop ()
 
 let create ~node_list ~local ~alive_timeout =
   let ctx = Zmq.Context.create () in
@@ -161,4 +171,3 @@ let create ~node_list ~local ~alive_timeout =
     ; subs= Hashtbl.create (module String) }
   in
   (t, Lwt.join [run t (); keep_alive t])
-

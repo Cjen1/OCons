@@ -33,13 +33,15 @@ type t =
   ; in_flight: (int, in_flight) Hashtbl.t
   ; awaiting_sm: (int, StateMachine.op_result Lwt.u) Hashtbl.t
   ; decided_log: (int, StateMachine.command) Hashtbl.t
+  ; decided_commands: (StateMachine.command, StateMachine.op_result) Hashtbl.t
   ; slot_queue: Utils.PQueue.t
   ; slot_committed: unit Lwt_condition.t
   ; state: StateMachine.t
   ; mutable highest_undecided_slot: int
   ; timeout: float
   ; mutable preemption_timeout: float
-  ; preemption_coefficient: float }
+  ; preemption_coefficient: float 
+  ; preemption_decrease_constant: float}
 
 let p1a (t : t) () =
   LLog.debug (fun m -> m "Sending p1a msgs") ;
@@ -81,7 +83,7 @@ let p1b_callback t msg =
             @@ Ballot.to_string ballot) ;
         t.leader_state <- Leader {ballot} ;
         Lwt.wakeup_later fulfiller () ;
-        t.preemption_timeout <- t.timeout )
+        t.preemption_timeout <-  t.preemption_timeout -. t.preemption_decrease_constant )
   | _ ->
       () ) ;
   Lwt.return_unit
@@ -95,7 +97,9 @@ let preempt_p1 t incomming_ballot =
       t.leader_state <- Not_Leader {ballot= incomming_ballot} ;
       Lwt.wakeup_later fulfiller () ;
       t.preemption_timeout <- t.preemption_timeout *. t.preemption_coefficient ;
-      LLog.debug (fun m -> m "Leader duel in progress, sending p1a") ;
+      LLog.debug (fun m ->
+          m "Leader duel in progress, sending p1a, preemption_timeout=%f"
+            t.preemption_timeout) ;
       Lwt.async (p1a t)
   | Leader {ballot} when Ballot.greater_than incomming_ballot ballot -> (
       (*Preempted thus wait for new leader to die then p1a *)
@@ -187,10 +191,16 @@ let broadcast_decision t pval =
   Msg_layer.send_msg t.msg_layer ~filter:"decision" decision_response
 
 let update_state t slot command =
-  LLog.debug (fun m -> m "Updating state for slot: %d" slot) ;
   Hashtbl.remove t.in_flight slot ;
   Hashtbl.set t.decided_log ~key:slot ~data:command ;
   Lwt_condition.broadcast t.slot_committed ()
+
+(* Notify state advancer to attempt to increment state *)
+
+let decide t pval fulfiller =
+  update_state t (Pval.get_slot pval) (Pval.get_cmd pval) ;
+  Lwt.wakeup_later fulfiller () ;
+  broadcast_decision t pval
 
 let p2b_callback t msg =
   LLog.debug (fun m ->
@@ -201,36 +211,12 @@ let p2b_callback t msg =
   ( match Hashtbl.find t.in_flight (Pval.get_slot p2b.pval) with
   | Some {quorum; pval; fulfiller; _} when Pval.equal pval p2b.pval ->
       quorum.add p2b.id ;
-      if quorum.sufficient () then (
-        update_state t (Pval.get_slot p2b.pval) (Pval.get_cmd p2b.pval) ;
-        Lwt.wakeup_later fulfiller () ;
-        broadcast_decision t p2b.pval )
+      if quorum.sufficient () then decide t p2b.pval fulfiller
   | Some {pval; _} when not (Pval.equal pval p2b.pval) ->
       assert false
   | _ ->
       () ) ;
   Lwt.return_unit
-
-let client t msg writer =
-  LLog.debug (fun m ->
-      m "%s: Got client request" @@ string_of_leader_state t.leader_state) ;
-  let client_request =
-    msg |> Bytes.of_string
-    |> Protobuf.Decoder.decode_exn client_request_from_protobuf
-  in
-  match t.leader_state with
-  | Leader {ballot} ->
-      let slot = Utils.PQueue.take t.slot_queue in
-      let%lwt result = p2a t (ballot, slot, client_request.command) () in
-      let client_response =
-        {result= result}
-        |> Protobuf.Encoder.encode_exn client_response_to_protobuf
-        |> Bytes.to_string
-      in
-      Lwt.async(fun () -> writer client_response);
-      Lwt.return_unit
-  | _ ->
-    Lwt.return_unit
 
 let decision_callback t msg =
   LLog.debug (fun m -> m "Got a decision") ;
@@ -246,10 +232,12 @@ let state_advancer t () =
     let%lwt () = Lwt_condition.wait t.slot_committed in
     let rec inner_loop () =
       LLog.debug (fun m -> m "Attempting to advance state") ;
-      let slot = t.highest_undecided_slot in
-      match Hashtbl.find t.decided_log slot with
+      match Hashtbl.find t.decided_log t.highest_undecided_slot with
       | Some command ->
-          LLog.debug (fun m -> m "Advancing state for slot %d" slot) ;
+          LLog.debug (fun m ->
+              m "Advancing state from %d to %d" t.highest_undecided_slot
+                (t.highest_undecided_slot + 1)) ;
+          let slot = t.highest_undecided_slot in
           t.highest_undecided_slot <- slot + 1 ;
           let res = StateMachine.update t.state command in
           ( match Hashtbl.find t.awaiting_sm slot with
@@ -258,6 +246,7 @@ let state_advancer t () =
               Hashtbl.remove t.awaiting_sm slot
           | None ->
               () ) ;
+          Hashtbl.set t.decided_commands ~key:command ~data:res ;
           inner_loop ()
       | None ->
           Lwt.return_unit
@@ -328,10 +317,46 @@ let preempt_nack_p2 t msg =
   preempt_p2 t incomming_ballot ballot ;
   Lwt.return_unit
 
-let create msg_layer local nodes ~cpub_address ~csub_address =
+let client t msg writer =
+  LLog.debug (fun m ->
+      m "%s: Got client request" @@ string_of_leader_state t.leader_state) ;
+  let client_request =
+    msg |> Bytes.of_string
+    |> Protobuf.Decoder.decode_exn client_request_from_protobuf
+  in
+  match
+    (t.leader_state, Hashtbl.find t.decided_commands client_request.command)
+  with
+  | _, Some result ->
+      let client_response =
+        {result}
+        |> Protobuf.Encoder.encode_exn client_response_to_protobuf
+        |> Bytes.to_string
+      in
+      Lwt.async (fun () ->
+          LLog.debug (fun m -> m "Already decided client_command %s" (client_request.command |> StateMachine.sexp_of_command |> Sexp.to_string )) ;
+          writer client_response);
+      Lwt.return_unit
+  | Leader {ballot}, None ->
+      let slot = Utils.PQueue.take t.slot_queue in
+      let%lwt result = p2a t (ballot, slot, client_request.command) () in
+      let client_response =
+        {result}
+        |> Protobuf.Encoder.encode_exn client_response_to_protobuf
+        |> Bytes.to_string
+      in
+      Lwt.async (fun () ->
+          LLog.debug (fun m -> m "Sending client response for slot:%d" slot) ;
+          writer client_response) ;
+      Lwt.return_unit
+  | _ ->
+      Lwt.return_unit
+
+let create msg_layer local nodes ~address_req ~address_rep =
   let quorum_p1, quorum_p2 = Quorum.majority nodes in
   let leader_state = Not_Leader {ballot= Ballot.init local} in
-  let timeout = 3. in
+  Random.self_init () ;
+  let timeout = 20. in
   let t =
     { id= local
     ; leader_state
@@ -342,13 +367,15 @@ let create msg_layer local nodes ~cpub_address ~csub_address =
     ; in_flight= Hashtbl.create (module Int)
     ; awaiting_sm= Hashtbl.create (module Int)
     ; decided_log= Hashtbl.create (module Int)
+    ; decided_commands= Hashtbl.Poly.create ()
     ; slot_queue= Utils.PQueue.create ()
     ; slot_committed= Lwt_condition.create ()
     ; state= StateMachine.create ()
     ; highest_undecided_slot= 0
     ; timeout
     ; preemption_timeout= timeout
-    ; preemption_coefficient= 1.5 }
+    ; preemption_coefficient= 2.
+    ; preemption_decrease_constant = timeout /. 2.}
   in
   Msg_layer.attach_watch t.msg_layer ~filter:"p1b" ~callback:(p1b_callback t) ;
   Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(p2b_callback t) ;
@@ -366,12 +393,12 @@ let create msg_layer local nodes ~cpub_address ~csub_address =
     ~callback:(preempt_nack_p2 t) ;
   let sp = state_advancer t () in
   let p =
-    Msg_layer.one_use_socket ~callback:(client t) ~address_pub:cpub_address ~address_sub:csub_address
+    Msg_layer.client_socket ~callback:(client t) ~address_req ~address_rep
       msg_layer
   in
   (t, Lwt.join [p; sp; p1a t ()])
 
-let create_independent local nodes ~cpub_address ~csub_address alive_timeout =
+let create_independent local nodes ~address_req ~address_rep alive_timeout =
   let msg, psml = Msg_layer.create ~node_list:nodes ~local ~alive_timeout in
-  let t, psa = create msg local nodes ~cpub_address ~csub_address in
+  let t, psa = create msg local nodes ~address_req ~address_rep in
   (t, Lwt.join [psml; psa])

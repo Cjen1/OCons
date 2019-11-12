@@ -26,13 +26,10 @@ val create :
   -> alive_timeout:float
   -> t * unit Lwt.t
 
-val one_use_socket :
-  callback:(string -> string Lwt.t) -> address:string -> t -> unit Lwt.t
-
-val one_use_socket :
+val client_socket :
      callback:(string -> (string -> unit Lwt.t) -> unit Lwt.t)
-  -> address_sub:string
-  -> address_pub:string
+  -> address_req:string
+  -> address_rep:string
   -> t
   -> 'a Lwt.t
 

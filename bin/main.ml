@@ -4,11 +4,11 @@ let command =
   Core.Command.basic ~summary:"Ocaml_paxos"
     Core.Command.Let_syntax.(
       let%map_open system_port = anon ("system_port" %: int)
+      and client_rep_port = anon ("client_rep_port" %: int)
+      and client_req_port = anon ("client_req_port" %: int)
       and wal_loc = anon ("Log_location" %: string)
       and local_address = anon ("Local_address" %: string)
       and endpoints = anon ("endpoints" %: string)
-      and client_pub_port = anon ("client_pub_port" %: int)
-      and client_sub_port = anon ("client_sub_port" %: int)
       and alive_timeout = anon ("alive_timeout" %: float) in
       fun () ->
         let p =
@@ -16,13 +16,13 @@ let command =
           Lwt.wakeup_later r () ;
           let%lwt () = p in
           let local = local_address ^ ":" ^ Int.to_string system_port in
-          let client_pub = local_address ^ ":" ^ Int.to_string client_pub_port in
-          let client_sub = local_address ^ ":" ^ Int.to_string client_sub_port in
+          let client_rep = local_address ^ ":" ^ Int.to_string client_rep_port in
+          let client_req = local_address ^ ":" ^ Int.to_string client_req_port in
           let endpoints = endpoints |> Base.String.split ~on:',' in
           let msg_layer,psml =
             Msg_layer.create ~node_list:endpoints ~local ~alive_timeout
           in
-          let _,psl = Leader.create msg_layer local endpoints ~cpub_address:client_pub ~csub_address:client_sub in
+          let _,psl = Leader.create msg_layer local endpoints ~address_rep:client_rep ~address_req:client_req in
           let _,psa = Acceptor.create wal_loc msg_layer local in
           Lwt.join [psl; psa; psml]
         in
