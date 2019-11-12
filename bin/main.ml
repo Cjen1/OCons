@@ -1,4 +1,5 @@
 open Lib
+open Core 
 
 let command =
   Core.Command.basic ~summary:"Ocaml_paxos"
@@ -35,7 +36,8 @@ let reporter =
     msgf
     @@ fun ?header ?tags:_ fmt ->
     Fmt.kpf k Fmt.stdout
-      ("%a %a @[" ^^ fmt ^^ "@]@.")
+      ("[%a] %a %a @[" ^^ fmt ^^ "@]@.")
+      Time.pp (Time.now ())
       Fmt.(styled `Magenta string)
       (Printf.sprintf "%14s" src)
       Logs_fmt.pp_header (level, header)

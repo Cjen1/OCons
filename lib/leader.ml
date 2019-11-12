@@ -40,8 +40,8 @@ type t =
   ; mutable highest_undecided_slot: int
   ; timeout: float
   ; mutable preemption_timeout: float
-  ; preemption_coefficient: float 
-  ; preemption_decrease_constant: float}
+  ; preemption_coefficient: float
+  ; preemption_decrease_constant: float }
 
 let p1a (t : t) () =
   LLog.debug (fun m -> m "Sending p1a msgs") ;
@@ -83,13 +83,15 @@ let p1b_callback t msg =
             @@ Ballot.to_string ballot) ;
         t.leader_state <- Leader {ballot} ;
         Lwt.wakeup_later fulfiller () ;
-        t.preemption_timeout <-  t.preemption_timeout -. t.preemption_decrease_constant )
+        t.preemption_timeout <-
+          t.preemption_timeout -. t.preemption_decrease_constant )
   | _ ->
       () ) ;
   Lwt.return_unit
 
 let preempt_p1 t incomming_ballot =
   let ( >= ) a b = not @@ Ballot.less_than a b in
+  let ( > ) a b = Ballot.greater_than a b in
   ( match t.leader_state with
   | Deciding {ballot; fulfiller; _}
     when incomming_ballot >= ballot
@@ -101,7 +103,7 @@ let preempt_p1 t incomming_ballot =
           m "Leader duel in progress, sending p1a, preemption_timeout=%f"
             t.preemption_timeout) ;
       Lwt.async (p1a t)
-  | Leader {ballot} when Ballot.greater_than incomming_ballot ballot -> (
+  | Leader {ballot} when incomming_ballot > ballot -> (
       (*Preempted thus wait for new leader to die then p1a *)
       t.leader_state <- Not_Leader {ballot= incomming_ballot} ;
       LLog.debug (fun m -> m "Got preempted, setting p1a") ;
@@ -120,11 +122,13 @@ let preempt_p1 t incomming_ballot =
       () ) ;
   Lwt.return_unit
 
+(*
 let p1a_preempted_callback t msg =
   let p1a =
     Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1a_from_protobuf
   in
   preempt_p1 t p1a.ballot
+   *)
 
 let p1b_preempted_callback t msg =
   let p1b =
@@ -203,11 +207,13 @@ let decide t pval fulfiller =
   broadcast_decision t pval
 
 let p2b_callback t msg =
-  LLog.debug (fun m ->
-      m "%s: Got p1b " (string_of_leader_state t.leader_state)) ;
   let p2b =
     Bytes.of_string msg |> Protobuf.Decoder.decode_exn p2b_from_protobuf
   in
+  LLog.debug (fun m ->
+      m "%s: Got p2b %s "
+        (string_of_leader_state t.leader_state)
+        (Ballot.to_string p2b.ballot)) ;
   ( match Hashtbl.find t.in_flight (Pval.get_slot p2b.pval) with
   | Some {quorum; pval; fulfiller; _} when Pval.equal pval p2b.pval ->
       quorum.add p2b.id ;
@@ -256,8 +262,14 @@ let state_advancer t () =
   in
   loop ()
 
-let preempt_p2 t incomming_ballot ballot =
-  if Ballot.greater_than incomming_ballot ballot then (
+let get_ballot t =
+  match t.leader_state with
+  | Leader {ballot} | Not_Leader {ballot; _} | Deciding {ballot; _} ->
+      ballot
+
+let preempt_p2 t incomming_ballot =
+  let ballot = get_ballot t in
+  if Ballot.Infix.(incomming_ballot > ballot) then (
     ( match t.leader_state with
     | Deciding {fulfiller; _} ->
         Lwt.wakeup_later fulfiller ()
@@ -278,11 +290,6 @@ let preempt_p2 t incomming_ballot ballot =
     | Error `NodeNotFound ->
         assert false )
 
-let get_ballot t =
-  match t.leader_state with
-  | Leader {ballot} | Not_Leader {ballot; _} | Deciding {ballot; _} ->
-      ballot
-
 let preempt_p2a t msg =
   let incomming_ballot =
     let p2a =
@@ -290,8 +297,7 @@ let preempt_p2a t msg =
     in
     p2a.pval |> Pval.get_ballot
   in
-  let ballot = get_ballot t in
-  preempt_p2 t incomming_ballot ballot ;
+  preempt_p2 t incomming_ballot ;
   Lwt.return_unit
 
 let preempt_p2b t msg =
@@ -301,8 +307,7 @@ let preempt_p2b t msg =
     in
     p2b.ballot
   in
-  let ballot = get_ballot t in
-  preempt_p2 t incomming_ballot ballot ;
+  preempt_p2 t incomming_ballot ;
   Lwt.return_unit
 
 let preempt_nack_p2 t msg =
@@ -313,8 +318,7 @@ let preempt_nack_p2 t msg =
     in
     nack.ballot
   in
-  let ballot = get_ballot t in
-  preempt_p2 t incomming_ballot ballot ;
+  preempt_p2 t incomming_ballot ;
   Lwt.return_unit
 
 let client t msg writer =
@@ -334,8 +338,11 @@ let client t msg writer =
         |> Bytes.to_string
       in
       Lwt.async (fun () ->
-          LLog.debug (fun m -> m "Already decided client_command %s" (client_request.command |> StateMachine.sexp_of_command |> Sexp.to_string )) ;
-          writer client_response);
+          LLog.debug (fun m ->
+              m "Already decided client_command %s"
+                ( client_request.command |> StateMachine.sexp_of_command
+                |> Sexp.to_string )) ;
+          writer client_response) ;
       Lwt.return_unit
   | Leader {ballot}, None ->
       let slot = Utils.PQueue.take t.slot_queue in
@@ -375,14 +382,16 @@ let create msg_layer local nodes ~address_req ~address_rep =
     ; timeout
     ; preemption_timeout= timeout
     ; preemption_coefficient= 2.
-    ; preemption_decrease_constant = timeout /. 2.}
+    ; preemption_decrease_constant= timeout /. 2. }
   in
   Msg_layer.attach_watch t.msg_layer ~filter:"p1b" ~callback:(p1b_callback t) ;
   Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(p2b_callback t) ;
   Msg_layer.attach_watch t.msg_layer ~filter:"decision"
     ~callback:(decision_callback t) ;
+  (*
   Msg_layer.attach_watch t.msg_layer ~filter:"p1a"
     ~callback:(p1a_preempted_callback t) ;
+     *)
   Msg_layer.attach_watch t.msg_layer ~filter:"p1b"
     ~callback:(p1b_preempted_callback t) ;
   Msg_layer.attach_watch t.msg_layer ~filter:"nack_p1"
@@ -391,12 +400,30 @@ let create msg_layer local nodes ~address_req ~address_rep =
   Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(preempt_p2b t) ;
   Msg_layer.attach_watch t.msg_layer ~filter:"nack_p2"
     ~callback:(preempt_nack_p2 t) ;
-  let sp = state_advancer t () in
-  let p =
+  let c =
     Msg_layer.client_socket ~callback:(client t) ~address_req ~address_rep
       msg_layer
   in
-  (t, Lwt.join [p; sp; p1a t ()])
+  let sp = state_advancer t () in
+  let p_p1a =
+    let s_nodes = List.sort nodes ~compare:String.compare in
+    match s_nodes with
+    | l :: _ when String.equal l local ->
+        LLog.debug (fun m -> m "Primary -> attempting p1a") ;
+        p1a t ()
+    | l :: _ -> (
+        LLog.debug (fun m -> m "Not primary -> assigning death watch") ;
+        match
+          Msg_layer.node_dead_watch t.msg_layer ~node:l ~callback:(p1a t)
+        with
+        | Ok _ ->
+            Lwt.return_unit
+        | Error `NodeNotFound ->
+            assert false )
+    | _ ->
+        assert false
+  in
+  (t, Lwt.join [c; sp; p_p1a])
 
 let create_independent local nodes ~address_req ~address_rep alive_timeout =
   let msg, psml = Msg_layer.create ~node_list:nodes ~local ~alive_timeout in

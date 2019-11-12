@@ -1,6 +1,10 @@
 open Base
 open State_machine
 
+let client = Logs.Src.create "Client" ~doc:"Client module"
+
+module CLog = (val Logs.src_log client : Logs.LOG)
+
 type t =
   { cid: string
   ; context: Zmq.Context.t
@@ -21,20 +25,27 @@ let deserialise_response response : State_machine.StateMachine.op_result =
   |> Protobuf.Decoder.decode_exn Messaging.client_response_from_protobuf )
     .result
 
-let print_endline = Stdio.print_endline
+let rid = ref 0
 
 let send t op =
   let msg = serialise_request op in
   let finished, fulfiller = Lwt.task () in
-  let rid = Types.create_id () in
+  let rid =
+    rid := !rid + 1 ;
+    !rid
+  in
+  let rid = Printf.sprintf "%s_%i" t.cid rid in
   let () = Hashtbl.set t.in_flight ~key:rid ~data:fulfiller in
   let%lwt resp =
-    Msg_layer.retry ~finished ~timeout:5. (fun () ->
+    Msg_layer.retry ~finished ~timeout:2. (fun () ->
         Lwt.async (fun () ->
-            try Zmq_lwt.Socket.send_all t.pub_socket [t.cid; rid; msg]
+            try 
+              CLog.debug (fun m -> m "Attempting to send %s" rid);
+              Zmq_lwt.Socket.send_all t.pub_socket [t.cid; rid; msg]
             with Zmq.ZMQ_exception (_, s) ->
-              print_endline s ; Lwt.return_unit) ;
-        print_endline "Trying to connect")
+              CLog.err (fun m -> m "%s" s) ;
+              Lwt.return_unit) ;
+        CLog.debug (fun m -> m "Trying to connect"))
   in
   Lwt.return @@ deserialise_response resp
 
@@ -47,27 +58,28 @@ let op_write t k v =
   send t op
 
 let recv_loop t =
-  print_endline "Recv_loop: spooling up" ;
+  CLog.debug (fun m -> m "Recv_loop: spooling up") ;
   let open Zmq_lwt in
   let rec recv_loop () =
     let%lwt rid, msg =
-      print_endline "Recv_loop: awaiting msg" ;
+      CLog.debug (fun m -> m "Recv_loop: awaiting msg") ;
       let%lwt resp = Socket.recv_all t.deal_socket in
       match resp with
       | [rid; msg] ->
-          print_endline "received msg" ;
+          CLog.debug (fun m -> m "Recv_loop: receiving msg %s" rid) ;
           Lwt.return @@ (rid, msg)
       | _ ->
-          print_endline "Not right msg format" ;
+          CLog.debug (fun m -> m "Recv_loop: Incorrect msg format") ;
           assert false
     in
     ( match Hashtbl.find t.in_flight rid with
     | Some fulfiller ->
         Lwt.wakeup_later fulfiller msg ;
-        Hashtbl.remove t.in_flight rid;
+        Hashtbl.remove t.in_flight rid ;
         Hash_set.add t.fulfilled rid
     | None ->
-      print_endline @@ Printf.sprintf "Already fulfilled = %b" (Hash_set.mem t.fulfilled rid);
+        CLog.debug (fun m ->
+            m "Already fulfilled = %b, %s" (Hash_set.mem t.fulfilled rid) rid) ;
         () ) ;
     recv_loop ()
   in

@@ -33,6 +33,10 @@ val to_string : t -> string
 
 module Infix : sig
   val ( < ) : t -> t -> bool
+  val ( <= ) : t -> t -> bool
+
+  val ( > ) : t -> t -> bool
+  val ( >= ) : t -> t -> bool
 
   val ( = ) : t -> t -> bool
 end

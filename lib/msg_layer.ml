@@ -37,7 +37,7 @@ let run t () =
       (* Cannot throw error since if subscribed then it exists *)
       Base.Hashtbl.find_exn t.subs filter
       |> Lwt_list.iter_p (fun f ->
-             MLog.debug (fun m -> m "Found a callback for filter %s" filter) ;
+             MLog.debug (fun m -> m "Found a callback for filter %s form %s" filter node_name) ;
              f msg)
     in
     loop ()
@@ -73,7 +73,7 @@ let retry ?(tag = "") ~finished ~timeout f =
     | None ->
         MLog.debug (fun m ->
             m "%s Request timed out retrying. t = %f" tag timeout) ;
-        loop (timeout *. 1.2)
+        loop (timeout *. 1.1)
   in
   loop timeout
 
@@ -170,4 +170,6 @@ let create ~node_list ~local ~alive_timeout =
     ; sub= create_sub_socket node_list ctx
     ; subs= Hashtbl.create (module String) }
   in
+  let curr_time = Unix.time() in
+  List.iter node_list ~f:(fun node -> Hashtbl.set t.last_rec ~key:node ~data:curr_time);
   (t, Lwt.join [run t (); keep_alive t])

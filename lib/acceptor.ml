@@ -36,10 +36,13 @@ let p1a_callback t msg =
     |> Bytes.to_string
     |> Msg_layer.send_msg t.msg_layer ~filter:"p1b" )
   else
+    Lwt.return_unit
+(*
     {ballot= t.ballot_num}
     |> Protobuf.Encoder.encode_exn nack_p1_to_protobuf
     |> Bytes.to_string
     |> Msg_layer.send_msg t.msg_layer ~filter:"nack_p1"
+   *)
 
 let p2a_callback t msg =
   ALog.debug (fun m -> m "Got p2a msg") ;
