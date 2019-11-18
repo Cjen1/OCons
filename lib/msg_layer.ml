@@ -26,19 +26,23 @@ let create_pub_socket local ctx =
   socket
 
 let run t () =
-  let open Zmq_lwt in
-  let sock = Socket.of_socket t.sub in
+  let sock = Zmq_lwt.Socket.of_socket t.sub in
   let rec loop () =
-    let%lwt filter = Socket.recv sock in
-    let%lwt node_name = Socket.recv sock in
-    let%lwt msg = Socket.recv sock in
+    let%lwt filter = Zmq_lwt.Socket.recv sock in
+    let%lwt node_name = Zmq_lwt.Socket.recv sock in
+    let%lwt msg = Zmq_lwt.Socket.recv sock in
     Base.Hashtbl.set t.last_rec ~key:node_name ~data:(Unix.time ()) ;
     let%lwt () =
-      (* Cannot throw error since if subscribed then it exists *)
-      Base.Hashtbl.find_exn t.subs filter
-      |> Lwt_list.iter_p (fun f ->
-             MLog.debug (fun m -> m "Found a callback for filter %s form %s" filter node_name) ;
-             f msg)
+      let call f msg =
+        MLog.debug (fun m ->
+            m "Found a callback for filter %s from %s" filter node_name) ;
+        f msg
+      in
+      match Base.Hashtbl.find t.subs filter with
+      | Some v ->
+          Lwt_list.iter_p (fun f -> call f msg) v
+      | None ->
+          Lwt.return_unit
     in
     loop ()
   in
@@ -82,7 +86,7 @@ let retry ?(tag = "") ~finished ~timeout f =
   loop timeout
 
 let send_msg t ?(timeout = 1.) ?(finished = Lwt.return_unit) ~filter msg =
-  let f () = Zmq.Socket.send_all t.pub [filter; t.local_location; msg] in
+  let f () = Lwt.async (fun () -> Zmq_lwt.Socket.send_all (Zmq_lwt.Socket.of_socket t.pub) [filter; t.local_location; msg]) in
   retry ~tag:filter ~finished ~timeout f
 
 let last_rec_lookup t node =
@@ -105,16 +109,15 @@ let node_dead_watch t ~node ~callback =
   let p () =
     let rec loop () =
       let timeout_time = Hashtbl.find_exn t.last_rec node +. t.alive_timeout in
-      let current_time = Unix.time() in
-      match
-        Float.(timeout_time > current_time)
-      with
+      let current_time = Unix.time () in
+      match Float.(timeout_time > current_time) with
       | true ->
           let%lwt () = Lwt_unix.sleep (timeout_time -. current_time) in
           loop ()
       | _ ->
           MLog.debug (fun m ->
-              m "Node: %s timed out, executing callback" node) ;
+              m "Node: %s timed out, last recv at %f, executing callback" node
+                current_time) ;
           callback ()
     in
     loop ()
@@ -130,11 +133,10 @@ let client_socket ~callback ~address_req ~address_rep t =
   Zmq.Socket.subscribe sub_socket "" ;
   let sub_socket = Zmq_lwt.Socket.of_socket sub_socket in
   let router_socket = Zmq_lwt.Socket.of_socket router_socket in
-  let open Zmq_lwt in
   let rec loop () =
     MLog.debug (fun m -> m "one_use_socket: awaiting conn on %s" address_req) ;
     let%lwt addr, rid, msg =
-      let%lwt resp = Socket.recv_all sub_socket in
+      let%lwt resp = Zmq_lwt.Socket.recv_all sub_socket in
       match resp with
       | [addr; rid; msg] ->
           Lwt.return @@ (addr, rid, msg)
@@ -145,15 +147,13 @@ let client_socket ~callback ~address_req ~address_rep t =
     Lwt.async (fun () ->
         callback msg (fun msg ->
             MLog.debug (fun m -> m "client_socket: sending [%s;%s]" addr rid) ;
-            Socket.send_all router_socket  [addr; rid; msg])) ;
+            Zmq_lwt.Socket.send_all router_socket [addr; rid; msg])) ;
     loop ()
   in
   loop ()
 
 let keep_alive t =
-  let () =
-    attach_watch_untyped t ~filter:"keepalive" ~callback:(fun _ -> Lwt.return_unit)
-  in
+  Zmq.Socket.subscribe t.sub "keepalive" ;
   let rec loop () =
     Lwt.async (fun () -> send_msg t ~filter:"keepalive" "") ;
     let%lwt () = Lwt_unix.sleep (t.alive_timeout /. 2.) in
@@ -174,6 +174,7 @@ let create ~node_list ~local ~alive_timeout =
     ; sub= create_sub_socket node_list ctx
     ; subs= Hashtbl.create (module String) }
   in
-  let curr_time = Unix.time() in
-  List.iter node_list ~f:(fun node -> Hashtbl.set t.last_rec ~key:node ~data:curr_time);
+  let curr_time = Unix.time () in
+  List.iter node_list ~f:(fun node ->
+      Hashtbl.set t.last_rec ~key:node ~data:curr_time) ;
   (t, Lwt.join [run t (); keep_alive t])
