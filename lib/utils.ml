@@ -157,13 +157,13 @@ module AIMDTimeout = struct
     ; ai: float
     ; md: float }
 
-  let ai = function
+  let increase = function
     | {state= SlowStart; _} as t ->
         t.timeout <- t.timeout *. t.slow_start
     | {state= Normal; _} as t ->
         t.timeout <- t.timeout +. t.ai
 
-  let md t =
+  let decrease t =
     (match t.state with SlowStart -> t.state <- Normal | Normal -> ()) ;
     t.timeout <- t.timeout /. t.md
 

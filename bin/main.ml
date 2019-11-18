@@ -36,8 +36,9 @@ let reporter =
     msgf
     @@ fun ?header ?tags:_ fmt ->
     Fmt.kpf k Fmt.stdout
-      ("[%a] %a %a @[" ^^ fmt ^^ "@]@.")
+      ("[%a || %f] %a %a @[" ^^ fmt ^^ "@]@.")
       Time.pp (Time.now ())
+      (Unix.time ())
       Fmt.(styled `Magenta string)
       (Printf.sprintf "%14s" src)
       Logs_fmt.pp_header (level, header)
