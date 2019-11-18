@@ -45,7 +45,7 @@ let run t () =
   MLog.debug (fun m -> m "Spooling up msg layer") ;
   loop ()
 
-let attach_watch t ~filter ~callback =
+let attach_watch_untyped t ~filter ~callback =
   Base.Hashtbl.change t.subs filter ~f:(function
     | Some ls ->
         Some (callback :: ls)
@@ -53,6 +53,10 @@ let attach_watch t ~filter ~callback =
         Some [callback]) ;
   Zmq.Socket.subscribe t.sub filter ;
   MLog.debug (fun m -> m "Attached watch to %s" filter)
+
+let attach_watch t ~filter ~callback ~typ =
+  let callback msg = msg |> Messaging.from_string typ |> callback in
+  attach_watch_untyped t ~filter ~callback
 
 let retry ?(tag = "") ~finished ~timeout f =
   let rec loop timeout =
@@ -148,7 +152,7 @@ let client_socket ~callback ~address_req ~address_rep t =
 
 let keep_alive t =
   let () =
-    attach_watch t ~filter:"keepalive" ~callback:(fun _ -> Lwt.return_unit)
+    attach_watch_untyped t ~filter:"keepalive" ~callback:(fun _ -> Lwt.return_unit)
   in
   let rec loop () =
     Lwt.async (fun () -> send_msg t ~filter:"keepalive" "") ;

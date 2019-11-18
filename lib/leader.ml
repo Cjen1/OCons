@@ -2,6 +2,7 @@ open Types
 open Base
 open Messaging
 open State_machine
+open Utils
 
 let leader = Logs.Src.create "Leader" ~doc:"Leader module"
 
@@ -34,14 +35,11 @@ type t =
   ; awaiting_sm: (int, StateMachine.op_result Lwt.u) Hashtbl.t
   ; decided_log: (int, StateMachine.command) Hashtbl.t
   ; decided_commands: (StateMachine.command, StateMachine.op_result) Hashtbl.t
-  ; slot_queue: Utils.PQueue.t
+  ; slot_queue: PQueue.t
   ; slot_committed: unit Lwt_condition.t
   ; state: StateMachine.t
   ; mutable highest_undecided_slot: int
-  ; timeout: float
-  ; mutable preemption_timeout: float
-  ; preemption_coefficient: float
-  ; preemption_decrease_constant: float }
+  ; timeout: AIMDTimeout.t }
 
 let p1a (t : t) () =
   LLog.debug (fun m -> m "Sending p1a msgs") ;
@@ -56,19 +54,14 @@ let p1a (t : t) () =
       let promise, fulfiller = Lwt.task () in
       t.leader_state <- Deciding {ballot; quorum= t.quorum_p1 (); fulfiller} ;
       LLog.debug (fun m -> m "p1a: awaiting quorum") ;
-      let%lwt () =
-        Lwt_unix.sleep @@ Random.float_range 0. t.preemption_timeout
-      in
+      let%lwt () = AIMDTimeout.wait t.timeout in
       Msg_layer.send_msg t.msg_layer p1a ~finished:promise ~filter:"p1a"
   | _ ->
       LLog.debug (fun m -> m "Not sending p1a, wrong state") ;
       (* Either already leader, or already sent p1a *)
       Lwt.return_unit
 
-let p1b_callback t msg =
-  let p1b =
-    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1b_from_protobuf
-  in
+let p1b_callback t (p1b:p1b) =
   LLog.debug (fun m ->
       m "%s: Got p1b for ballot = %s"
         (string_of_leader_state t.leader_state)
@@ -82,26 +75,26 @@ let p1b_callback t msg =
             m "p1b: got quorum, now leader of ballot %s"
             @@ Ballot.to_string ballot) ;
         t.leader_state <- Leader {ballot} ;
-        Lwt.wakeup_later fulfiller () ;
+        Lwt.wakeup_later fulfiller ()
+        (*;
         t.preemption_timeout <-
-          t.preemption_timeout -. t.preemption_decrease_constant )
+          t.preemption_timeout -. t.preemption_decrease_constant *)
+        )
   | _ ->
       () ) ;
   Lwt.return_unit
 
 let preempt_p1 t incomming_ballot =
-  let ( >= ) a b = not @@ Ballot.less_than a b in
-  let ( > ) a b = Ballot.greater_than a b in
+  let open Ballot.Infix in
   ( match t.leader_state with
   | Deciding {ballot; fulfiller; _}
     when incomming_ballot >= ballot
          && not (Ballot.phys_equal incomming_ballot ballot) ->
       t.leader_state <- Not_Leader {ballot= incomming_ballot} ;
       Lwt.wakeup_later fulfiller () ;
-      t.preemption_timeout <- t.preemption_timeout *. t.preemption_coefficient ;
       LLog.debug (fun m ->
           m "Leader duel in progress, sending p1a, preemption_timeout=%f"
-            t.preemption_timeout) ;
+            t.timeout.timeout) ;
       Lwt.async (p1a t)
   | Leader {ballot} when incomming_ballot > ballot -> (
       (*Preempted thus wait for new leader to die then p1a *)
@@ -123,23 +116,14 @@ let preempt_p1 t incomming_ballot =
   Lwt.return_unit
 
 (*
-let p1a_preempted_callback t msg =
-  let p1a =
-    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1a_from_protobuf
-  in
+let p1a_preempted_callback t (p1a:p1a) =
   preempt_p1 t p1a.ballot
    *)
 
-let p1b_preempted_callback t msg =
-  let p1b =
-    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1b_from_protobuf
-  in
+let p1b_preempted_callback t (p1b:p1b) =
   preempt_p1 t p1b.ballot
 
-let nack_p1_preempted_callback t msg =
-  let nack =
-    Bytes.of_string msg |> Protobuf.Decoder.decode_exn nack_p1_from_protobuf
-  in
+let nack_p1_preempted_callback t (nack:nack_p1) =
   preempt_p1 t nack.ballot
 
 let p2a t pval () =
@@ -206,10 +190,7 @@ let decide t pval fulfiller =
   Lwt.wakeup_later fulfiller () ;
   broadcast_decision t pval
 
-let p2b_callback t msg =
-  let p2b =
-    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p2b_from_protobuf
-  in
+let p2b_callback t (p2b:p2b) =
   LLog.debug (fun m ->
       m "%s: Got p2b %s "
         (string_of_leader_state t.leader_state)
@@ -224,12 +205,8 @@ let p2b_callback t msg =
       () ) ;
   Lwt.return_unit
 
-let decision_callback t msg =
+let decision_callback t decision_response =
   LLog.debug (fun m -> m "Got a decision") ;
-  let decision_response =
-    msg |> Bytes.of_string
-    |> Protobuf.Decoder.decode_exn decision_response_from_protobuf
-  in
   update_state t decision_response.slot decision_response.command ;
   Lwt.return_unit
 
@@ -290,35 +267,16 @@ let preempt_p2 t incomming_ballot =
     | Error `NodeNotFound ->
         assert false )
 
-let preempt_p2a t msg =
-  let incomming_ballot =
-    let p2a =
-      msg |> Bytes.of_string |> Protobuf.Decoder.decode_exn p2a_from_protobuf
-    in
-    p2a.pval |> Pval.get_ballot
-  in
-  preempt_p2 t incomming_ballot ;
+let preempt_p2a t (p2a:p2a) =
+  preempt_p2 t (p2a.pval |> Pval.get_ballot) ;
   Lwt.return_unit
 
-let preempt_p2b t msg =
-  let incomming_ballot =
-    let p2b =
-      msg |> Bytes.of_string |> Protobuf.Decoder.decode_exn p2b_from_protobuf
-    in
-    p2b.ballot
-  in
-  preempt_p2 t incomming_ballot ;
+let preempt_p2b t (p2b:p2b) =
+  preempt_p2 t p2b.ballot ;
   Lwt.return_unit
 
-let preempt_nack_p2 t msg =
-  let incomming_ballot =
-    let nack =
-      msg |> Bytes.of_string
-      |> Protobuf.Decoder.decode_exn nack_p2_from_protobuf
-    in
-    nack.ballot
-  in
-  preempt_p2 t incomming_ballot ;
+let preempt_nack_p2 t (nack:nack_p2) =
+  preempt_p2 t nack.ballot ;
   Lwt.return_unit
 
 let client t msg writer =
@@ -363,7 +321,7 @@ let create msg_layer local nodes ~address_req ~address_rep =
   let quorum_p1, quorum_p2 = Quorum.majority nodes in
   let leader_state = Not_Leader {ballot= Ballot.init local} in
   Random.self_init () ;
-  let timeout = 20. in
+  let timeout = AIMDTimeout.create ~timeout:20.0 ~slow_start:2. ~ai:1. ~md:1.1 in
   let t =
     { id= local
     ; leader_state
@@ -379,27 +337,22 @@ let create msg_layer local nodes ~address_req ~address_rep =
     ; slot_committed= Lwt_condition.create ()
     ; state= StateMachine.create ()
     ; highest_undecided_slot= 0
-    ; timeout
-    ; preemption_timeout= timeout
-    ; preemption_coefficient= 2.
-    ; preemption_decrease_constant= timeout /. 2. }
+    ; timeout 
+    }
   in
-  Msg_layer.attach_watch t.msg_layer ~filter:"p1b" ~callback:(p1b_callback t) ;
-  Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(p2b_callback t) ;
+  let open Messaging in
+  Msg_layer.attach_watch t.msg_layer ~filter:"p1b" ~callback:(p1b_callback t) ~typ:P1b;
+  Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(p2b_callback t) ~typ:P2b;
   Msg_layer.attach_watch t.msg_layer ~filter:"decision"
-    ~callback:(decision_callback t) ;
-  (*
-  Msg_layer.attach_watch t.msg_layer ~filter:"p1a"
-    ~callback:(p1a_preempted_callback t) ;
-     *)
+    ~callback:(decision_callback t) ~typ:DRp;
   Msg_layer.attach_watch t.msg_layer ~filter:"p1b"
-    ~callback:(p1b_preempted_callback t) ;
+    ~callback:(p1b_preempted_callback t) ~typ:P1b;
   Msg_layer.attach_watch t.msg_layer ~filter:"nack_p1"
-    ~callback:(nack_p1_preempted_callback t) ;
-  Msg_layer.attach_watch t.msg_layer ~filter:"p2a" ~callback:(preempt_p2a t) ;
-  Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(preempt_p2b t) ;
+    ~callback:(nack_p1_preempted_callback t) ~typ:Np1;
+  Msg_layer.attach_watch t.msg_layer ~filter:"p2a" ~callback:(preempt_p2a t) ~typ:P2a;
+  Msg_layer.attach_watch t.msg_layer ~filter:"p2b" ~callback:(preempt_p2b t) ~typ:P2b;
   Msg_layer.attach_watch t.msg_layer ~filter:"nack_p2"
-    ~callback:(preempt_nack_p2 t) ;
+    ~callback:(preempt_nack_p2 t) ~typ:Np2;
   let c =
     Msg_layer.client_socket ~callback:(client t) ~address_req ~address_rep
       msg_layer

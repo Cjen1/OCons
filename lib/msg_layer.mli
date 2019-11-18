@@ -1,7 +1,7 @@
 type t
 
 val attach_watch :
-  t -> filter:string -> callback:(string -> unit Lwt.t) -> unit
+  t -> filter:string -> callback:('a -> unit Lwt.t) -> typ:'a Messaging.msg_typ -> unit
 
 val send_msg :
      t

@@ -15,10 +15,7 @@ type t =
   ; wal: Unix.file_descr
   ; msg_layer: Msg_layer.t }
 
-let p1a_callback t msg =
-  let p1a =
-    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p1a_from_protobuf
-  in
+let p1a_callback t (p1a:p1a) =
   ALog.debug (fun m ->
       m "Got p1a msg, ballot=%s" @@ Ballot.to_string p1a.ballot) ;
   if Ballot.greater_than p1a.ballot t.ballot_num then (
@@ -37,18 +34,9 @@ let p1a_callback t msg =
     |> Msg_layer.send_msg t.msg_layer ~filter:"p1b" )
   else
     Lwt.return_unit
-(*
-    {ballot= t.ballot_num}
-    |> Protobuf.Encoder.encode_exn nack_p1_to_protobuf
-    |> Bytes.to_string
-    |> Msg_layer.send_msg t.msg_layer ~filter:"nack_p1"
-   *)
 
-let p2a_callback t msg =
+let p2a_callback t (p2a:p2a) =
   ALog.debug (fun m -> m "Got p2a msg") ;
-  let p2a =
-    Bytes.of_string msg |> Protobuf.Decoder.decode_exn p2a_from_protobuf
-  in
   let ((ib, is, _) as ipval) = p2a.pval in
   let ( >= ) a b = Ballot.less_than a b || Ballot.equal a b in
   if ib >= t.ballot_num then (
@@ -76,8 +64,9 @@ let create wal_loc msg_layer local =
         @@ int_of_string "0x660"
     ; msg_layer }
   in
-  Msg_layer.attach_watch msg_layer ~filter:"p1a" ~callback:(p1a_callback t) ;
-  Msg_layer.attach_watch msg_layer ~filter:"p2a" ~callback:(p2a_callback t) ;
+  let open Messaging in
+  Msg_layer.attach_watch msg_layer ~filter:"p1a" ~callback:(p1a_callback t) ~typ:P1a;
+  Msg_layer.attach_watch msg_layer ~filter:"p2a" ~callback:(p2a_callback t) ~typ:P2a;
   (t, Lwt.return_unit)
 
 (* Initialize a new acceptor *)

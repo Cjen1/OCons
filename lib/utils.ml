@@ -1,3 +1,5 @@
+open Base
+
 let critical_section mutex ~f =
   try%lwt
     let%lwt () = Logs_lwt.debug (fun m -> m "Entering cs") in
@@ -30,7 +32,7 @@ end = struct
     {m= Lwt_mutex.create (); c= Lwt_condition.create (); q= Queue.create ()}
 
   let add e t =
-    Queue.add e t.q ;
+    Queue.enqueue t.q e ;
     Lwt_condition.signal t.c ()
 
   let take t =
@@ -39,7 +41,7 @@ end = struct
       if Queue.is_empty t.q then Lwt_condition.wait ~mutex:t.m t.c
       else Lwt.return_unit
     in
-    let e = Lwt.return (Queue.take t.q) in
+    let e = Lwt.return (Queue.dequeue_exn t.q) in
     Lwt_mutex.unlock t.m ; e
 end
 
@@ -143,4 +145,30 @@ module Semaphore = struct
     t.n <- t.n + 1 ;
     if t.n <= 0 then Lwt_mutex.unlock t.m_queue |> Lwt.return
     else Lwt_mutex.unlock t.m_count |> Lwt.return
+end
+
+module AIMDTimeout = struct
+  type state = SlowStart | Normal
+
+  type t =
+    { mutable state: state
+    ; mutable timeout: float
+    ; slow_start: float
+    ; ai: float
+    ; md: float }
+
+  let ai = function
+    | {state= SlowStart; _} as t ->
+        t.timeout <- t.timeout *. t.slow_start
+    | {state= Normal; _} as t ->
+        t.timeout <- t.timeout +. t.ai
+
+  let md t =
+    (match t.state with SlowStart -> t.state <- Normal | Normal -> ()) ;
+    t.timeout <- t.timeout /. t.md
+
+  let wait t = Lwt_unix.sleep (Random.float_range 0. t.timeout)
+
+  let create ~timeout ~slow_start ~ai ~md =
+    {state= SlowStart; timeout; slow_start; ai; md}
 end
