@@ -172,3 +172,17 @@ module AIMDTimeout = struct
   let create ~timeout ~slow_start ~ai ~md =
     {state= SlowStart; timeout; slow_start; ai; md}
 end
+
+module ExpTimeout = struct
+  type t =
+    { 
+    mutable timeout: float
+    ; c: float }
+
+  let wait t = 
+    t.timeout <- t.timeout *. t.c;
+    Lwt_unix.sleep (Random.float_range 0. t.timeout)
+
+  let create ~timeout ~c =
+    {timeout;c}
+end

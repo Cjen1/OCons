@@ -39,7 +39,8 @@ type t =
   ; slot_committed: unit Lwt_condition.t
   ; state: StateMachine.t
   ; mutable highest_undecided_slot: int
-  ; timeout: AIMDTimeout.t }
+  ; mutable leader_duel_timeout: ExpTimeout.t
+  ; leader_duel_timeout_gen: unit -> ExpTimeout.t }
 
 let p1a (t : t) () =
   LLog.debug (fun m -> m "Sending p1a msgs") ;
@@ -49,7 +50,6 @@ let p1a (t : t) () =
       let p1a = ({ballot} : Messaging.p1a) |> Messaging.to_string P1a in
       let promise, fulfiller = Lwt.task () in
       t.leader_state <- Deciding {ballot; quorum= t.quorum_p1 (); fulfiller} ;
-      let%lwt () = AIMDTimeout.wait t.timeout in
       LLog.debug (fun m -> m "p1a: sent, now awaiting quorum") ;
       Msg_layer.send_msg t.msg_layer p1a ~finished:promise ~filter:"p1a"
   | _ ->
@@ -71,11 +71,22 @@ let p1b_callback t (p1b : p1b) =
             m "p1b: got quorum, now leader of ballot %s"
             @@ Ballot.to_string ballot) ;
         t.leader_state <- Leader {ballot} ;
-        AIMDTimeout.decrease t.timeout ;
+        t.leader_duel_timeout <- t.leader_duel_timeout_gen ();
         Lwt.wakeup_later fulfiller () )
   | _ ->
       () ) ;
   Lwt.return_unit
+
+let node_dead_watch t ballot = 
+  match 
+    Msg_layer.node_dead_watch t.msg_layer
+      ~node:(Ballot.get_leader_id_exn ballot)
+      ~callback:(p1a t)
+  with
+  | Ok () ->
+    ()
+  | Error `NodeNotFound ->
+    assert false 
 
 let preempt_p1 t incomming_ballot =
   let open Ballot.Infix in
@@ -87,24 +98,21 @@ let preempt_p1 t incomming_ballot =
       Lwt.wakeup_later fulfiller () ;
       LLog.debug (fun m ->
           m "Leader duel in progress, sending p1a, preemption_timeout=%f"
-            t.timeout.timeout) ;
-      AIMDTimeout.increase t.timeout ;
-      Lwt.async (p1a t)
+            t.leader_duel_timeout.timeout) ;
+      Lwt.async (fun () ->
+          let%lwt () = ExpTimeout.wait t.leader_duel_timeout in
+          p1a t ())
+  | Leader {ballot} when incomming_ballot <= ballot -> () (* Either is for this ballot (just delayed) or previous *)
   | Leader {ballot} when incomming_ballot > ballot -> (
+      (*If p1 then either remote node wins leader election, or duel occurs and thus at least one wins *)
       (*Preempted thus wait for new leader to die then call another p1a *)
-      t.leader_state <- Not_Leader {ballot= incomming_ballot} ;
       LLog.debug (fun m -> m "Got preempted, setting p1a") ;
-      match
-        Msg_layer.node_dead_watch t.msg_layer
-          ~node:(Ballot.get_leader_id_exn incomming_ballot)
-          ~callback:(p1a t)
-      with
-      | Ok _ ->
-          ()
-      | Error `NodeNotFound ->
-          assert false )
+      let () =  node_dead_watch t incomming_ballot in 
+      t.leader_state <- Not_Leader {ballot= incomming_ballot} ;
+    )
   | Not_Leader {ballot} when Ballot.greater_than incomming_ballot ballot ->
-      t.leader_state <- Not_Leader {ballot} (* TODO reapply death_watch? *)
+    let () = node_dead_watch t incomming_ballot in
+    t.leader_state <- Not_Leader {ballot} 
   | _ ->
       () ) ;
   Lwt.return_unit
@@ -133,18 +141,7 @@ let p2a t pval () =
         with
       | `Ok, `Ok ->
           ()
-      | _ (*res1, res2*) ->
-          (*
-        let err_to_string = function
-            | `Ok ->
-                "Ok"
-            | `Duplicate ->
-                "Duplicate"
-          in
-          LLog.debug (fun m ->
-              m "res1: %s\n res2: %s\n" (res1 |> err_to_string)
-                (res2 |> err_to_string)) ;
-            *)
+      | _ ->
           assert false ) ;
       let%lwt () =
         Msg_layer.send_msg t.msg_layer p2a ~finished:promise ~filter:"p2a"
@@ -301,13 +298,12 @@ let client t msg writer =
   | _ ->
       Lwt.return_unit
 
-let create msg_layer local nodes ~address_req ~address_rep =
+let create msg_layer local nodes ~nodeid ~address_req ~address_rep =
   let quorum_p1, quorum_p2 = Quorum.majority nodes in
   let leader_state = Not_Leader {ballot= Ballot.init local} in
   Random.self_init () ;
-  let timeout =
-    AIMDTimeout.create ~timeout:20.0 ~slow_start:2. ~ai:1. ~md:1.1
-  in
+  let leader_duel_timeout_gen () = ExpTimeout.create ~timeout:5. ~c:(1. +. (1. /. nodeid)) in
+  let leader_duel_timeout = leader_duel_timeout_gen () in
   let t =
     { id= local
     ; leader_state
@@ -323,7 +319,8 @@ let create msg_layer local nodes ~address_req ~address_rep =
     ; slot_committed= Lwt_condition.create ()
     ; state= StateMachine.create ()
     ; highest_undecided_slot= 0
-    ; timeout }
+    ; leader_duel_timeout 
+    ; leader_duel_timeout_gen}
   in
   let open Messaging in
   Msg_layer.attach_watch t.msg_layer ~filter:"p1b" ~callback:(p1b_callback t)
@@ -368,7 +365,8 @@ let create msg_layer local nodes ~address_req ~address_rep =
   in
   (t, Lwt.join [c; sp; p_p1a])
 
-let create_independent local nodes ~address_req ~address_rep alive_timeout =
+let create_independent local nodes ~nodeid ~address_req ~address_rep
+    alive_timeout =
   let msg, psml = Msg_layer.create ~node_list:nodes ~local ~alive_timeout in
-  let t, psa = create msg local nodes ~address_req ~address_rep in
+  let t, psa = create msg local nodes ~nodeid ~address_req ~address_rep in
   (t, Lwt.join [psml; psa])

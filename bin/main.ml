@@ -9,6 +9,7 @@ let command =
       and client_req_port = anon ("client_req_port" %: int)
       and wal_loc = anon ("Log_location" %: string)
       and local_address = anon ("Local_address" %: string)
+      and node_id = anon ("Node_ID" %: int)
       and endpoints = anon ("endpoints" %: string)
       and alive_timeout = anon ("alive_timeout" %: float) in
       fun () ->
@@ -23,7 +24,7 @@ let command =
           let msg_layer,psml =
             Msg_layer.create ~node_list:endpoints ~local ~alive_timeout
           in
-          let _,psl = Leader.create msg_layer local endpoints ~address_rep:client_rep ~address_req:client_req in
+          let _,psl = Leader.create msg_layer local endpoints ~nodeid:(Int.to_float node_id) ~address_rep:client_rep ~address_req:client_req in
           let _,psa = Acceptor.create wal_loc msg_layer local in
           Lwt.join [psl; psa; psml]
         in

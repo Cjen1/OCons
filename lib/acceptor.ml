@@ -16,9 +16,10 @@ type t =
   ; msg_layer: Msg_layer.t }
 
 let p1a_callback t (p1a:p1a) =
+  let open Ballot.Infix in
   ALog.debug (fun m ->
       m "Got p1a msg, ballot=%s" @@ Ballot.to_string p1a.ballot) ;
-  if Ballot.greater_than p1a.ballot t.ballot_num then (
+  if p1a.ballot > t.ballot_num then (
     p1a.ballot |> Ballot.to_string |> write_to_wal t.wal ;
     t.ballot_num <- p1a.ballot ;
     ALog.debug (fun m ->
@@ -36,9 +37,9 @@ let p1a_callback t (p1a:p1a) =
     Lwt.return_unit
 
 let p2a_callback t (p2a:p2a) =
+  let open Ballot.Infix in
   ALog.debug (fun m -> m "Got p2a msg") ;
   let ((ib, is, _) as ipval) = p2a.pval in
-  let ( >= ) a b = Ballot.less_than a b || Ballot.equal a b in
   if ib >= t.ballot_num then (
     write_to_wal t.wal @@ Pval.to_string ipval ;
     Base.Hashtbl.set t.accepted ~key:is ~data:ipval ;
