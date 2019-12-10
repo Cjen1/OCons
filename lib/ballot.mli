@@ -16,7 +16,9 @@ val succ_exn : t -> leader_id -> t
 val phys_equal : t -> t -> bool
 
 val equal : t -> t -> bool
+
 val less_than : t -> t -> bool
+
 val greater_than : t -> t -> bool
 
 val compare : t -> t -> int
@@ -33,9 +35,11 @@ val to_string : t -> string
 
 module Infix : sig
   val ( < ) : t -> t -> bool
+
   val ( <= ) : t -> t -> bool
 
   val ( > ) : t -> t -> bool
+
   val ( >= ) : t -> t -> bool
 
   val ( = ) : t -> t -> bool

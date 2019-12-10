@@ -29,9 +29,7 @@ let command =
             Msg_layer.create ~node_list:endpoints ~id ~alive_timeout
           in
           let client_port = Int.to_string client_port in
-          let _, psl =
-            Leader.create ~msg_layer ~id ~endpoints ~client_port
-          in
+          let _, psl = Leader.create ~msg_layer ~id ~endpoints ~client_port in
           let _, psa = Acceptor.create ~wal_loc ~msg_layer ~id in
           Lwt.join [psl; psa; psml]
         in

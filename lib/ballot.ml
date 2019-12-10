@@ -83,8 +83,12 @@ let to_string b = b |> sexp_of_t |> Sexp.to_string_hum
 
 module Infix = struct
   let ( < ) = less_than
-  let ( <= ) a b = compare a b <= 0 
-  let ( > ) a b = compare a b > 0 
-  let ( >= ) a b = compare a b >= 0 
+
+  let ( <= ) a b = compare a b <= 0
+
+  let ( > ) a b = compare a b > 0
+
+  let ( >= ) a b = compare a b >= 0
+
   let ( = ) a b = compare a b = 0
 end

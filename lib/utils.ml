@@ -71,8 +71,7 @@ let connect uri =
   let sock = Lwt_unix.socket Lwt_unix.PF_INET Lwt_unix.SOCK_STREAM 0 in
   let%lwt () = Lwt_unix.connect sock uri in
   Lwt.return
-    ( Lwt_io.of_fd ~mode:Lwt_io.Input sock
-    , Lwt_io.of_fd ~mode:Lwt_io.Output sock )
+    (Lwt_io.of_fd ~mode:Lwt_io.Input sock, Lwt_io.of_fd ~mode:Lwt_io.Output sock)
 
 let unix_error_handler (e, f, p) tag =
   let%lwt () =
@@ -174,15 +173,11 @@ module AIMDTimeout = struct
 end
 
 module ExpTimeout = struct
-  type t =
-    { 
-    mutable timeout: float
-    ; c: float }
+  type t = {mutable timeout: float; c: float}
 
-  let wait t = 
-    t.timeout <- t.timeout *. t.c;
+  let wait t =
+    t.timeout <- t.timeout *. t.c ;
     Lwt_unix.sleep (Random.float_range 0. t.timeout)
 
-  let create ~timeout ~c =
-    {timeout;c}
+  let create ~timeout ~c = {timeout; c}
 end

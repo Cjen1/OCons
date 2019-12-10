@@ -11,7 +11,7 @@ type t = Ballot.t * int * StateMachine.command [@@deriving protobuf, sexp]
 
 (* Function to check two pvals are equal *)
 let equal (b, s, c) (b', s', c') =
-  Ballot.equal b b' && s = s' && (Poly.equal c c')
+  Ballot.equal b b' && s = s' && Poly.equal c c'
 
 (* Function returns string representation of pval *)
 let to_string pval = pval |> sexp_of_t |> Sexp.to_string_hum

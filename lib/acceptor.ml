@@ -32,8 +32,7 @@ let p1a_callback t (p1a : p1a) =
     }
     |> Msg_layer.send_msg t.msg_layer ~msg_filter:p1b )
   else
-    {ballot= t.ballot_num}
-    |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p1 ;
+    {ballot= t.ballot_num} |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p1 ;
   Lwt.return_unit
 
 let p2a_callback t (p2a : p2a) =
@@ -48,8 +47,8 @@ let p2a_callback t (p2a : p2a) =
     |> Msg_layer.send_msg t.msg_layer ~msg_filter:p2b )
   else (
     ALog.debug (fun m -> m "Is incorrect ballot") ;
-    {ballot= t.ballot_num}
-    |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p2 ) ;
+    {ballot= t.ballot_num} |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p2
+    ) ;
   Lwt.return_unit
 
 let create ~wal_loc ~msg_layer ~id =
@@ -70,6 +69,6 @@ let create ~wal_loc ~msg_layer ~id =
 
 (* Initialize a new acceptor *)
 let create_independent ~wal_loc ~node_list ~id ~alive_timeout =
-  let%lwt msg_layer, psml = Msg_layer.create ~node_list:node_list ~id ~alive_timeout in
+  let%lwt msg_layer, psml = Msg_layer.create ~node_list ~id ~alive_timeout in
   let t, psa = create ~wal_loc ~msg_layer ~id in
-  Lwt.return (t,Lwt.join [psa; psml])
+  Lwt.return (t, Lwt.join [psa; psml])

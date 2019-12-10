@@ -18,7 +18,9 @@ let write =
                   (id, addr)
               | _ ->
                   raise
-                    (Invalid_argument ("Need endpoints of the form [id=uri] but got " ^ endpoints)))
+                    (Invalid_argument
+                       ( "Need endpoints of the form [id=uri] but got "
+                       ^ endpoints )))
         in
         let c, p = new_client ~endpoints () in
         Lwt_main.run
@@ -43,7 +45,9 @@ let read =
                   (id, addr)
               | _ ->
                   raise
-                    (Invalid_argument ("Need endpoints of the form [id=uri] but got " ^ endpoints)))
+                    (Invalid_argument
+                       ( "Need endpoints of the form [id=uri] but got "
+                       ^ endpoints )))
         in
         let c, p = new_client ~endpoints () in
         Lwt_main.run
@@ -73,7 +77,6 @@ let reporter =
 let cmd =
   Command.group ~summary:"Cli client for Ocaml Paxos"
     [("write", write); ("read", read)]
-
 
 let () =
   Lwt_engine.set (new Lwt_engine.libev ()) ;

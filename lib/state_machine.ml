@@ -10,14 +10,13 @@ module StateMachine : sig
   type op = Read of key [@key 1] | Write of key * value [@key 2]
   [@@deriving protobuf, sexp]
 
-  type command = {op:op; id:string} [@@deriving protobuf, sexp]
+  type command = {op: op; id: string} [@@deriving protobuf, sexp]
 
   type op_result =
     | Success [@key 1]
     | Failure [@key 2]
     | ReadSuccess of key [@key 3]
   [@@deriving protobuf, sexp]
-
 
   val op_result_failure : unit -> op_result
 
@@ -34,7 +33,8 @@ end = struct
   type op = Read of key [@key 1] | Write of key * value [@key 2]
   [@@deriving protobuf, sexp]
 
-  type command = {op:op [@key 1]; id:string [@key 2]} [@@deriving protobuf, sexp]
+  type command = {op: op [@key 1]; id: string [@key 2]}
+  [@@deriving protobuf, sexp]
 
   type op_result =
     | Success [@key 1]
@@ -44,10 +44,11 @@ end = struct
 
   let op_result_failure () = Failure
 
-  let update : t -> command -> op_result =  fun t -> function
-    | {op = Read key ; _}-> (
+  let update : t -> command -> op_result =
+   fun t -> function
+    | {op= Read key; _} -> (
       match Hashtbl.find t key with Some v -> ReadSuccess v | None -> Failure )
-    | {op = Write (key, value) ; _} ->
+    | {op= Write (key, value); _} ->
         Hashtbl.set t ~key ~data:value ;
         Success
 

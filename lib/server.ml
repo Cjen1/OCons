@@ -6,11 +6,11 @@ let server = Logs.Src.create "Server" ~doc:"Server module"
 module Log = (val Logs_lwt.src_log server : Logs_lwt.LOG)
 
 let handle_connection (sock, sockaddr) t connected_callback () =
-     let%lwt () =
-        Log.debug (fun m ->
-            m "handle_conn: Connection initialised from %s"
-              (string_of_sockaddr sockaddr))
-      in
+  let%lwt () =
+    Log.debug (fun m ->
+        m "handle_conn: Connection initialised from %s"
+          (string_of_sockaddr sockaddr))
+  in
   let open Lwt_io in
   let ic = of_fd ~mode:Input sock in
   let oc = of_fd ~mode:Output sock in

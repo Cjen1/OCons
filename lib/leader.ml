@@ -270,17 +270,17 @@ let client t (client_request : client_request) writer () =
           Lwt.return_unit
       | Decided result ->
           let client_response = {result} in
-              LLog.debug (fun m ->
-                  m "Already decided client_command %s"
-                    ( client_request.command |> StateMachine.sexp_of_command
-                    |> Sexp.to_string )) ;
-              writer client_response
+          LLog.debug (fun m ->
+              m "Already decided client_command %s"
+                ( client_request.command |> StateMachine.sexp_of_command
+                |> Sexp.to_string )) ;
+          writer client_response
       | Received ->
           let slot = Utils.PQueue.take t.slot_queue in
           let%lwt result = p2a t (ballot, slot, client_request.command) () in
           let client_response = {result} in
-              LLog.debug (fun m -> m "Sending client response for slot:%d" slot) ;
-              writer client_response)
+          LLog.debug (fun m -> m "Sending client response for slot:%d" slot) ;
+          writer client_response )
 
 let create ~msg_layer ~id ~endpoints ~client_port =
   let quorum_p1, quorum_p2 = Quorum.majority endpoints in
@@ -309,7 +309,7 @@ let create ~msg_layer ~id ~endpoints ~client_port =
     ; msg_layer
     ; quorum_p1
     ; quorum_p2
-    ; proposal_state = Hashtbl.Poly.create ()
+    ; proposal_state= Hashtbl.Poly.create ()
     ; in_flight= Hashtbl.create (module Int)
     ; awaiting_sm= Hashtbl.create (module Int)
     ; decided_log= Hashtbl.create (module Int)

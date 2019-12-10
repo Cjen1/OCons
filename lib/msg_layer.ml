@@ -60,14 +60,14 @@ let create_incoming id port ctx =
   Zmq.Socket.set_router_mandatory socket true ;
   let address = "tcp://*:" ^ port in
   Zmq.Socket.bind socket address ;
-  Zmq_lwt.Socket.of_socket socket 
+  Zmq_lwt.Socket.of_socket socket
 
 let create_outgoing endpoints ctx =
   let socket = Zmq.Socket.create ctx Zmq.Socket.router in
   Zmq.Socket.set_router_mandatory socket true ;
   Hashtbl.iter endpoints ~f:(fun uri ->
       Zmq.Socket.connect socket ("tcp://" ^ uri)) ;
-  Zmq_lwt.Socket.of_socket socket 
+  Zmq_lwt.Socket.of_socket socket
 
 let create_msg_queues nodes sock id =
   let tbl = Hashtbl.create (module String) in
@@ -126,7 +126,7 @@ let retry ?(tag = "") ~finished ~timeout f =
     | None ->
         MLog.debug (fun m ->
             m "%s Request timed out retrying. t = %f" tag timeout) ;
-        loop (timeout *. 1.(*.1*))
+        loop (timeout *. 1. (*.1*))
   in
   loop timeout
 
