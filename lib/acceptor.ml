@@ -15,7 +15,7 @@ type t =
   ; wal: Unix.file_descr
   ; msg_layer: Msg_layer.t }
 
-let p1a_callback t (p1a:p1a) =
+let p1a_callback t (p1a : p1a) =
   let open Ballot.Infix in
   ALog.debug (fun m ->
       m "Got p1a msg, ballot=%s" @@ Ballot.to_string p1a.ballot) ;
@@ -30,13 +30,13 @@ let p1a_callback t (p1a:p1a) =
         Base.Hashtbl.data t.accepted
         (* TODO reduce this? Can be done by including a high water mark in p1a message decisions *)
     }
-    |> Protobuf.Encoder.encode_exn p1b_to_protobuf
-    |> Bytes.to_string
-    |> Msg_layer.send_msg t.msg_layer ~filter:"p1b" )
+    |> Msg_layer.send_msg t.msg_layer ~msg_filter:p1b )
   else
-    Lwt.return_unit
+    {ballot= t.ballot_num}
+    |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p1 ;
+  Lwt.return_unit
 
-let p2a_callback t (p2a:p2a) =
+let p2a_callback t (p2a : p2a) =
   let open Ballot.Infix in
   ALog.debug (fun m -> m "Got p2a msg") ;
   let ((ib, is, _) as ipval) = p2a.pval in
@@ -45,33 +45,31 @@ let p2a_callback t (p2a:p2a) =
     Base.Hashtbl.set t.accepted ~key:is ~data:ipval ;
     ALog.debug (fun m -> m "Sending p2b msg") ;
     {id= t.id; ballot= t.ballot_num; pval= ipval}
-    |> Protobuf.Encoder.encode_exn p2b_to_protobuf
-    |> Bytes.to_string
-    |> Msg_layer.send_msg t.msg_layer ~filter:"p2b" )
+    |> Msg_layer.send_msg t.msg_layer ~msg_filter:p2b )
   else (
     ALog.debug (fun m -> m "Is incorrect ballot") ;
     {ballot= t.ballot_num}
-    |> Protobuf.Encoder.encode_exn nack_p1_to_protobuf
-    |> Bytes.to_string
-    |> Msg_layer.send_msg t.msg_layer ~filter:"nack_p2" )
+    |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p2 ) ;
+  Lwt.return_unit
 
-let create wal_loc msg_layer local =
+let create ~wal_loc ~msg_layer ~id =
   let t =
-    { id= local
+    { id
     ; ballot_num= Ballot.bottom ()
     ; accepted= Base.Hashtbl.create (module Base.Int)
     ; wal=
         Unix.openfile wal_loc [Unix.O_RDWR; Unix.O_CREAT]
-        @@ int_of_string "0x660"
+        @@ int_of_string "0x666"
     ; msg_layer }
   in
-  let open Messaging in
-  Msg_layer.attach_watch msg_layer ~filter:"p1a" ~callback:(p1a_callback t) ~typ:P1a;
-  Msg_layer.attach_watch msg_layer ~filter:"p2a" ~callback:(p2a_callback t) ~typ:P2a;
+  Msg_layer.attach_watch msg_layer ~msg_filter:Messaging.p1a
+    ~callback:(p1a_callback t) ;
+  Msg_layer.attach_watch msg_layer ~msg_filter:Messaging.p2a
+    ~callback:(p2a_callback t) ;
   (t, Lwt.return_unit)
 
 (* Initialize a new acceptor *)
-let create_independent wal_loc nodes local alive_timeout =
-  let msg, psml = Msg_layer.create ~node_list:nodes ~local ~alive_timeout in
-  let t, psa = create wal_loc msg local in
-  (t, Lwt.join [psa; psml])
+let create_independent ~wal_loc ~node_list ~id ~alive_timeout =
+  let%lwt msg_layer, psml = Msg_layer.create ~node_list:node_list ~id ~alive_timeout in
+  let t, psa = create ~wal_loc ~msg_layer ~id in
+  Lwt.return (t,Lwt.join [psa; psml])

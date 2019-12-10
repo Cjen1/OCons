@@ -1,16 +1,15 @@
+open Messaging
+
 type t
 
 val attach_watch :
-  t -> filter:string -> callback:('a -> unit Lwt.t) -> typ:'a Messaging.msg_typ -> unit
+  t -> msg_filter:'a msg_filter -> callback:('a -> unit Lwt.t) -> unit
 
 val send_msg :
      t
-  -> ?timeout:float
-  -> ?finished:unit Lwt.t
-  -> filter:string
-  -> string
-  -> unit Lwt.t
-(** Sends a message onto the bus, finished allows for retry semantics if a condition is not met (i.e. for paxos a quorum hasn't responded) *)
+  -> msg_filter:'a msg_filter
+  -> 'a 
+  -> unit
 
 val node_alive : t -> node:string -> (bool, [> `NodeNotFound]) Base.Result.t
 
@@ -21,16 +20,15 @@ val node_dead_watch :
   -> (unit, [> `NodeNotFound]) Base.Result.t
 
 val create :
-     node_list:string list
-  -> local:string
+     node_list:(string*string) list
+  -> id:string
   -> alive_timeout:float
-  -> t * unit Lwt.t
+  -> (t * unit Lwt.t )Lwt.t
 
 val client_socket :
-     callback:(string -> (string -> unit Lwt.t) -> unit Lwt.t)
-  -> address_req:string
-  -> address_rep:string
-  -> t
+     t
+  -> callback:(Messaging.client_request -> (Messaging.client_response -> unit Lwt.t) -> unit -> unit Lwt.t)
+  -> port:string
   -> 'a Lwt.t
 
 val retry :

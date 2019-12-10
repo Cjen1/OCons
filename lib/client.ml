@@ -8,106 +8,113 @@ module CLog = (val Logs.src_log client : Logs.LOG)
 type t =
   { cid: string
   ; context: Zmq.Context.t
-  ; pub_socket: [`Pub] Zmq_lwt.Socket.t
-  ; deal_socket: [`Dealer] Zmq_lwt.Socket.t
-  ; in_flight: (string, string Lwt.u) Hashtbl.t
-  ; fulfilled: string Hash_set.t }
+  ; in_flight: (string, Messaging.client_response Lwt.u) Hashtbl.t
+  ; fulfilled: string Hash_set.t
+  ; endpoints: (string * [`Dealer] Zmq_lwt.Socket.t) list }
 
 let serialise_request op =
   let cid = Types.create_id () in
-  let cmd : Messaging.client_request = {command= {op; id= cid}} in
-  cmd
-  |> Protobuf.Encoder.encode_exn Messaging.client_request_to_protobuf
-  |> Bytes.to_string
+  ({command= {op; id= cid}} : Messaging.client_request)
 
 let deserialise_response response : State_machine.StateMachine.op_result =
-  ( response |> Bytes.of_string
-  |> Protobuf.Decoder.decode_exn Messaging.client_response_from_protobuf )
-    .result
+  Messaging.(from_string CRp response).result
 
 let rid = ref 0
 
+let send_to_all t ~rid ~msg =
+  List.fold t.endpoints ~init:[] ~f:(fun acc (node_name, endpoint) ->
+      let p =
+        try%lwt
+          CLog.debug (fun m -> m "Attempting to send %s to %s" rid node_name) ;
+          let%lwt p = Messaging.send_client_req ~dest:endpoint ~rid ~msg in
+          CLog.debug (fun m -> m "Sent %s to %s" rid node_name) ;
+          Lwt.return p
+        with Unix.Unix_error (e, _, _) ->
+          CLog.err (fun m ->
+              m "%s failed with %s" node_name (Unix.error_message e)) ;
+          Lwt.return_unit
+      in
+      p :: acc)
+  |> Lwt.join
+
 let send t op =
   let msg = serialise_request op in
-  let finished, fulfiller = Lwt.task () in
   let rid =
     rid := !rid + 1 ;
     !rid
   in
   let rid = Printf.sprintf "%s_%i" t.cid rid in
+  let finished, fulfiller = Lwt.task () in
   let () = Hashtbl.set t.in_flight ~key:rid ~data:fulfiller in
   let%lwt resp =
-    Msg_layer.retry ~finished ~timeout:2. (fun () ->
+    Msg_layer.retry ~finished ~timeout:30. (fun () ->
         Lwt.async (fun () ->
-            try 
-              CLog.debug (fun m -> m "Attempting to send %s" rid);
-              Zmq_lwt.Socket.send_all t.pub_socket [t.cid; rid; msg]
+            try%lwt
+              CLog.debug (fun m -> m "Attempting to send %s" rid) ;
+              let%lwt p = send_to_all t ~rid ~msg in
+              CLog.debug (fun m -> m "Sent %s" rid) ;
+              Lwt.return p
             with Zmq.ZMQ_exception (_, s) ->
               CLog.err (fun m -> m "%s" s) ;
-              Lwt.return_unit) ;
-        CLog.debug (fun m -> m "Trying to connect"))
+              Lwt.return_unit))
   in
-  Lwt.return @@ deserialise_response resp
+  Lwt.return @@ resp.result
 
-let op_read t k =
-  let op = StateMachine.Read k in
-  send t op
+let op_read t k = send t @@ StateMachine.Read k
 
-let op_write t k v =
-  let op = StateMachine.Write (k, v) in
-  send t op
+let op_write t k v = send t @@ StateMachine.Write (k, v)
 
 let recv_loop t =
   CLog.debug (fun m -> m "Recv_loop: spooling up") ;
-  let open Zmq_lwt in
-  let rec recv_loop () =
-    let%lwt rid, msg =
-      CLog.debug (fun m -> m "Recv_loop: awaiting msg") ;
-      let%lwt resp = Socket.recv_all t.deal_socket in
-      match resp with
-      | [rid; msg] ->
-          CLog.debug (fun m -> m "Recv_loop: receiving msg %s" rid) ;
-          Lwt.return @@ (rid, msg)
-      | _ ->
-          CLog.debug (fun m -> m "Recv_loop: Incorrect msg format") ;
-          assert false
-    in
-    ( match Hashtbl.find t.in_flight rid with
-    | Some fulfiller ->
-        Lwt.wakeup_later fulfiller msg ;
-        Hashtbl.remove t.in_flight rid ;
-        Hash_set.add t.fulfilled rid
-    | None ->
+  let rec recv_loop ((id, sock) as endpoint) =
+    let%lwt resp = Messaging.recv_client_rep ~sock in
+    ( match resp with
+    | Ok (rid, msg) -> (
+      match Hashtbl.find t.in_flight rid with
+      | Some fulfiller ->
+          Lwt.wakeup_later fulfiller msg ;
+          Hashtbl.remove t.in_flight rid ;
+          Hash_set.add t.fulfilled rid
+      | None ->
+          CLog.debug (fun m ->
+              m "Already fulfilled = %b, %s" (Hash_set.mem t.fulfilled rid) rid) ;
+          () )
+    | Error _ ->
         CLog.debug (fun m ->
-            m "Already fulfilled = %b, %s" (Hash_set.mem t.fulfilled rid) rid) ;
+            m "Encountered an error while receiving from %s" id) ;
         () ) ;
-    recv_loop ()
+    recv_loop endpoint
   in
-  recv_loop ()
+  List.map t.endpoints ~f:recv_loop |> Lwt.join
 
-let new_client ?(cid = Types.create_id ()) ~req_endpoints ~rep_endpoints () =
+let new_client ?(cid = Types.create_id ()) ~endpoints () =
   let context = Zmq.Context.create () in
-  let pub_socket = Zmq.Socket.create context Zmq.Socket.pub in
-  let deal_socket = Zmq.Socket.create context Zmq.Socket.dealer in
-  let () = Zmq.Socket.set_identity deal_socket cid in
+  let sock = Zmq.Socket.create context Zmq.Socket.router in
   let () =
-    List.iter req_endpoints ~f:(fun endpoint ->
-        let addr = "tcp://" ^ endpoint in
-        Zmq.Socket.connect pub_socket addr)
+    let open Zmq.Socket in
+    set_identity sock (cid ^ "_recv")
   in
-  let () =
-    List.iter rep_endpoints ~f:(fun endpoint ->
-        let addr = "tcp://" ^ endpoint in
-        Zmq.Socket.connect deal_socket addr)
+  let endpoints =
+    List.map endpoints ~f:(fun (id, addr) ->
+        let open Zmq.Socket in
+        let sock = create context dealer in
+        set_identity sock cid ;
+        connect sock ("tcp://" ^ addr) ;
+        (id, sock))
   in
-  let pub_socket = Zmq_lwt.Socket.of_socket pub_socket in
-  let deal_socket = Zmq_lwt.Socket.of_socket deal_socket in
   let t =
     { cid
     ; context
-    ; pub_socket
-    ; deal_socket
+    ; endpoints=
+        List.map endpoints ~f:(fun (id, sock) ->
+            (id, Zmq_lwt.Socket.of_socket sock))
     ; in_flight= Hashtbl.create (module String)
     ; fulfilled= Hash_set.create (module String) }
   in
-  (t, recv_loop t)
+  let ps =
+    let%lwt () = recv_loop t in
+    List.iter endpoints ~f:(fun (_, sock) -> Zmq.Socket.close sock) ;
+    Zmq.Context.terminate context ;
+    Lwt.return_unit
+  in
+  (t, ps)

@@ -3,7 +3,10 @@
 **.swn
 **.DS_Store
 **.install
+*Session.vim*
 
+
+deps/
 _build/
 logs/
 libpaxos/
