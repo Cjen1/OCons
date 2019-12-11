@@ -89,11 +89,6 @@ let recv_loop t =
 
 let new_client ?(cid = Types.create_id ()) ~endpoints () =
   let context = Zmq.Context.create () in
-  let sock = Zmq.Socket.create context Zmq.Socket.router in
-  let () =
-    let open Zmq.Socket in
-    set_identity sock (cid ^ "_recv")
-  in
   let endpoints =
     List.map endpoints ~f:(fun (id, addr) ->
         let open Zmq.Socket in

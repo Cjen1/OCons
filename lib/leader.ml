@@ -52,7 +52,7 @@ let p1a (t : t) () =
       let ballot = Ballot.succ_exn ballot t.id in
       let p1a = ({ballot} : Messaging.p1a) in
       t.leader_state <- Deciding {ballot; quorum= t.quorum_p1 ()} ;
-      Msg_layer.send_msg t.msg_layer p1a ~msg_filter:Messaging.p1a ;
+      Msg_layer.send_all t.msg_layer p1a ~msg_filter:Messaging.p1a ;
       LLog.debug (fun m -> m "p1a: sent, now awaiting quorum") ;
       Lwt.return_unit
   | _ ->
@@ -122,37 +122,30 @@ let preempt_p1 t incomming_ballot =
 let nack_p1_preempted_callback t (nack : nack_p1) = preempt_p1 t nack.ballot
 
 let p2a t pval () =
-  let _update_proposal_state =
-    let cmd, slot = (Pval.get_cmd pval, Pval.get_slot pval) in
-    Hashtbl.set t.proposal_state ~key:cmd ~data:(In_Flight slot)
-  in
   LLog.debug (fun m -> m "Sending p2a msgs") ;
   match t.leader_state with
   | Leader _ ->
+      let _update_proposal_state =
+        let cmd, slot = (Pval.get_cmd pval, Pval.get_slot pval) in
+        Hashtbl.set t.proposal_state ~key:cmd ~data:(In_Flight slot)
+      in
       let p2a = {pval} in
       let result, result_fulfiller = Lwt.task () in
       let quorum = t.quorum_p2 () in
-      ( match
-          ( Hashtbl.add t.in_flight ~key:(Pval.get_slot pval)
-              ~data:{quorum; pval}
-          , Hashtbl.add t.awaiting_sm ~key:(Pval.get_slot pval)
-              ~data:result_fulfiller )
-        with
-      | `Ok, `Ok ->
-          ()
-      | _ ->
-          LLog.err (fun m -> m "error in p2a") ;
-          assert false ) ;
-      Msg_layer.send_msg t.msg_layer p2a ~msg_filter:Messaging.p2a ;
-      result
+      Hashtbl.add_exn t.in_flight ~key:(Pval.get_slot pval) ~data:{quorum; pval} ;
+      Hashtbl.add_exn t.awaiting_sm ~key:(Pval.get_slot pval)
+        ~data:result_fulfiller ;
+      Msg_layer.send_all t.msg_layer p2a ~msg_filter:Messaging.p2a ;
+      let%lwt result = result in
+      Lwt.return_some result
   | Not_Leader _ | Deciding _ ->
-      Lwt.return @@ StateMachine.op_result_failure ()
+      Lwt.return_none
 
 let broadcast_decision t pval =
   let slot = Pval.get_slot pval in
   let command = Pval.get_cmd pval in
   let decision_response = {slot; command} in
-  Msg_layer.send_msg t.msg_layer ~msg_filter:Messaging.decision_response
+  Msg_layer.send_all t.msg_layer ~msg_filter:Messaging.decision_response
     decision_response
 
 let update_state t slot command =
@@ -175,8 +168,6 @@ let p2b_callback t (p2b : p2b) =
   | Some {quorum; pval; _} when Pval.equal pval p2b.pval ->
       quorum.add p2b.id ;
       if quorum.sufficient () then decide t p2b.pval
-  | Some {pval; _} when not (Pval.equal pval p2b.pval) ->
-      assert false
   | _ ->
       () ) ;
   Lwt.return_unit
@@ -277,10 +268,31 @@ let client t (client_request : client_request) writer () =
           writer client_response
       | Received ->
           let slot = Utils.PQueue.take t.slot_queue in
-          let%lwt result = p2a t (ballot, slot, client_request.command) () in
-          let client_response = {result} in
-          LLog.debug (fun m -> m "Sending client response for slot:%d" slot) ;
-          writer client_response )
+          let rec loop () =
+            let%lwt result = p2a t (ballot, slot, client_request.command) () in
+            match result with
+            | Some result ->
+                let client_response = {result} in
+                LLog.debug (fun m ->
+                    m "Sending client response for slot:%d" slot) ;
+                writer client_response
+            | None ->
+                loop ()
+          in
+          loop () )
+
+let keep_alive t =
+  let rec loop () =
+    MLog.debug (fun m -> m "sending keepalive") ;
+    (match t.leader_state with
+    | Leader _ -> 
+      Msg_layer.send_all_untyped t.msg_layer ~filter:"keepalive" "" 
+    | _ -> ()
+    );
+    let%lwt () = Lwt_unix.sleep (t.msg_layer.alive_timeout /. 3.) in
+    loop ()
+  in
+  loop ()
 
 let create ~msg_layer ~id ~endpoints ~client_port =
   let quorum_p1, quorum_p2 = Quorum.majority endpoints in
@@ -338,11 +350,11 @@ let create ~msg_layer ~id ~endpoints ~client_port =
     Msg_layer.attach_watch t.msg_layer ~msg_filter:Messaging.nack_p2
       ~callback:(preempt_nack_p2 t)
   in
-  let c =
+  let cp =
     Msg_layer.client_socket msg_layer ~callback:(client t) ~port:client_port
   in
   let sp = state_advancer t () in
-  let p_p1a =
+  let p1ap =
     match nodeidnum with
     | 1 ->
         LLog.debug (fun m -> m "Primary -> attempting p1a") ;
@@ -358,7 +370,8 @@ let create ~msg_layer ~id ~endpoints ~client_port =
         | Error `NodeNotFound ->
             assert false )
   in
-  (t, Lwt.join [c; sp; p_p1a])
+  let kp = keep_alive t in
+  (t, Lwt.join [cp; sp; p1ap; kp])
 
 let create_independent ~id ~endpoints ~client_port ~alive_timeout =
   let%lwt msg_layer, psml =

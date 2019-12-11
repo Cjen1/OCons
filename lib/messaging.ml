@@ -101,7 +101,6 @@ let to_string : type a. a msg_typ -> a -> string =
     | CRp ->
         Protobuf.Encoder.encode_exn client_response_to_protobuf msg
   in
-  MLog.debug (fun m -> m "packet = %s" (Bytes.to_string bytes)) ;
   Bytes.to_string bytes
 
 let from_bytes : type a. a msg_typ -> bytes -> a = function

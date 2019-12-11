@@ -1,11 +1,33 @@
 open Messaging
 
-type t
+module Msg_Queue : sig
+  type t
+end 
+
+type t =
+  { endpoints: (string, string) Base.Hashtbl.t
+  ; last_rec: (string, float) Base.Hashtbl.t
+  ; id: string
+  ; alive_timeout: float
+  ; context: Zmq.Context.t
+  ; incomming: [`Router] Zmq_lwt.Socket.t
+  ; outgoing: [`Router] Zmq_lwt.Socket.t
+  ; msg_queues: (string, Msg_Queue.t) Base.Hashtbl.t
+  ; subs: (string, (string -> string -> unit Lwt.t) list) Base.Hashtbl.t
+  ; mutable node_dead_watch: unit Lwt.t option }
+
+
+val attach_watch_src :
+  t -> msg_filter:'a msg_filter -> callback:(string -> 'a -> unit Lwt.t) -> unit
 
 val attach_watch :
   t -> msg_filter:'a msg_filter -> callback:('a -> unit Lwt.t) -> unit
 
-val send_msg : t -> msg_filter:'a msg_filter -> 'a -> unit
+val send : t -> msg_filter:'a msg_filter -> dest:string -> 'a -> unit
+val send_untyped : t -> filter:string -> dest:string -> string -> unit
+
+val send_all : t -> msg_filter:'a msg_filter -> 'a -> unit
+val send_all_untyped : t -> filter:string -> string -> unit
 
 val node_alive : t -> node:string -> (bool, [> `NodeNotFound]) Base.Result.t
 

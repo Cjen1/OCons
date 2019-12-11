@@ -50,14 +50,14 @@ type t =
   ; incomming: [`Router] Zmq_lwt.Socket.t
   ; outgoing: [`Router] Zmq_lwt.Socket.t
   ; msg_queues: (string, Msg_Queue.t) Base.Hashtbl.t
-  ; subs: (string, (string -> unit Lwt.t) list) Base.Hashtbl.t
+  ; subs: (string, (string -> string -> unit Lwt.t) list) Base.Hashtbl.t
   ; mutable node_dead_watch: unit Lwt.t option }
 
 let create_incoming id port ctx =
   let socket = Zmq.Socket.create ctx Zmq.Socket.router in
+  Zmq.Socket.set_router_mandatory socket true ;
   MLog.debug (fun m -> m "Setting identity for %s = %s" port id) ;
   Zmq.Socket.set_identity socket id ;
-  Zmq.Socket.set_router_mandatory socket true ;
   let address = "tcp://*:" ^ port in
   Zmq.Socket.bind socket address ;
   Zmq_lwt.Socket.of_socket socket
@@ -79,13 +79,13 @@ let run t () =
   let rec loop () =
     let%lwt resp = recv_inc ~sock:t.incomming in
     ( match resp with
-    | Ok (filter, node_name, msg) ->
-        MLog.debug (fun m -> m "Got filter: %s" filter) ;
-        Base.Hashtbl.set t.last_rec ~key:node_name ~data:(Unix.time ()) ;
+    | Ok (filter, src, msg) ->
+        MLog.debug (fun m -> m "Got filter %s from %s" filter src) ;
+        Base.Hashtbl.set t.last_rec ~key:src ~data:(Unix.time ()) ;
         Lwt.async (fun () ->
             match Base.Hashtbl.find t.subs filter with
             | Some v ->
-                Lwt_list.iter_p (fun f -> f msg) v
+                Lwt_list.iter_p (fun f -> f src msg) v
             | None ->
                 Lwt.return_unit)
     | Error _ ->
@@ -95,7 +95,20 @@ let run t () =
   MLog.debug (fun m -> m "Spooling up msg layer") ;
   loop ()
 
+let attach_watch_src_untyped t ~filter ~callback = 
+  Base.Hashtbl.change t.subs filter ~f:(function
+    | Some ls ->
+        Some (callback :: ls)
+    | None ->
+        Some [callback]) ;
+  MLog.debug (fun m -> m "Attached watch to %s" filter)
+
+let attach_watch_src t ~msg_filter ~callback =
+  let callback src msg = let msg = msg |> from_string msg_filter.typ in callback src msg in
+  attach_watch_src_untyped t ~filter:msg_filter.filter ~callback
+
 let attach_watch_untyped t ~filter ~callback =
+  let callback = fun _src msg -> callback msg in
   Base.Hashtbl.change t.subs filter ~f:(function
     | Some ls ->
         Some (callback :: ls)
@@ -130,12 +143,20 @@ let retry ?(tag = "") ~finished ~timeout f =
   in
   loop timeout
 
-let send_msg_untyped t ~filter msg =
+let send_untyped t ~filter ~dest msg =
+  let q = Hashtbl.find_exn t.msg_queues dest in
+  Msg_Queue.send q (filter, msg)
+
+let send t ~msg_filter ~dest msg =
+  let msg = to_string msg_filter.typ msg in
+  send_untyped t ~filter:msg_filter.filter ~dest msg
+
+let send_all_untyped t ~filter msg =
   Hashtbl.iter t.msg_queues ~f:(fun queue -> Msg_Queue.send queue (filter, msg))
 
-let send_msg t ~msg_filter msg =
+let send_all t ~msg_filter msg =
   let msg = to_string msg_filter.typ msg in
-  send_msg_untyped t ~filter:msg_filter.filter msg
+  send_all_untyped t ~filter:msg_filter.filter msg
 
 let last_rec_lookup t node =
   match Base.Hashtbl.find t.last_rec node with
@@ -183,15 +204,14 @@ let node_dead_watch t ~node ~callback =
   Ok (Lwt.async (fun () -> p))
 
 let client_socket t ~callback ~port =
-  let sock = Zmq.Socket.create t.context Zmq.Socket.router in
-  let () =
+  let sock =
+    let sock = Zmq.Socket.create t.context Zmq.Socket.router in
+    Zmq.Socket.set_router_mandatory sock true ;
     MLog.debug (fun m -> m "Setting identity for %s to %s" t.id port) ;
     Zmq.Socket.set_identity sock t.id ;
-    Zmq.Socket.set_router_mandatory sock true ;
-    Zmq.Socket.bind sock ("tcp://*:" ^ port)
+    Zmq.Socket.bind sock ("tcp://*:" ^ port);
+    Zmq_lwt.Socket.of_socket sock 
   in
-  let open Zmq_lwt.Socket in
-  let sock = of_socket sock in
   let rec loop () =
     MLog.debug (fun m -> m "client_sock: awaiting conn on %s" port) ;
     let%lwt resp = recv_client_req ~sock in
@@ -210,17 +230,12 @@ let client_socket t ~callback ~port =
   in
   loop ()
 
-let keep_alive t =
-  let rec loop () =
-    MLog.debug (fun m -> m "sending keepalive") ;
-    send_msg_untyped t ~filter:"keepalive" "" ;
-    let%lwt () = Lwt_unix.sleep (t.alive_timeout /. 2.) in
-    loop ()
-  in
-  loop ()
-
 let create ~node_list ~id ~alive_timeout =
-  let ctx = Zmq.Context.create () in
+  let ctx = 
+    let ctx = Zmq.Context.create () in
+    Zmq.Context.set_io_threads ctx 2;
+    ctx
+  in 
   let endpoints = Hashtbl.of_alist_exn (module String) node_list in
   let system_port =
     Hashtbl.find_exn endpoints id
@@ -259,4 +274,4 @@ let create ~node_list ~id ~alive_timeout =
         let p = Msg_Queue.loop data in
         p :: acc)
   in
-  Lwt.return (t, Lwt.join ([run t (); keep_alive t] @ mq_ps))
+  Lwt.return (t, Lwt.join ([run t (); ] @ mq_ps))

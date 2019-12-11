@@ -15,7 +15,7 @@ type t =
   ; wal: Unix.file_descr
   ; msg_layer: Msg_layer.t }
 
-let p1a_callback t (p1a : p1a) =
+let p1a_callback t src (p1a : p1a) =
   let open Ballot.Infix in
   ALog.debug (fun m ->
       m "Got p1a msg, ballot=%s" @@ Ballot.to_string p1a.ballot) ;
@@ -30,12 +30,12 @@ let p1a_callback t (p1a : p1a) =
         Base.Hashtbl.data t.accepted
         (* TODO reduce this? Can be done by including a high water mark in p1a message decisions *)
     }
-    |> Msg_layer.send_msg t.msg_layer ~msg_filter:p1b )
+    |> Msg_layer.send t.msg_layer ~msg_filter:p1b ~dest:src)
   else
-    {ballot= t.ballot_num} |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p1 ;
+    {ballot= t.ballot_num} |> Msg_layer.send t.msg_layer ~msg_filter:nack_p1 ~dest:src;
   Lwt.return_unit
 
-let p2a_callback t (p2a : p2a) =
+let p2a_callback t src (p2a : p2a) =
   let open Ballot.Infix in
   ALog.debug (fun m -> m "Got p2a msg") ;
   let ((ib, is, _) as ipval) = p2a.pval in
@@ -44,10 +44,10 @@ let p2a_callback t (p2a : p2a) =
     Base.Hashtbl.set t.accepted ~key:is ~data:ipval ;
     ALog.debug (fun m -> m "Sending p2b msg") ;
     {id= t.id; ballot= t.ballot_num; pval= ipval}
-    |> Msg_layer.send_msg t.msg_layer ~msg_filter:p2b )
+    |> Msg_layer.send t.msg_layer ~msg_filter:p2b ~dest:src)
   else (
     ALog.debug (fun m -> m "Is incorrect ballot") ;
-    {ballot= t.ballot_num} |> Msg_layer.send_msg t.msg_layer ~msg_filter:nack_p2
+    {ballot= t.ballot_num} |> Msg_layer.send t.msg_layer ~msg_filter:nack_p2 ~dest:src
     ) ;
   Lwt.return_unit
 
@@ -61,9 +61,9 @@ let create ~wal_loc ~msg_layer ~id =
         @@ int_of_string "0x666"
     ; msg_layer }
   in
-  Msg_layer.attach_watch msg_layer ~msg_filter:Messaging.p1a
+  Msg_layer.attach_watch_src msg_layer ~msg_filter:Messaging.p1a
     ~callback:(p1a_callback t) ;
-  Msg_layer.attach_watch msg_layer ~msg_filter:Messaging.p2a
+  Msg_layer.attach_watch_src msg_layer ~msg_filter:Messaging.p2a
     ~callback:(p2a_callback t) ;
   (t, Lwt.return_unit)
 
