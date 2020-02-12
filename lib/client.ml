@@ -1,5 +1,5 @@
 open Base
-open State_machine
+open Types
 
 let client = Logs.Src.create "Client" ~doc:"Client module"
 
@@ -16,8 +16,8 @@ let serialise_request op =
   let cid = Types.create_id () in
   ({command= {op; id= cid}} : Messaging.client_request)
 
-let deserialise_response response : State_machine.StateMachine.op_result =
-  Messaging.(from_string CRp response).result
+let deserialise_response response : StateMachine.op_result =
+  Messaging.(from_string client_response response).result
 
 let rid = ref 0
 
@@ -87,18 +87,25 @@ let recv_loop t =
   in
   List.map t.endpoints ~f:recv_loop |> Lwt.join
 
+let stop t = 
+  let%lwt () = Lwt_list.iter_s 
+    (fun (_, sock) -> Zmq_lwt.Socket.close sock) t.endpoints 
+  in 
+  Zmq.Context.terminate t.context ;
+    Lwt.return_unit
+
 let new_client ?(cid = Types.create_id ()) ~endpoints () =
   let context = Zmq.Context.create () in
   let endpoints =
     List.map endpoints ~f:(fun (id, addr) ->
         let open Zmq.Socket in
         let sock = create context dealer in
-        set_identity sock cid ;
+        set_identity sock (Int.to_string cid) ;
         connect sock ("tcp://" ^ addr) ;
         (id, sock))
   in
   let t =
-    { cid
+    { cid=Int.to_string(cid)
     ; context
     ; endpoints=
         List.map endpoints ~f:(fun (id, sock) ->
@@ -106,10 +113,4 @@ let new_client ?(cid = Types.create_id ()) ~endpoints () =
     ; in_flight= Hashtbl.create (module String)
     ; fulfilled= Hash_set.create (module String) }
   in
-  let ps =
-    let%lwt () = recv_loop t in
-    List.iter endpoints ~f:(fun (_, sock) -> Zmq.Socket.close sock) ;
-    Zmq.Context.terminate context ;
-    Lwt.return_unit
-  in
-  (t, ps)
+  (t, recv_loop t)

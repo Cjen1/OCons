@@ -45,33 +45,6 @@ end = struct
     Lwt_mutex.unlock t.m ; e
 end
 
-module PQueue = struct
-  (*
-  open Core_kernel
-  open Types
-
-  type t = {mutable high_slot: slot_number; q: slot_number Core_kernel.Pairing_Heap.t}
-
-  let create () = {q= Pairing_Heap.create ~cmp:Int.compare (); high_slot= 0}
-
-  let add e t = Pairing_Heap.add t.q e
-
-  let take t =
-    match Pairing_Heap.is_empty t.q with
-    | false ->
-        Pairing_Heap.pop_exn t.q
-    | true ->
-        let slot = t.high_slot in
-        t.high_slot <- t.high_slot + 1 ;
-        slot
-    *)
-  type t = int option
-
-  let create () = Some 1
-  let add e t = ()
-  let take t = 1
-end
-
 (* TODO move create_socket out of critical path? *)
 let connect uri =
   (* TODO change out from TCP? *)

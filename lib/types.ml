@@ -2,163 +2,269 @@
 
 open Base
 
-(* Types of unique identifiers *)
-type unique_id = string [@@deriving protobuf]
+type time = float
 
-(* Reproduce some of the Uuid manipulation functions we'll use.
+let time_now : unit -> time = fun () -> Unix.time ()
 
-   This is so if we change the type of unique ids in the future then we can update these functions
-   without breaking the rest of the program *)
-(*let unique_ids_equal = Uuid.equal
-  *)
+type unique_id = int [@@deriving protobuf]
 
-type leader_id = unique_id [@@deriving protobuf]
+let create_id () = Random.int32 Int32.max_value |> Int32.to_int_exn
 
-let create_id () : unique_id = Uuid_unix.create () |> Uuid.to_string
+type node_id = unique_id [@@deriving protobuf]
 
-(* Unique identifier for a given command issued by a client *)
+type node_addr = string
+
+type client_id = unique_id
+
 type command_id = int [@@deriving protobuf]
 
-(* Type of operations that can be issued by a client:
-    -   These are the initial simple operations for a kv store.
-    -   Each operation is applied to a state giving a new state.
-    -   Idea is that same sequence of operations, given same initial state
-        produces the same final state.
-    -   Represent transitions in replicated state machine.
+module Lookup = struct
+  open Base
 
-  Note:
-    -   Keys are unique in store.
+  type ('a, 'b) t = ('a, 'b) Base.Hashtbl.t
 
-    -   If create is applied and key already present, then state
-        is unaffected (and failure is returned).
+  let get t key =
+    Hashtbl.find t key
+    |> Result.of_option ~error:(Invalid_argument "No such key")
 
-    -   If read is applied and key is not present, then state
-        is unaffected (and failure is returned).
+  let get_exn t key = Result.ok_exn (get t key)
 
-    -   If update is applied and key is not present, then state
-        is unaffected (and failure is returned).
+  let remove t key = Hashtbl.remove t key
 
-    -   If remove is applied and key is not present, then state
-        is unaffected (and failure is returned).
-*)
+  let set t ~key ~data = Hashtbl.set t ~key ~data ; t
 
-type key = string [@@deriving protobuf]
+  let removep t p =
+    Hashtbl.iteri t ~f:(fun ~key ~data -> if p data then remove t key)
 
-type value = string [@@deriving protobuf]
+  let create key_module = Base.Hashtbl.create key_module
 
-type operation =
-  | Nop [@key 1]
-  (* Idempotent no operation *)
-  | Create of key * value [@key 2]
-  (* Add (k,v) to the store *)
-  | Read of key [@key 3]
-  (* Read v for k from store *)
-  | Update of key * value [@key 4]
-  (* Update (k,_) to (k,v) in store *)
-  | Remove of key [@key 5]
-  | Reconfigure of string list (*leaders*) [@key 6]
-[@@deriving protobuf]
+  let fold t ~f ~init =
+    Base.Hashtbl.fold t ~f:(fun ~key:_ ~data acc -> f data acc) ~init
+end
 
-(* Types of results that can be returned to a client
+module StateMachine : sig
+  type t
 
-   Note:
-    -   These represent application-specific results. A client receiving any of
-        these results means that the replicated state machines decided upon
-        these commands in the sequence, it is just that the command itself
-        may have failed in an application context.
-*)
-type result =
-  | Success [@key 1] (* Indicates operation was successfully performed by replicas *)
-  | Failure [@key 2] (* Indicates operation was not successfully performed by replicas *)
-  | ReadSuccess of value [@key 3]
-[@@deriving protobuf]
+  type key = string [@@deriving protobuf]
 
-let result_to_string = function
-  | Success ->
-      "Success"
-  | Failure ->
-      "Failure"
-  | ReadSuccess v ->
-      Printf.sprintf "ReadSuccess(%s)" v
+  type value = string [@@deriving protobuf]
 
-(* Indicates read success with associated value *)
+  type op = Read of key [@key 1] | Write of key * value [@key 2]
+  [@@deriving protobuf]
 
-(* State of application is a dictionary of strings keyed by integers *)
-type app_state = (string, string) Base.Hashtbl.t
+  type command = {op: op; id: command_id} [@@deriving protobuf]
 
-(* Initial state of application is the empty dictionary *)
-let initial_state : unit -> (key, value) Hashtbl.t =
- fun () -> Hashtbl.create (module String)
+  type op_result =
+    | Success [@key 1]
+    | Failure [@key 2]
+    | ReadSuccess of key [@key 3]
+  [@@deriving protobuf]
 
-(* Apply takes a state and an operation and performs that operation on that
-   state, returning the new state and a result *)
-let apply (state : app_state) (op : operation) : result =
-  match op with
-  | Nop ->
-      Success
-  | Create (k, v) | Update (k, v) ->
-      Base.Hashtbl.set state ~key:k ~data:v ;
-      Success
-  | Read k -> (
-    match Base.Hashtbl.find state k with
-    | None ->
-        Failure
-    | Some v ->
-        ReadSuccess v )
-  | Reconfigure _ ->
-      Success
-  | Remove k -> (
-    match Base.Hashtbl.find_and_remove state k with
-    | Some _ ->
+  val op_result_failure : unit -> op_result
+
+  val update : t -> command -> op_result
+
+  val create : unit -> t
+end = struct
+  type key = string [@@deriving protobuf]
+
+  type value = string [@@deriving protobuf]
+
+  type t = (key, value) Hashtbl.t
+
+  type op = Read of key [@key 1] | Write of key * value [@key 2]
+  [@@deriving protobuf]
+
+  type command = {op: op [@key 1]; id: command_id [@key 2]}
+  [@@deriving protobuf]
+
+  type op_result =
+    | Success [@key 1]
+    | Failure [@key 2]
+    | ReadSuccess of key [@key 3]
+  [@@deriving protobuf]
+
+  let op_result_failure () = Failure
+
+  let update : t -> command -> op_result =
+   fun t -> function
+    | {op= Read key; _} -> (
+      match Hashtbl.find t key with Some v -> ReadSuccess v | None -> Failure )
+    | {op= Write (key, value); _} ->
+        Hashtbl.set t ~key ~data:value ;
         Success
-    | None ->
-        Failure )
 
-type command = unique_id * operation [@@deriving protobuf]
+  let create () = Hashtbl.create (module String)
+end
 
-(* Slots identify the ordering in which a replica wishes to assign commands *)
-type slot_number = int [@@deriving protobuf]
+type term = int [@@deriving protobuf]
 
-(* Proposals are pairs of slot numbers and the command commited to that slot *)
-type proposal = slot_number * command [@@deriving protobuf]
+let get_term_from_file file =
+  let open Unix in
+  let term_fd = openfile file [O_RDWR] 0o640 in
+  let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input term_fd in
+  let%lwt (term : term) =
+    let term = 0 in
+    let rec loop (term : int) =
+      let%lwt value =
+        try%lwt
+          let%lwt v = Lwt_io.read_value input_channel in
+          Lwt.return_some v
+        with End_of_file -> Lwt.return_none
+      in
+      match value with Some term -> loop term | None -> Lwt.return term
+    in
+    loop term
+  in
+  let%lwt () = Lwt_io.close input_channel in
+  close term_fd ; Lwt.return term
 
-(* Equality functions for commands and proposals.
-   These are necessary because Core.phys_equal does not seem to compare
-   UUIDs correctly for equality. Hence we just do an equality check
-   over the structure of commands and proposals *)
-let commands_equal (c : command) (c' : command) : bool =
-  let command_id, oper = c in
-  let command_id', oper' = c' in
-  String.equal command_id command_id' && Stdlib.compare oper oper' == 0
+type log_index = int [@@deriving protobuf]
 
-let proposals_equal (p : proposal) (p' : proposal) : bool =
-  let slot_out, c = p in
-  let slot_out', c' = p' in
-  commands_equal c c' && slot_out = slot_out'
+let log_index_mod : int Base__.Hashtbl_intf.Key.t = (module Int)
 
-(* Pretty-printable string for a given operation *)
-let string_of_operation oper =
-  let string_of_kv (k, v) = Printf.sprintf "(%s,%s)" k v in
-  match oper with
-  | Nop ->
-      "Nop"
-  | Create (k, v) ->
-      "Create " ^ string_of_kv (k, v)
-  | Read k ->
-      "Read (" ^ k ^ ")"
-  | Update (k, v) ->
-      "Update " ^ string_of_kv (k, v)
-  | Remove k ->
-      "Remove (" ^ k ^ ")"
-  | Reconfigure _ ->
-      "Reconfigure"
+type log_entry =
+  { command: StateMachine.command [@key 1]
+  ; term: term [@key 2]
+  ; index: log_index [@key 3] }
+[@@deriving protobuf]
 
-(* Pretty-printable string for a given command *)
-let string_of_command (cmd : command) =
-  let command_id, operation = cmd in
-  "<" ^ command_id ^ "," ^ string_of_operation operation ^ ">"
+module Log = struct
+  type t = (log_index, log_entry) Lookup.t
 
-(* Pretty-printable string for a given proposal *)
-let string_of_proposal p =
-  let slot_no, cmd = p in
-  "<" ^ Int.to_string slot_no ^ ", " ^ string_of_command cmd ^ ">"
+  let get = Lookup.get
+
+  let get_exn = Lookup.get_exn
+
+  type op = Set of log_index * log_entry | Remove of log_index
+
+  let set t ~index ~value : t * op list =
+    (Lookup.set t ~key:index ~data:value, [Set (index, value)])
+
+  let removep t p =
+    let acc = ref [] in
+    Lookup.removep t (fun x ->
+        if p x then (
+          acc := Remove x.index :: !acc ;
+          true )
+        else false) ;
+    !acc
+
+  let get_max_index (t : t) =
+    Lookup.fold t ~init:1 ~f:(fun v acc -> Int.max v.index acc)
+
+  let entries_after log leaderCommit =
+    let rec loop i acc =
+      match Lookup.get log i with
+      | Ok v ->
+          loop (i + 1) (v :: acc)
+      | Error _ ->
+          acc
+    in
+    List.rev @@ loop (leaderCommit + 1) []
+
+  let add_entries_remove_conflicts t entries =
+    (* ops accumulator is newest -> oldest ordering *)
+    let rec loop t ops = function
+      | [] ->
+          (t, ops)
+      | entry :: entries ->
+        (* ordering of removals doesn't matter *)
+          let removed =
+            match get t entry.index with
+            | Ok curr_entry when not Int.(curr_entry.term = entry.term) ->
+                (* Remove all entries which conflict with this entry *)
+                removep t (fun x -> x.index >= curr_entry.index)
+            | _ ->
+                []
+          in
+          let t, ops_added = 
+            match get t entry.index with 
+            | Error _ -> 
+              set t ~index:entry.index ~value:entry
+            | Ok _ -> t, []
+          in
+          loop t (ops_added @ removed @ ops) entries
+    in
+    loop t [] (List.rev entries)
+
+  let append t v =
+    let max_index = get_max_index t in
+    set t ~index:(max_index + 1) ~value:v
+
+  let apply t op =
+    match op with
+    | Set (index, value) ->
+        set t ~index ~value |> fst
+    | Remove index ->
+        Lookup.remove t index ; t
+
+  let get_log_from_file file =
+    let open Unix in
+    let log_fd = openfile file [O_RDWR] 0o640 in
+    let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input log_fd in
+    let%lwt (log : t) =
+      let init_log = Lookup.create log_index_mod in
+      let rec loop curr_log =
+        let%lwt value =
+          try%lwt
+            let%lwt v = Lwt_io.read_value input_channel in
+            Lwt.return_some v
+          with End_of_file -> Lwt.return_none
+        in
+        match value with
+        | Some v ->
+            let next_log = apply curr_log v in
+            loop next_log
+        | None ->
+            Lwt.return curr_log
+      in
+      loop init_log
+    in
+    let%lwt () = Lwt_io.close input_channel in
+    close log_fd ; Lwt.return log
+end
+
+type log = Log.t
+
+type partial_log = log_entry list
+
+type persistent = Log_entry of log_entry
+
+module Config = struct
+  type file = {channel: Lwt_io.output_channel; fd: Unix.file_descr}
+
+  type t =
+    { majority: int
+    ; followers: (node_id, node_addr) List.Assoc.t
+    ; election_timeout: float
+    ; idle_timeout: float
+    ; log_file: file
+    ; term_file: file
+    ; num_nodes: int
+    ; node_id: node_id }
+
+  let get_addr_from_id_exn config id =
+    List.Assoc.find_exn config.followers id ~equal:Int.equal
+
+  let get_id_from_addr_exn config id =
+    List.Assoc.find_exn (List.Assoc.inverse config.followers) id ~equal:String.equal
+
+  let write_to_term t (v : term) =
+    let%lwt () = Lwt_io.write_value t.term_file.channel v in
+    let%lwt () = Lwt_io.flush t.term_file.channel in
+    Lwt.return @@ Unix.fsync t.term_file.fd
+
+  let write_to_log t (v : Log.op) =
+    let%lwt () = Lwt_io.write_value t.log_file.channel v in
+    let%lwt () = Lwt_io.flush t.log_file.channel in
+    Lwt.return @@ Unix.fsync t.term_file.fd
+
+  (* vs is oldest to newest *) 
+  let write_all_to_log t (vs : Log.op list) =
+    let%lwt () = Lwt_list.iter_s (Lwt_io.write_value t.log_file.channel) vs in
+    let%lwt () = Lwt_io.flush t.log_file.channel in
+    Lwt.return @@ Unix.fsync t.term_file.fd
+end
+
+type config = Config.t

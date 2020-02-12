@@ -1,38 +1,35 @@
 open Types
-open State_machine
 
 let msg = Logs.Src.create "Msg" ~doc:"Messaging module"
 
 module MLog = (val Logs.src_log msg : Logs.LOG)
 
-type client_request = {command: StateMachine.command [@key 1]}
+type state_machine_command = StateMachine.command [@@deriving protobuf]
+
+type client_request = {command: state_machine_command [@key 1]}
 [@@deriving protobuf]
 
-type replica_request =
-  {slot_num: Types.slot_number [@key 1]; command: StateMachine.command [@key 2]}
+type request_vote_request =
+  {term: term [@key 1]; leaderCommit: log_index [@key 2]}
 [@@deriving protobuf]
 
-type p1a = {ballot: Ballot.t [@key 1] (*; high_slot : slotber [@key 2]*)}
+type request_vote_response =
+  { term: term [@key 1]
+  ; voteGranted: bool [@key 2]
+  ; entries: log_entry list [@key 3] }
 [@@deriving protobuf]
 
-type p1b =
-  { ballot: Ballot.t [@key 1]
-  ; accepted: Pval.t list [@key 2]
-  ; id: string [@key 3] }
+type append_entries_request =
+  { term: term [@key 1]
+  ; prevLogIndex: log_index [@key 2]
+  ; prevLogTerm: term [@key 3]
+  ; entries: log_entry list [@key 4]
+  ; leaderCommit: log_index [@key 5] }
 [@@deriving protobuf]
 
-type p2a = {pval: Pval.t [@key 1]} [@@deriving protobuf]
-
-type p2b =
-  {id: unique_id [@key 1]; ballot: Ballot.t [@key 2]; pval: Pval.t [@key 3]}
-[@@deriving protobuf]
-
-type nack_p1 = {ballot: Ballot.t [@key 1]} [@@deriving protobuf]
-
-type nack_p2 = {ballot: Ballot.t [@key 1]} [@@deriving protobuf]
-
-type decision_response =
-  {slot: Types.slot_number [@key 1]; command: StateMachine.command [@key 2]}
+type append_entries_response = {term: term [@key 1]; success: bool [@key 2]; 
+                                (* match index required since leader does not know what was sent to server *)
+                                matchIndex: log_index [@key 3]}
 [@@deriving protobuf]
 
 type client_response = {result: StateMachine.op_result [@key 1]}
@@ -40,14 +37,10 @@ type client_response = {result: StateMachine.op_result [@key 1]}
 
 type 'a msg_typ =
   | CRq : client_request msg_typ
-  | RRq : replica_request msg_typ
-  | P1a : p1a msg_typ
-  | P1b : p1b msg_typ
-  | P2a : p2a msg_typ
-  | P2b : p2b msg_typ
-  | Np1 : nack_p1 msg_typ
-  | Np2 : nack_p2 msg_typ
-  | DRp : decision_response msg_typ
+  | RVRq : request_vote_request msg_typ
+  | RVRp : request_vote_response msg_typ
+  | AERq : append_entries_request msg_typ
+  | AERp : append_entries_response msg_typ
   | CRp : client_response msg_typ
 
 type 'a msg_filter = {typ: 'a msg_typ; filter: string}
@@ -55,77 +48,61 @@ type 'a msg_filter = {typ: 'a msg_typ; filter: string}
 let client_request =
   {typ= (CRq : client_request msg_typ); filter= "client_request"}
 
-let replica_request =
-  {typ= (RRq : replica_request msg_typ); filter= "replica_request"}
+let request_vote_request =
+  {typ= (RVRq : request_vote_request msg_typ); filter= "request_vote_request"}
 
-let p1a = {typ= (P1a : p1a msg_typ); filter= "p1a"}
+let request_vote_response =
+  {typ= (RVRp : request_vote_response msg_typ); filter= "request_vote_response"}
 
-let p1b = {typ= (P1b : p1b msg_typ); filter= "p1b"}
+let append_entries_request =
+  { typ= (AERq : append_entries_request msg_typ)
+  ; filter= "append_entries_request" }
 
-let p2a = {typ= (P2a : p2a msg_typ); filter= "p2a"}
-
-let p2b = {typ= (P2b : p2b msg_typ); filter= "p2b"}
-
-let nack_p1 = {typ= (Np1 : nack_p1 msg_typ); filter= "nack_p1"}
-
-let nack_p2 = {typ= (Np2 : nack_p2 msg_typ); filter= "nack_p2"}
-
-let decision_response =
-  {typ= (DRp : decision_response msg_typ); filter= "decision_response"}
+let append_entries_response =
+  { typ= (AERp : append_entries_response msg_typ)
+  ; filter= "append_entries_response" }
 
 let client_response =
   {typ= (CRp : client_response msg_typ); filter= "client_response"}
 
-let to_string : type a. a msg_typ -> a -> string =
- fun typ msg ->
-  let bytes =
-    match typ with
-    | CRq ->
-        Protobuf.Encoder.encode_exn client_request_to_protobuf msg
-    | RRq ->
-        Protobuf.Encoder.encode_exn replica_request_to_protobuf msg
-    | P1a ->
-        Protobuf.Encoder.encode_exn p1a_to_protobuf msg
-    | P1b ->
-        Protobuf.Encoder.encode_exn p1b_to_protobuf msg
-    | P2a ->
-        Protobuf.Encoder.encode_exn p2a_to_protobuf msg
-    | P2b ->
-        Protobuf.Encoder.encode_exn p2b_to_protobuf msg
-    | Np1 ->
-        Protobuf.Encoder.encode_exn nack_p1_to_protobuf msg
-    | Np2 ->
-        Protobuf.Encoder.encode_exn nack_p2_to_protobuf msg
-    | DRp ->
-        Protobuf.Encoder.encode_exn decision_response_to_protobuf msg
-    | CRp ->
-        Protobuf.Encoder.encode_exn client_response_to_protobuf msg
-  in
-  Bytes.to_string bytes
+let client_request =
+  {typ= (CRq : client_request msg_typ); filter= "client_request"}
 
-let from_bytes : type a. a msg_typ -> bytes -> a = function
+let to_bytes : type a. a msg_filter -> a -> bytes =
+ fun filter msg ->
+  match filter.typ with
   | CRq ->
-      fun msg -> Protobuf.Decoder.decode_exn client_request_from_protobuf msg
-  | RRq ->
-      fun msg -> Protobuf.Decoder.decode_exn replica_request_from_protobuf msg
-  | P1a ->
-      fun msg -> Protobuf.Decoder.decode_exn p1a_from_protobuf msg
-  | P1b ->
-      fun msg -> Protobuf.Decoder.decode_exn p1b_from_protobuf msg
-  | P2a ->
-      fun msg -> Protobuf.Decoder.decode_exn p2a_from_protobuf msg
-  | P2b ->
-      fun msg -> Protobuf.Decoder.decode_exn p2b_from_protobuf msg
-  | Np1 ->
-      fun msg -> Protobuf.Decoder.decode_exn nack_p1_from_protobuf msg
-  | Np2 ->
-      fun msg -> Protobuf.Decoder.decode_exn nack_p2_from_protobuf msg
-  | DRp ->
-      fun msg -> Protobuf.Decoder.decode_exn decision_response_from_protobuf msg
+      Protobuf.Encoder.encode_exn client_request_to_protobuf msg
+  | RVRq ->
+      Protobuf.Encoder.encode_exn request_vote_request_to_protobuf msg
+  | RVRp ->
+      Protobuf.Encoder.encode_exn request_vote_response_to_protobuf msg
+  | AERq ->
+      Protobuf.Encoder.encode_exn append_entries_request_to_protobuf msg
+  | AERp ->
+      Protobuf.Encoder.encode_exn append_entries_response_to_protobuf msg
   | CRp ->
-      fun msg -> Protobuf.Decoder.decode_exn client_response_from_protobuf msg
+      Protobuf.Encoder.encode_exn client_response_to_protobuf msg
 
-let from_string typ msg = from_bytes typ (Bytes.of_string msg)
+let to_string filter msg = to_bytes filter msg |> Bytes.to_string
+
+let from_bytes : type a. a msg_filter -> bytes -> a =
+ fun filter msg ->
+  match filter.typ with
+  | CRq ->
+      Protobuf.Decoder.decode_exn client_request_from_protobuf msg
+  | RVRq ->
+      Protobuf.Decoder.decode_exn request_vote_request_from_protobuf msg
+  | RVRp ->
+      Protobuf.Decoder.decode_exn request_vote_response_from_protobuf msg
+  | AERq ->
+      Protobuf.Decoder.decode_exn append_entries_request_from_protobuf msg
+  | AERp ->
+      Protobuf.Decoder.decode_exn append_entries_response_from_protobuf msg
+  | CRp ->
+      Protobuf.Decoder.decode_exn client_response_from_protobuf msg
+
+let from_string filter msg = msg |> Bytes.of_string |> from_bytes filter
 
 let send_router ~(sock : [`Router] Zmq_lwt.Socket.t) ~dest ~msg =
   MLog.debug (fun m -> m "Sending to %s" dest) ;
@@ -145,14 +122,14 @@ let string_of_resp xs =
   Printf.sprintf "[%s]" (string_of_elts xs)
 
 let send_client_req ~dest ~rid ~msg =
-  let msg = to_string CRq msg in
+  let msg = to_string client_request msg in
   Zmq_lwt.Socket.send_all dest [rid; msg]
 
 let recv_client_req ~sock =
   let%lwt resp = Zmq_lwt.Socket.recv_all sock in
   ( match resp with
   | [addr; rid; msg] ->
-      let msg = from_string CRq msg in
+      let msg = from_string client_request msg in
       Ok (addr, rid, msg)
   | _ ->
       MLog.debug (fun m -> m "Invalid msg received %s" (string_of_resp resp)) ;
@@ -160,14 +137,14 @@ let recv_client_req ~sock =
   |> Lwt.return
 
 let send_client_rep ~dest ~rid ~msg ~sock =
-  let msg = to_string CRp msg in
+  let msg = to_string client_response msg in
   send_router ~sock ~dest ~msg:[rid; msg]
 
 let recv_client_rep ~sock =
   let%lwt resp = Zmq_lwt.Socket.recv_all sock in
   match resp with
   | [rid; msg] ->
-      let msg = from_string CRp msg in
+      let msg = from_string client_response msg in
       Lwt.return @@ Ok (rid, msg)
   | _ ->
       MLog.debug (fun m -> m "Invalid msg received") ;

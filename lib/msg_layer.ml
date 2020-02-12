@@ -43,15 +43,12 @@ end
 
 type t =
   { endpoints: (string, string) Base.Hashtbl.t
-  ; last_rec: (string, float) Base.Hashtbl.t
   ; id: string
-  ; alive_timeout: float
   ; context: Zmq.Context.t
   ; incomming: [`Router] Zmq_lwt.Socket.t
   ; outgoing: [`Router] Zmq_lwt.Socket.t
   ; msg_queues: (string, Msg_Queue.t) Base.Hashtbl.t
-  ; subs: (string, (string -> string -> unit Lwt.t) list) Base.Hashtbl.t
-  ; mutable node_dead_watch: unit Lwt.t option }
+  ; subs: (string, (string -> string -> unit Lwt.t) list) Base.Hashtbl.t }
 
 let create_incoming id port ctx =
   let socket = Zmq.Socket.create ctx Zmq.Socket.router in
@@ -81,7 +78,6 @@ let run t () =
     ( match resp with
     | Ok (filter, src, msg) ->
         MLog.debug (fun m -> m "Got filter %s from %s" filter src) ;
-        Base.Hashtbl.set t.last_rec ~key:src ~data:(Unix.time ()) ;
         Lwt.async (fun () ->
             match Base.Hashtbl.find t.subs filter with
             | Some v ->
@@ -95,7 +91,7 @@ let run t () =
   MLog.debug (fun m -> m "Spooling up msg layer") ;
   loop ()
 
-let attach_watch_src_untyped t ~filter ~callback = 
+let attach_watch_src_untyped t ~filter ~callback =
   Base.Hashtbl.change t.subs filter ~f:(function
     | Some ls ->
         Some (callback :: ls)
@@ -104,11 +100,14 @@ let attach_watch_src_untyped t ~filter ~callback =
   MLog.debug (fun m -> m "Attached watch to %s" filter)
 
 let attach_watch_src t ~msg_filter ~callback =
-  let callback src msg = let msg = msg |> from_string msg_filter.typ in callback src msg in
+  let callback src msg =
+    let msg = msg |> from_string msg_filter in
+    callback src msg
+  in
   attach_watch_src_untyped t ~filter:msg_filter.filter ~callback
 
 let attach_watch_untyped t ~filter ~callback =
-  let callback = fun _src msg -> callback msg in
+  let callback _src msg = callback msg in
   Base.Hashtbl.change t.subs filter ~f:(function
     | Some ls ->
         Some (callback :: ls)
@@ -117,7 +116,7 @@ let attach_watch_untyped t ~filter ~callback =
   MLog.debug (fun m -> m "Attached watch to %s" filter)
 
 let attach_watch t ~msg_filter ~callback =
-  let callback msg = msg |> from_string msg_filter.typ |> callback in
+  let callback msg = msg |> from_string msg_filter |> callback in
   attach_watch_untyped t ~filter:msg_filter.filter ~callback
 
 let retry ?(tag = "") ~finished ~timeout f =
@@ -148,60 +147,8 @@ let send_untyped t ~filter ~dest msg =
   Msg_Queue.send q (filter, msg)
 
 let send t ~msg_filter ~dest msg =
-  let msg = to_string msg_filter.typ msg in
+  let msg = to_string msg_filter msg in
   send_untyped t ~filter:msg_filter.filter ~dest msg
-
-let send_all_untyped t ~filter msg =
-  Hashtbl.iter t.msg_queues ~f:(fun queue -> Msg_Queue.send queue (filter, msg))
-
-let send_all t ~msg_filter msg =
-  let msg = to_string msg_filter.typ msg in
-  send_all_untyped t ~filter:msg_filter.filter msg
-
-let last_rec_lookup t node =
-  match Base.Hashtbl.find t.last_rec node with
-  | Some v ->
-      Base.Ok v
-  | None ->
-      Base.Error `NodeNotFound
-
-let node_alive t ~node =
-  let ( >>= ) v f = Base.Result.bind v ~f in
-  last_rec_lookup t node
-  >>= fun last_rec ->
-  Ok (Base.Float.( < ) (Unix.time () -. last_rec) t.alive_timeout)
-
-let node_dead_watch t ~node ~callback =
-  ( match t.node_dead_watch with
-  | Some p ->
-      MLog.debug (fun m -> m "Cancelling current node_dead_watch") ;
-      Lwt.cancel p
-  | None ->
-      () ) ;
-  let ( >>= ) v f = Base.Result.bind v ~f in
-  last_rec_lookup t node (* Ensure an error isn't thrown *)
-  >>= fun _ ->
-  let p =
-    let rec loop () =
-      let timeout_time = Hashtbl.find_exn t.last_rec node +. t.alive_timeout in
-      let current_time = Unix.time () in
-      match Float.(timeout_time > current_time) with
-      | true ->
-          let%lwt () = Lwt_unix.sleep (timeout_time -. current_time) in
-          loop ()
-      | _ ->
-          MLog.debug (fun m ->
-              m
-                "Node: %s timed out, would have expired at %f, executing \
-                 callback"
-                node timeout_time) ;
-          callback ()
-    in
-    try%lwt loop () with Lwt.Canceled -> Lwt.return_unit
-  in
-  t.node_dead_watch <- Some p ;
-  MLog.debug (fun m -> m "Attached dead_node watch to %s" node) ;
-  Ok (Lwt.async (fun () -> p))
 
 let client_socket t ~callback ~port =
   let sock =
@@ -209,8 +156,8 @@ let client_socket t ~callback ~port =
     Zmq.Socket.set_router_mandatory sock true ;
     MLog.debug (fun m -> m "Setting identity for %s to %s" t.id port) ;
     Zmq.Socket.set_identity sock t.id ;
-    Zmq.Socket.bind sock ("tcp://*:" ^ port);
-    Zmq_lwt.Socket.of_socket sock 
+    Zmq.Socket.bind sock ("tcp://*:" ^ port) ;
+    Zmq_lwt.Socket.of_socket sock
   in
   let rec loop () =
     MLog.debug (fun m -> m "client_sock: awaiting conn on %s" port) ;
@@ -218,11 +165,15 @@ let client_socket t ~callback ~port =
     ( match resp with
     | Ok (addr, rid, msg) ->
         MLog.debug (fun m -> m "one_use_socket: got req from %s" addr) ;
-        let writer msg =
-          MLog.debug (fun m -> m "client_socket: sending [%s;%s]" addr rid) ;
-          send_client_rep ~dest:addr ~rid ~msg ~sock
+        let callback () =
+          let%lwt msg = callback msg in
+          match msg with
+          | Some msg ->
+              send_client_rep ~dest:addr ~rid ~msg ~sock
+          | None ->
+              Lwt.return_unit
         in
-        Lwt.async (callback msg writer)
+        Lwt.async callback
     | Error _ ->
         MLog.debug (fun m -> m "client_sock: failed to parse") ;
         () ) ;
@@ -230,12 +181,12 @@ let client_socket t ~callback ~port =
   in
   loop ()
 
-let create ~node_list ~id ~alive_timeout =
-  let ctx = 
+let create ~node_list ~id =
+  let ctx =
     let ctx = Zmq.Context.create () in
-    Zmq.Context.set_io_threads ctx 2;
+    Zmq.Context.set_io_threads ctx 2 ;
     ctx
-  in 
+  in
   let endpoints = Hashtbl.of_alist_exn (module String) node_list in
   let system_port =
     Hashtbl.find_exn endpoints id
@@ -244,34 +195,21 @@ let create ~node_list ~id ~alive_timeout =
   in
   let incomming = create_incoming id system_port ctx in
   let outgoing = create_outgoing endpoints ctx in
-  let last_rec =
-    let res = Hashtbl.create (module String) in
-    let curr_time = Unix.time () in
-    Hashtbl.iter_keys endpoints ~f:(fun node ->
-        Hashtbl.set res ~key:node ~data:curr_time) ;
-    res
-  in
   let%lwt () = Lwt_unix.sleep 10. in
   (* Allows other nodes to establish binds thus allowing bootstraping *)
   let msg_queues = create_msg_queues endpoints outgoing id in
   let t =
     { endpoints
     ; id
-    ; last_rec
-    ; alive_timeout
     ; context= ctx
     ; incomming
     ; outgoing
     ; msg_queues
-    ; subs= Hashtbl.create (module String)
-    ; node_dead_watch= None }
+    ; subs= Hashtbl.create (module String) }
   in
-  let curr_time = Unix.time () in
-  Hashtbl.iter_keys endpoints ~f:(fun node ->
-      Hashtbl.set t.last_rec ~key:node ~data:curr_time) ;
   let mq_ps =
     Hashtbl.fold msg_queues ~init:[] ~f:(fun ~key:_ ~data acc ->
         let p = Msg_Queue.loop data in
         p :: acc)
   in
-  Lwt.return (t, Lwt.join ([run t (); ] @ mq_ps))
+  Lwt.return (t, Lwt.join ([run t ()] @ mq_ps))
