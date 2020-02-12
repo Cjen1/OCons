@@ -58,7 +58,7 @@ module StateMachine : sig
     | Success [@key 1]
     | Failure [@key 2]
     | ReadSuccess of key [@key 3]
-  [@@deriving protobuf]
+  [@@deriving protobuf, sexp]
 
   val op_result_failure : unit -> op_result
 
@@ -66,7 +66,7 @@ module StateMachine : sig
 
   val create : unit -> t
 end = struct
-  type key = string [@@deriving protobuf]
+  type key = string [@@deriving protobuf, sexp]
 
   type value = string [@@deriving protobuf]
 
@@ -82,7 +82,7 @@ end = struct
     | Success [@key 1]
     | Failure [@key 2]
     | ReadSuccess of key [@key 3]
-  [@@deriving protobuf]
+  [@@deriving protobuf, sexp]
 
   let op_result_failure () = Failure
 

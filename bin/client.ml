@@ -1,7 +1,7 @@
 (* main.ml *)
 open Core
 open Lib.Client
-open Lib.State_machine
+open Lib.Types
 
 let write =
   Command.basic ~summary:"Creation operation"

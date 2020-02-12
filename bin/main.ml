@@ -8,7 +8,7 @@ let command =
       and wal_loc = anon ("Log_location" %: string)
       and id = anon ("id" %: string)
       and endpoints = anon ("endpoints" %: string)
-      and alive_timeout = anon ("alive_timeout" %: float) in
+      and election_timeout = anon ("election_timeout" %: float) in
       fun () ->
         let p =
           let p, r = Lwt.task () in
@@ -16,22 +16,18 @@ let command =
           let%lwt () = p in
           let endpoints =
             let pairs = Base.String.split ~on:',' endpoints in
-            Base.List.map pairs ~f:(fun xs ->
+            Base.List.mapi pairs ~f:(fun i xs ->
                 match Base.String.split ~on:'=' xs with
                 | [id; addr] ->
-                    (id, addr)
+                    (id, addr, i)
                 | _ ->
                     raise
                       (Invalid_argument "Need endpoints of the form [id=uri]"))
           in
           Printf.printf "" ;
-          let%lwt msg_layer, psml =
-            Msg_layer.create ~node_list:endpoints ~id ~alive_timeout
-          in
           let client_port = Int.to_string client_port in
-          let _, psl = Leader.create ~msg_layer ~id ~endpoints ~client_port in
-          let _, psa = Acceptor.create ~wal_loc ~msg_layer ~id in
-          Lwt.join [psl; psa; psml]
+          Paxos.create_and_start ~data_path:wal_loc ~node_list:endpoints
+            ~node_addr:id ~client_port ~election_timeout
         in
         Lwt_main.run p)
 

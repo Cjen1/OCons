@@ -65,9 +65,6 @@ let append_entries_response =
 let client_response =
   {typ= (CRp : client_response msg_typ); filter= "client_response"}
 
-let client_request =
-  {typ= (CRq : client_request msg_typ); filter= "client_request"}
-
 let to_bytes : type a. a msg_filter -> a -> bytes =
  fun filter msg ->
   match filter.typ with

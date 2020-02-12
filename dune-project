@@ -12,8 +12,7 @@
   (depends 
     oUnit 
     core 
-    core.uuid lwt 
-    yojson 
+    core.uuid 
+    lwt 
     uri 
-    capnp-rpc-lwt 
-    capnp-rpc-unix))
+    ))
