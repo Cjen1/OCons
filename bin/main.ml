@@ -6,7 +6,7 @@ let command =
     Core.Command.Let_syntax.(
       let%map_open client_port = anon ("client_port" %: int)
       and wal_loc = anon ("Log_location" %: string)
-      and id = anon ("id" %: string)
+      and node_name = anon ("node_name" %: string)
       and endpoints = anon ("endpoints" %: string)
       and election_timeout = anon ("election_timeout" %: float) in
       fun () ->
@@ -18,16 +18,16 @@ let command =
             let pairs = Base.String.split ~on:',' endpoints in
             Base.List.mapi pairs ~f:(fun i xs ->
                 match Base.String.split ~on:'=' xs with
-                | [id; addr] ->
-                    (id, addr, i)
+                | [node_name; addr] ->
+                    (node_name, addr, i)
                 | _ ->
                     raise
-                      (Invalid_argument "Need endpoints of the form [id=uri]"))
+                      (Invalid_argument "Need endpoints of the form [node_name=uri]"))
           in
           Printf.printf "" ;
           let client_port = Int.to_string client_port in
           Paxos.create_and_start ~data_path:wal_loc ~node_list:endpoints
-            ~node_addr:id ~client_port ~election_timeout
+            ~node_addr:node_name ~client_port ~election_timeout
         in
         Lwt_main.run p)
 
