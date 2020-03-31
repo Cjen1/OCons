@@ -6,553 +6,603 @@ let paxos = Logs.Src.create "Paxos" ~doc:"Paxos module"
 
 module PL = (val Logs.src_log paxos : Logs.LOG)
 
-type node_state =
-  | Follower of {mutable last_recv_from_leader: time}
-  | Candidate of {mutable entries: partial_log; mutable votes: string list}
-  | Leader of
-      { mutable nextIndex: (node_id, log_index) Lookup.t
-      ; mutable matchIndex: (node_id, log_index) Lookup.t
-      ; matchIndex_cond: unit Lwt_condition.t
-      ; mutable heartbeat_last_sent: (node_id, time) Lookup.t }
+module PaxosTypes = struct
+  module Config = struct
+    type file = {channel: Lwt_io.output_channel; fd: Unix.file_descr}
 
-type node =
-  { (* --- Persistent State --------- *)
-    mutable currentTerm: term
-  ; mutable log: log (* --- Volatile State ----------- *)
-  ; mutable commitIndex: log_index
-  ; mutable lastApplied: log_index
-  ; mutable node_state: node_state (* --- Implementation details --- *)
-  ; state_machine: StateMachine.t (* - wait variables --- *)
-  ; mutable client_request_result_w:
-      (command_id, StateMachine.op_result Lwt.t) Lookup.t
-  ; mutable client_request_result_f:
-      (command_id, StateMachine.op_result Lwt.u) Lookup.t
-        (* - condition vars --- *)
-  ; commitIndex_cond: unit Lwt_condition.t
-  ; log_cond: unit Lwt_condition.t (* - subsystem -------- *)
-  ; msg_layer: Msg_layer.t
-  ; config: config }
+    let create_file path =
+      let fd = Unix.openfile path [Unix.O_RDWR] 0o640 in
+      {fd; channel= Lwt_io.of_unix_fd ~mode:Lwt_io.output fd}
 
-type 'a value_type =
-  | CurrentTerm : term value_type
-  | Log : (log * Log.op list) value_type
-  | CommitIndex : log_index value_type
-  | LastApplied : log_index value_type
-  | NextIndex : (node_id, log_index) Lookup.t value_type
-  | MatchIndex : (node_id, log_index) Lookup.t value_type
+    type t =
+      { quorum: unit -> log_entry list Quorum.t
+      ; majority: int
+      ; node_list: (node_id, Messaging.Send.service) List.Assoc.t
+      ; num_nodes: int
+      ; election_timeout: float
+      ; idle_timeout: float
+      ; log_file: file
+      ; term_file: file
+      ; node_id: node_id }
 
-let value_type_to_string : type a. a value_type -> string = function
-  | CurrentTerm ->
-      "CurrentTerm"
-  | Log ->
-      "Log"
-  | CommitIndex ->
-      "CommitIndex"
-  | LastApplied ->
-      "LastApplied"
-  | NextIndex ->
-      "NextIndex"
-  | MatchIndex ->
-      "MatchIndex"
+    let write_to_term t (v : term) =
+      let%lwt () = Lwt_io.write_value t.term_file.channel v in
+      let%lwt () = Lwt_io.flush t.term_file.channel in
+      Lwt.return @@ Unix.fsync t.term_file.fd
 
-let update : type a. node -> a value_type -> a -> unit Lwt.t =
- fun t name value ->
-  PL.debug (fun m -> m "Update: %s" (value_type_to_string name)) ;
-  match name with
-  | CurrentTerm ->
-      t.currentTerm <- value ;
-      Config.write_to_term t.config value
-  | Log ->
-      let log, ops = value in
-      t.log <- log ;
-      Lwt_condition.broadcast t.log_cond () ;
-      Config.write_all_to_log t.config ops
-  | CommitIndex ->
-      t.commitIndex <- value ;
-      Lwt_condition.broadcast t.commitIndex_cond () ;
-      Lwt.return_unit
-  | LastApplied ->
-      t.lastApplied <- value ;
-      Lwt.return_unit
-  | NextIndex ->
-      (match t.node_state with Leader s -> s.nextIndex <- value | _ -> ()) ;
-      Lwt.return_unit
-  | MatchIndex ->
-      ( match t.node_state with
-      | Leader s ->
-          s.matchIndex <- value ;
-          Lwt_condition.broadcast s.matchIndex_cond ()
-      | _ ->
-          () ) ;
-      Lwt.return_unit
+    let write_to_log t (v : Log.op) =
+      let%lwt () = Lwt_io.write_value t.log_file.channel v in
+      let%lwt () = Lwt_io.flush t.log_file.channel in
+      Lwt.return @@ Unix.fsync t.term_file.fd
 
-let merge_entries new_entries curr_entries =
-  PL.debug (fun m -> m "merge_entries") ;
-  let rec loop : log_entry list * log_entry list -> log_entry list = function
-    | [], ys ->
-        ys
-    | xs, [] ->
-        xs
-    | new_entry :: new_entries, curr_entry :: curr_entries ->
-        if new_entry.term > curr_entry.term then
-          new_entry :: loop (new_entries, curr_entries)
-        else curr_entry :: loop (new_entries, curr_entries)
-  in
-  loop (new_entries, curr_entries)
+    (* vs is oldest to newest *)
+    let write_all_to_log t (vs : Log.op list) =
+      let%lwt () = Lwt_list.iter_s (Lwt_io.write_value t.log_file.channel) vs in
+      let%lwt () = Lwt_io.flush t.log_file.channel in
+      Lwt.return @@ Unix.fsync t.term_file.fd
+  end
 
-let send_AppendEntries t follower_id =
-  PL.debug (fun m -> m "send_AppendEntries: call entry") ;
-  match t.node_state with
-  | Leader s -> (
-      let ( let* ) r f = Result.bind r ~f in
-      let result : (unit, exn) Result.t =
-        let* nextIndex = Lookup.get s.nextIndex follower_id in
-        if Log.get_max_index t.log >= nextIndex then (
-          let prevLogIndex = nextIndex - 1 in
-          let* prev_entry = Log.get t.log prevLogIndex in
-          let prevLogTerm = prev_entry.term in
-          let entries = Log.entries_after t.log nextIndex in
-          if
-            List.length entries > 0
-            || Float.(
-                 Lookup.get_exn s.heartbeat_last_sent follower_id
-                 < t.config.idle_timeout)
-            (* Something to send or hasn't sent anything in sufficient time *)
-          then
-            PL.debug (fun m ->
-                m "send_AppendEntries: sending to %d" follower_id) ;
-          { term= t.currentTerm
-          ; prevLogIndex
-          ; prevLogTerm
-          ; entries
-          ; leaderCommit= t.commitIndex }
-          |> Msg_layer.send t.msg_layer ~msg_filter:append_entries_request
-               ~dest:(Config.get_addr_from_id_exn t.config follower_id) ;
-          Ok () )
-        else Ok ()
+  type config = Config.t
+
+  type node_state =
+    | Follower of {mutable last_recv_from_leader: time}
+    | Candidate
+    | Leader of
+        { mutable nextIndex: (node_id, log_index) Lookup.t
+        ; mutable matchIndex: (node_id, log_index) Lookup.t
+        ; matchIndex_cond: unit Lwt_condition.t
+        ; mutable heartbeat_last_sent: (node_id, time) Lookup.t }
+
+  type t =
+    { mutable node_state: node_state
+    ; mutable currentTerm: term
+    ; mutable log: log
+    ; mutable state_machine: StateMachine.t
+    ; mutable commitIndex: log_index
+    ; mutable lastApplied: log_index
+    ; config: Config.t
+    ; commitIndex_cond: unit Lwt_condition.t
+    ; log_cond: unit Lwt_condition.t
+    ; mutable client_request_results:
+        ( command_id
+        , StateMachine.op_result Lwt.t * StateMachine.op_result Lwt.u )
+        Lookup.t
+    ; mutable is_leader: unit Lwt_condition.t }
+
+  type value_type =
+    | CurrentTerm of term
+    | Log of (log * Log.op list)
+    | CommitIndex of log_index
+    | LastApplied of log_index
+    | NextIndex of (node_id * log_index)
+    | MatchIndex of (node_id * log_index)
+
+  let pp_value_type ppf = function
+    | CurrentTerm _ ->
+        Stdlib.Format.fprintf ppf "CurrentTerm"
+    | Log _ ->
+        Stdlib.Format.fprintf ppf "Log"
+    | CommitIndex _ ->
+        Stdlib.Format.fprintf ppf "CommitIndex"
+    | LastApplied _ ->
+        Stdlib.Format.fprintf ppf "LastApplied"
+    | NextIndex _ ->
+        Stdlib.Format.fprintf ppf "NextIndex"
+    | MatchIndex _ ->
+        Stdlib.Format.fprintf ppf "MatchIndex"
+
+  let update t v =
+    PL.debug (fun m -> m "Updating %a" pp_value_type v) ;
+    match v with
+    | CurrentTerm v ->
+        t.currentTerm <- v ;
+        Config.write_to_term t.config v
+    | Log (log, ops) ->
+        t.log <- log ;
+        Lwt_condition.broadcast t.log_cond () ;
+        Config.write_all_to_log t.config ops
+    | CommitIndex v ->
+        t.commitIndex <- v ;
+        Lwt_condition.broadcast t.commitIndex_cond () ;
+        Lwt.return_unit
+    | LastApplied v ->
+        t.lastApplied <- v ;
+        Lwt.return_unit
+    | NextIndex (key, data) ->
+        ( match t.node_state with
+        | Leader s ->
+            s.nextIndex <- Lookup.set s.nextIndex ~key ~data
+        | _ ->
+            () ) ;
+        Lwt.return_unit
+    | MatchIndex (key, data) ->
+        ( match t.node_state with
+        | Leader s ->
+            s.matchIndex <- Lookup.set s.matchIndex ~key ~data ;
+            Lwt_condition.broadcast s.matchIndex_cond ()
+        | _ ->
+            () ) ;
+        Lwt.return_unit
+end
+
+open PaxosTypes
+
+module rec Transition : sig
+  val follower : t -> unit
+
+  val candidate : t -> unit Lwt.t
+
+  val leader : t -> log_entry list list -> unit Lwt.t
+end = struct
+  let follower t =
+    PL.debug (fun m -> m "Becomming a follower") ;
+    t.node_state <- Follower {last_recv_from_leader= 0.0} ;
+    Lwt.async (Condition_checks.election_timeout_expired t)
+
+  let leader t entries =
+    PL.debug (fun m -> m "Elected leader of term %d" t.currentTerm) ;
+    let rec merge xs ys =
+      let rec loop :
+          log_entry list -> log_entry list -> log_entry list -> log_entry list =
+       fun xs ys acc ->
+        match (xs, ys) with
+        | [], ys ->
+            ys
+        | xs, [] ->
+            xs
+        | x :: xs, y :: ys ->
+            assert (Int.(x.index = y.index)) ;
+            (if x.term > y.term then x else y) :: acc |> loop xs ys
       in
-      match result with
-      | Error exn ->
-          raise exn
-      | Ok _ ->
-          s.heartbeat_last_sent <-
-            Lookup.set s.heartbeat_last_sent ~key:follower_id
-              ~data:(time_now ()) )
-  | _ ->
-      ()
+      loop xs ys [] |> List.rev
+    in
+    (* Head has to be at idx=leaderCommit to allow for easier merging *)
+    let entries_to_add =
+      entries |> List.map ~f:List.rev
+      |> List.fold ~init:[] ~f:merge
+      |> List.map ~f:(fun entry ->
+             {term= t.currentTerm; command= entry.command; index= entry.index})
+      |> List.rev
+    in
+    (* Update log *)
+    let%lwt () =
+      let log, ops =
+        List.fold_left entries_to_add ~init:(t.log, [])
+          ~f:(fun (log, ops_acc) entry ->
+            let log, ops = Log.set log ~index:entry.index ~value:entry in
+            (log, ops @ ops_acc))
+      in
+      PL.debug (fun m -> m "Adding ops to log") ;
+      update t @@ Log (log, List.rev ops)
+    in
+    let nextIndex, matchIndex, heartbeat_last_sent =
+      List.fold t.config.node_list
+        ~init:
+          ( Lookup.create (module Int)
+          , Lookup.create (module Int)
+          , Lookup.create (module Int) )
+        ~f:(fun (nI, mI, hb) (id, _addr) ->
+          ( Lookup.set nI ~key:id ~data:(t.commitIndex + 1)
+          , Lookup.set mI ~key:id ~data:0
+          , Lookup.set hb ~key:id ~data:0. ))
+    in
+    t.node_state <-
+      Leader
+        { nextIndex
+        ; matchIndex
+        ; matchIndex_cond= Lwt_condition.create ()
+        ; heartbeat_last_sent } ;
+    (* Alert unsubmitted client requests *)
+    Lwt_condition.broadcast t.is_leader () ;
+    (* Ensure no election timeouts *)
+    Lwt.async (Condition_checks.leader_heartbeat t) ;
+    (* Ensure followers are kept up to date *)
+    Lwt.async (Condition_checks.log t) ;
+    (* Ensure commitIndex is correct *)
+    Lwt.async (Condition_checks.matchIndex t) ;
+    Lwt.return_unit
 
-(*---- Condition loops and state transitions -------*)
-
-let commitIndex_cond_check t =
-  let rec loop () =
-    PL.debug (fun m -> m "commitIndex_cond_check: waiting") ;
-    let%lwt () = Lwt_condition.wait t.commitIndex_cond in
-    PL.debug (fun m -> m "commitIndex_cond_check: running") ;
-    let rec update_SM () =
-      match t.commitIndex > t.lastApplied with
-      | false ->
-          PL.debug (fun m -> m "commitIndex_cond_check: Updating SM") ;
-          let%lwt () = update t LastApplied (t.lastApplied + 1) in
-          let command = (Log.get_exn t.log t.lastApplied).command in
-          (* lastApplied must exist by match statement *)
-          let result = StateMachine.update t.state_machine command in
-          let () =
-            match Lookup.get t.client_request_result_f command.id with
-            | Error _ ->
-                ()
-            | Ok fulfiller ->
-                PL.debug (fun m ->
-                    m "commitIndex_cond_check: Alerting fulfiller") ;
-                Lwt.wakeup_later fulfiller result ;
-                Lookup.remove t.client_request_result_f command.id
+  let candidate t =
+    PL.debug (fun m -> m "Trying to become leader") ;
+    t.node_state <- Candidate ;
+    let updated_term : term =
+      let id_in_current_epoch =
+        Int.(
+          t.currentTerm
+          - (t.currentTerm % t.config.num_nodes)
+          + t.config.node_id)
+      in
+      if id_in_current_epoch < t.currentTerm then
+        id_in_current_epoch + t.config.num_nodes
+      else id_in_current_epoch
+    in
+    PL.debug (fun m -> m "New term = %d" updated_term) ;
+    let%lwt () = update t @@ CurrentTerm updated_term in
+    let%lwt resps =
+      (* Only voteGranted requests return *)
+      Utils.recv_quorum
+        ~quorum:(t.config.quorum : unit -> log_entry list Quorum.t)
+        ~followers:t.config.node_list
+        ~send:(fun (_id, follower) ->
+          let%lwt resp =
+            follower
+            |> Send.requestVote ~term:t.currentTerm ~leader_commit:t.commitIndex
           in
-          update_SM ()
-      | true ->
+          match resp.voteGranted with
+          | true ->
+              Lwt.return resp.entries
+          | false ->
+              Lwt.task () |> fst)
+    in
+    leader t resps
+end
+
+and Condition_checks : sig
+  val commitIndex : t -> unit -> unit Lwt.t
+
+  val election_timeout_expired : t -> unit -> unit Lwt.t
+
+  val leader_heartbeat : t -> unit -> unit Lwt.t
+
+  val log : t -> unit -> unit Lwt.t
+
+  val matchIndex : t -> unit -> unit Lwt.t
+end = struct
+  let commitIndex t =
+    let rec loop () =
+      PL.debug (fun m -> m "commitIndex_cond_check: waiting") ;
+      let%lwt () = Lwt_condition.wait t.commitIndex_cond in
+      PL.debug (fun m -> m "commitIndex_cond_check: running") ;
+      let rec update_SM () =
+        match t.commitIndex > t.lastApplied with
+        | false ->
+            PL.debug (fun m -> m "commitIndex_cond_check: Updating SM") ;
+            let%lwt () = update t @@ LastApplied (t.lastApplied + 1) in
+            let command = (Log.get_exn t.log t.lastApplied).command in
+            (* lastApplied must exist by match statement *)
+            let result = StateMachine.update t.state_machine command in
+            let () =
+              match Lookup.get t.client_request_results command.id with
+              | Error _ ->
+                  ()
+              | Ok (_, fulfiller) ->
+                  PL.debug (fun m ->
+                      m "commitIndex_cond_check: Alerting fulfiller") ;
+                  Lwt.wakeup_later fulfiller result ;
+                  (*Lookup.remove t.client_request_results command.id*)
+                  ()
+            in
+            update_SM ()
+        | true ->
+            Lwt.return_unit
+      in
+      let%lwt () = update_SM () in
+      loop ()
+    in
+    loop
+
+  let rec election_timeout_expired t =
+    let rec loop () =
+      PL.debug (fun m -> m "election_timeout_expired_check: sleeping") ;
+      let%lwt () = Lwt_unix.sleep t.config.election_timeout in
+      PL.debug (fun m -> m "election_timeout_expired_check: ended sleep") ;
+      match t.node_state with
+      | Follower s ->
+          if
+            Float.(
+              time_now () -. s.last_recv_from_leader > t.config.election_timeout)
+          then (
+            PL.debug (fun m ->
+                m "election_timeout_expired_check: becomming candidate") ;
+            (* Election timeout expired => leader most likely dead *)
+            Transition.candidate t )
+          else (
+            (* If not becomming candidate then continue looping *)
+            PL.debug (fun m ->
+                m "election_timeout_expired_check: %f remaining"
+                  (time_now () -. s.last_recv_from_leader)) ;
+            loop () )
+      | _ ->
           Lwt.return_unit
     in
-    let%lwt () = update_SM () in
-    loop ()
-  in
-  loop ()
+    loop
 
-let become_candidate t =
-  PL.debug (fun m -> m "become_candidate") ;
-  t.node_state <- Candidate {entries= []; votes= []} ;
-  let updated_term : term =
-    let id_in_current_epoch =
-      let open Int in
-      t.currentTerm - (t.currentTerm % t.config.num_nodes) + t.config.node_id
+  let rec leader_heartbeat t () =
+    PL.debug (fun m -> m "leader_heartbeat_check: call entry") ;
+    match t.node_state with
+    | Leader {heartbeat_last_sent; nextIndex; _} ->
+        List.iter t.config.node_list ~f:(fun (id, cap) ->
+            match Lookup.get_exn heartbeat_last_sent id with
+            | lastSent when Float.(lastSent < t.config.idle_timeout) ->
+                let nextIndex = Lookup.get_exn nextIndex id in
+                let prevLogIndex = nextIndex - 1 in
+                let prev_entry = Log.get_exn t.log prevLogIndex in
+                let prevLogTerm = prev_entry.term in
+                let entries = [] in
+                Lwt.ignore_result
+                @@ Send.appendEntries cap ~term:t.currentTerm ~prevLogIndex
+                     ~prevLogTerm ~entries ~leaderCommit:t.commitIndex
+            | _ ->
+                ()) ;
+        PL.debug (fun m -> m "leader_heartbeat_check: sleeping") ;
+        let%lwt () = Lwt_unix.sleep (t.config.election_timeout /. 2.1) in
+        PL.debug (fun m -> m "leader_heartbeat_check: end sleep") ;
+        leader_heartbeat t ()
+    | _ ->
+        PL.debug (fun m -> m "leader_heartbeat_check: call exit") ;
+        Lwt.return_unit
+
+  let log t =
+    let rec loop () =
+      PL.debug (fun m -> m "log_cond_check: waiting") ;
+      let%lwt () = Lwt_condition.wait t.log_cond in
+      PL.debug (fun m -> m "log_cond_check: got cond") ;
+      match t.node_state with
+      | Leader {nextIndex; matchIndex; _} ->
+          List.iter t.config.node_list ~f:(fun (id, cap) ->
+              let nextIndex = Lookup.get_exn nextIndex id in
+              if Log.get_max_index t.log >= nextIndex then
+                let prevLogIndex = nextIndex - 1 in
+                let prev_entry = Log.get_exn t.log prevLogIndex in
+                let prevLogTerm = prev_entry.term in
+                let entries = Log.entries_after t.log nextIndex in
+                let rec req_loop () =
+                  let%lwt resp =
+                    Send.appendEntries cap ~term:t.currentTerm ~prevLogIndex
+                      ~prevLogTerm ~entries ~leaderCommit:t.commitIndex
+                  in
+                  match (Lookup.get matchIndex id, resp.success) with
+                  | Ok idx, true when idx < nextIndex ->
+                      let%lwt () = update t (MatchIndex (id, nextIndex)) in
+                      let%lwt () = update t (NextIndex (id, nextIndex)) in
+                      Lwt.return_unit
+                  | _, true ->
+                      Lwt.return_unit
+                  | _, false ->
+                      let%lwt () = update t (NextIndex (id, nextIndex - 1)) in
+                      req_loop ()
+                in
+                Lwt.ignore_result @@ req_loop ()) ;
+          loop ()
+      | _ ->
+          PL.debug (fun m -> m "log_cond_check: call exit") ;
+          Lwt.return_unit
     in
-    if id_in_current_epoch < t.currentTerm then
-      id_in_current_epoch + t.config.num_nodes
-    else id_in_current_epoch
-  in
-  PL.debug (fun m -> m "become_candidate: new term = %d" updated_term) ;
-  let%lwt () = update t CurrentTerm updated_term in
-  List.iter t.config.followers ~f:(fun (_id, addr) ->
-      {term= t.currentTerm; leaderCommit= t.commitIndex}
-      |> Msg_layer.send t.msg_layer ~msg_filter:request_vote_request ~dest:addr) ;
-  Lwt.return_unit
+    loop
 
-let update_last_recv t =
-  match t.node_state with
-  | Follower s ->
-      s.last_recv_from_leader <- time_now ()
-  | _ ->
-      ()
+  let matchIndex t =
+    let rec loop () =
+      match t.node_state with
+      | Leader {matchIndex_cond; matchIndex; _} ->
+          PL.debug (fun m -> m "matchIndex_cond_check: waiting") ;
+          let%lwt () = Lwt_condition.wait matchIndex_cond in
+          PL.debug (fun m -> m "matchIndex_cond_check: got cond") ;
+          let n =
+            Lookup.fold matchIndex ~init:[] ~f:(fun data acc -> data :: acc)
+            |> List.sort ~compare:(fun x y -> -Int.compare x y)
+            |> fun ls -> List.nth_exn ls t.config.majority
+            (* element exists bc defined as such *)
+          in
+          PL.debug (fun m -> m "matchIndex_cond_check: new commitIndex = %d" n) ;
+          let%lwt () = update t @@ CommitIndex n in
+          loop ()
+      | _ ->
+          PL.debug (fun m -> m "matchIndex_cond_check: call exit") ;
+          Lwt.return_unit
+    in
+    loop
+end
 
-let election_timeout_expired_check t =
-  let rec loop () =
-    PL.debug (fun m -> m "election_timeout_expired_check: sleeping") ;
-    let%lwt () = Lwt_unix.sleep t.config.election_timeout in
-    PL.debug (fun m -> m "election_timeout_expired_check: ended sleep") ;
+and Utils : sig
+  val preempted_check : t -> term -> unit Lwt.t
+
+  val update_last_recv : t -> unit
+
+  val recv_quorum :
+       quorum:(unit -> 'b Quorum.t)
+    -> followers:'a list
+    -> send:('a -> 'b Lwt.t)
+    -> 'b list Lwt.t
+end = struct
+  let preempted_check t term =
+    if term > t.currentTerm then (
+      PL.debug (fun m -> m "preempted_check: preempted by term %d" term) ;
+      let%lwt () = update t (CurrentTerm term) in
+      Transition.follower t |> Lwt.return )
+    else Lwt.return_unit
+
+  let update_last_recv t =
     match t.node_state with
     | Follower s ->
-        if
-          Float.(
-            time_now () -. s.last_recv_from_leader > t.config.election_timeout)
-        then (
-          PL.debug (fun m ->
-              m "election_timeout_expired_check: becomming candidate") ;
-          (* Election timeout expired => leader most likely dead *)
-          become_candidate t )
-        else (
-          (* If not becomming candidate then continue looping *)
-          PL.debug (fun m ->
-              m "election_timeout_expired_check: %f remaining"
-                (time_now () -. s.last_recv_from_leader)) ;
-          loop () )
+        s.last_recv_from_leader <- time_now ()
     | _ ->
-        Lwt.return_unit
-  in
-  loop
+        ()
 
-let become_follower t =
-  PL.debug (fun m -> m "become_follower: call entry") ;
-  t.node_state <- Follower {last_recv_from_leader= 0.0} ;
-  Lwt.async (election_timeout_expired_check t)
+  let recv_quorum ~quorum ~followers ~send =
+    let dispatches = List.map ~f:send followers in
+    let quorum : 'a Quorum.t = quorum () in
+    let rec loop ps acc =
+      if quorum.sufficient () then Lwt.return (acc, ps)
+      else
+        let%lwt resolved, todo = Lwt.nchoose_split ps in
+        List.iter resolved ~f:quorum.add ;
+        loop todo (resolved @ acc)
+    in
+    let%lwt resolved, outstanding = loop dispatches [] in
+    List.iter ~f:Lwt.cancel outstanding ;
+    Lwt.return resolved
+end
 
-let rec leader_heartbeat_check t () =
-  PL.debug (fun m -> m "leader_heartbeat_check: call entry") ;
-  match t.node_state with
-  | Leader _ ->
-      List.iter t.config.followers ~f:(fun (id, _) -> send_AppendEntries t id) ;
-      PL.debug (fun m -> m "leader_heartbeat_check: sleeping") ;
-      let%lwt () = Lwt_unix.sleep (t.config.election_timeout /. 2.1) in
-      PL.debug (fun m -> m "leader_heartbeat_check: end sleep") ;
-      leader_heartbeat_check t ()
-  | _ ->
-      PL.debug (fun m -> m "leader_heartbeat_check: call exit") ;
-      Lwt.return_unit
+open Utils
 
-let log_cond_check t =
-  let rec loop () =
-    PL.debug (fun m -> m "log_cond_check: waiting") ;
-    let%lwt () = Lwt_condition.wait t.log_cond in
-    PL.debug (fun m -> m "log_cond_check: got cond") ;
+module CoreRpcServer = struct
+  type nonrec t = t
+
+  let request_vote t ~term ~leaderCommit : request_vote_response Lwt.t =
+    PL.debug (fun m -> m "request_vote: received request") ;
+    let%lwt () = preempted_check t term in
+    let voteGranted = term < t.currentTerm in
+    if voteGranted then (
+      PL.debug (fun m -> m "request_vote: vote granted") ;
+      update_last_recv t ) ;
+    let entries = Log.entries_after t.log leaderCommit in
+    Lwt.return {term= t.currentTerm; voteGranted; entries}
+
+  let append_entries t ~term ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
+    PL.debug (fun m -> m "append_entries: received request") ;
+    let%lwt () = preempted_check t term in
+    match (term < t.currentTerm, Log.get t.log prevLogIndex) with
+    | false, Ok entry when entry.term = prevLogTerm ->
+        PL.debug (fun m -> m "recv_AppendEntries_req: received valid") ;
+        update_last_recv t ;
+        PL.debug (fun m ->
+            m
+              "recv_AppendEntries_req: log removing conflicts and adding \
+               entries") ;
+        let%lwt () =
+          update t (Log (Log.add_entries_remove_conflicts t.log entries))
+        in
+        let%lwt () =
+          if leaderCommit > t.commitIndex then (
+            PL.debug (fun m ->
+                m
+                  "recv_AppendEntries_req: Updating commit index to that of \
+                   leader") ;
+            (* if a last entry exists, take min, otherwise leaderCommit *)
+            match List.last entries with
+            | Some last ->
+                update t @@ CommitIndex (min last.index leaderCommit)
+            | None ->
+                update t @@ CommitIndex leaderCommit )
+          else Lwt.return_unit
+        in
+        Lwt.return {term= t.currentTerm; success= true}
+    | _ ->
+        PL.debug (fun m -> m "recv_AppendEntries_req: responding negative") ;
+        (* term < currentTerm or log inconsistent *)
+        Lwt.return {term= t.currentTerm; success= false}
+
+  (* If leader will submit request
+   * If not leader
+       set up fulfillers
+       wait until either
+         leader -> recurse (and thus submit via leader branch)
+         request is submitted by another node (the leader)
+     (In effect the unsubmitted client requests are held in the Lwt promise queue 
+         rather than an explicitly managed one)
+   *)
+  let rec client_req t (command : command) =
     match t.node_state with
     | Leader _ ->
-        List.iter t.config.followers ~f:(fun (id, _addr) ->
-            send_AppendEntries t id) ;
-        loop ()
-    | _ ->
-        PL.debug (fun m -> m "log_cond_check: call exit") ;
-        Lwt.return_unit
-  in
-  loop
-
-let matchIndex_cond_check t =
-  let rec loop () =
-    match t.node_state with
-    | Leader s ->
-        PL.debug (fun m -> m "matchIndex_cond_check: waiting") ;
-        let%lwt () = Lwt_condition.wait s.matchIndex_cond in
-        PL.debug (fun m -> m "matchIndex_cond_check: got cond") ;
-        let n =
-          Lookup.fold s.matchIndex ~init:[] ~f:(fun data acc -> data :: acc)
-          |> List.sort ~compare:(fun x y -> -Int.compare x y)
-          |> fun ls -> List.nth_exn ls t.config.majority
-          (* element exists bc defined as such *)
+        (* leader and not yet requested *)
+        PL.debug (fun m -> m "client_req: Leader and unfulfilled") ;
+        let result, _fulfiller =
+          Hashtbl.find_or_add t.client_request_results command.id
+            ~default:Lwt.task
         in
-        PL.debug (fun m -> m "matchIndex_cond_check: new commitIndex = %d" n) ;
-        let%lwt () = update t CommitIndex n in
-        loop ()
+        PL.debug (fun m -> m "client_req: adding entry to log") ;
+        let index = Log.get_max_index t.log + 1 in
+        let%lwt () =
+          let log' =
+            Log.set t.log ~index ~value:{command; term= t.currentTerm; index}
+          in
+          update t (Log log')
+        in
+        result
     | _ ->
-        PL.debug (fun m -> m "matchIndex_cond_check: call exit") ;
-        Lwt.return_unit
-  in
-  loop
+        let leader_p =
+          let%lwt () = Lwt_condition.wait t.is_leader in
+          (* Is now the leader -> can submit the request *)
+          client_req t command
+        in
+        let waiter, _ =
+          Lookup.find_or_add t.client_request_results command.id
+            ~default:Lwt.task
+        in
+        Lwt.pick [leader_p; waiter]
+end
 
-let become_leader t =
-  PL.debug (fun m -> m "become_leader:") ;
-  let nextIndex =
-    List.fold t.config.followers
-      ~init:(Lookup.create (module Int))
-      ~f:(fun acc (id, _addr) ->
-        Lookup.set acc ~key:id ~data:(t.commitIndex + 1))
-  in
-  let matchIndex =
-    List.fold t.config.followers
-      ~init:(Lookup.create (module Int))
-      ~f:(fun acc (id, _addr) -> Lookup.set acc ~key:id ~data:0)
-  in
-  let heartbeat_last_sent =
-    List.fold t.config.followers
-      ~init:(Lookup.create (module Int))
-      ~f:(fun acc (id, _addr) -> Lookup.set acc ~key:id ~data:0.0)
-  in
-  t.node_state <-
-    Leader
-      { nextIndex
-      ; matchIndex
-      ; matchIndex_cond= Lwt_condition.create ()
-      ; heartbeat_last_sent } ;
-  (* Ensure no election timeouts *)
-  Lwt.async (leader_heartbeat_check t) ;
-  (* Ensure followers are kept up to date *)
-  Lwt.async (log_cond_check t) ;
-  (* Ensure commitIndex is correct *)
-  Lwt.async (matchIndex_cond_check t)
+module Service = Messaging.Recv (CoreRpcServer)
 
-let preempted_check t term =
-  if term > t.currentTerm then (
-    PL.debug (fun m -> m "preempted_check: preempted by term %d" term) ;
-    let%lwt () = update t CurrentTerm term in
-    Lwt.return @@ become_follower t )
-  else Lwt.return_unit
-
-(*---- Core Paxos RPCs -----------------------------*)
-
-let recv_RequestVote_req t src (msg : request_vote_request) =
-  PL.debug (fun m -> m "recv_RequestVote_req: received request from %s" src) ;
-  let%lwt () = preempted_check t msg.term in
-  let voteGranted = msg.term < t.currentTerm in
-  if voteGranted then (
-    PL.debug (fun m -> m "recv_RequestVote_req: vote granted") ;
-    update_last_recv t ) ;
-  let entries = Log.entries_after t.log msg.leaderCommit in
-  {term= t.currentTerm; voteGranted; entries}
-  |> Msg_layer.send t.msg_layer ~msg_filter:request_vote_response ~dest:src ;
-  Lwt.return_unit
-
-let recv_RequestVote_rep t src (msg : request_vote_response) =
-  PL.debug (fun m ->
-      m "recv_RequestVote_rep: received response from %s for term %d" src
-        msg.term) ;
-  let%lwt () = preempted_check t msg.term in
-  match t.node_state with
-  | Candidate r when Int.(msg.term = t.currentTerm) ->
-      if List.mem r.votes src ~equal:String.equal then (
-        PL.debug (fun m ->
-            m "recv_RequestVote_rep: Not received a vote from node %s" src) ;
-        (* If vote unreceived previously *)
-        r.votes <- src :: r.votes ;
-        r.entries <- merge_entries msg.entries r.entries ;
-        if List.length r.votes > t.config.majority then (
-          PL.debug (fun m -> m "recv_RequestVote_rep: elected Leader") ;
-          (* elected leader *)
-          let entries_to_add =
-            List.map r.entries ~f:(fun entry ->
-                {term= t.currentTerm; command= entry.command; index= entry.index})
-          in
-          let%lwt () =
-            (* ops will be in newest -> oldest ordering *)
-            let log, ops =
-              List.fold_left entries_to_add ~init:(t.log, [])
-                ~f:(fun (log, ops_acc) entry ->
-                  let log, ops = Log.set log ~index:entry.index ~value:entry in
-                  (log, ops @ ops_acc))
-            in
-            PL.debug (fun m ->
-                m "recv_RequestVote_rep: updating log with new ops") ;
-            update t Log (log, List.rev ops)
-          in
-          become_leader t ; Lwt.return_unit )
-        else Lwt.return_unit )
-      else (
-        PL.debug (fun m -> m "recv_RequestVote_rep: already received response") ;
-        Lwt.return_unit )
-  | _
-  (* Follower: If receiving then previous request vote request failed
-   * thus don't do anything TODO check? *)
-  (* Leader: Either msg.term < t.currentTerm => don't care,
-   * or msg.term = t.currentTerm => don't care *)
-  (* Candidate receiving RequestVote_rep for term < t.currentTerm 
-   * => old response => ignore *) ->
-      PL.debug (fun m -> m "recv_RequestVote_rep: not correct node_state") ;
-      Lwt.return_unit
-
-let recv_AppendEntries_req t src (msg : append_entries_request) =
-  PL.debug (fun m -> m "recv_AppendEntries_req: received msg from %s" src) ;
-  let%lwt () = preempted_check t msg.term in
-  match (msg.term < t.currentTerm, Log.get t.log msg.prevLogIndex) with
-  | false, Ok entry when entry.term = msg.prevLogTerm ->
-      PL.debug (fun m -> m "recv_AppendEntries_req: received valid") ;
-      update_last_recv t ;
-      PL.debug (fun m ->
-          m "recv_AppendEntries_req: log removing conflicts and adding entries") ;
-      let%lwt () =
-        update t Log @@ Log.add_entries_remove_conflicts t.log msg.entries
-      in
-      let%lwt () =
-        if msg.leaderCommit > t.commitIndex then (
-          PL.debug (fun m ->
-              m
-                "recv_AppendEntries_req: Updating commit index to that of \
-                 leader") ;
-          (* if a last entry exists, take min, otherwise leaderCommit *)
-          match List.last msg.entries with
-          | Some last ->
-              update t CommitIndex @@ min last.index msg.leaderCommit
-          | None ->
-              update t CommitIndex msg.leaderCommit )
-        else Lwt.return_unit
-      in
-      {term= t.currentTerm; success= true; matchIndex= Log.get_max_index t.log}
-      |> Msg_layer.send t.msg_layer ~msg_filter:append_entries_response
-           ~dest:src ;
-      Lwt.return_unit
-  | _ ->
-      PL.debug (fun m -> m "recv_AppendEntries_req: responding negative") ;
-      (* term < currentTerm or log inconsistent *)
-      {term= t.currentTerm; success= false; matchIndex= Log.get_max_index t.log}
-      |> Msg_layer.send t.msg_layer ~msg_filter:append_entries_response
-           ~dest:src ;
-      Lwt.return_unit
-
-let recv_AppendEntries_rep t source (msg : append_entries_response) =
-  PL.debug (fun m -> m "recv_AppendEntries_rep: received msg from %s" source) ;
-  let%lwt () = preempted_check t msg.term in
-  match t.node_state with
-  | Leader s ->
-      let follower_id = Config.get_id_from_addr_exn t.config source in
-      let%lwt () =
-        if msg.success then (
-          PL.debug (fun m -> m "recv_AppendEntries_rep: msg was a success") ;
-          if msg.matchIndex >= Lookup.get_exn s.matchIndex follower_id then (
-            PL.debug (fun m ->
-                m "recv_AppendEntries_rep: not old msg => updating state") ;
-            let%lwt () =
-              update t NextIndex
-              @@ Lookup.set s.nextIndex ~key:follower_id
-                   ~data:(msg.matchIndex + 1)
-            in
-            update t MatchIndex
-            @@ Lookup.set s.matchIndex ~key:follower_id ~data:msg.matchIndex )
-          else Lwt.return_unit (* old appendEntries response*) )
-        else (
-          PL.debug (fun m ->
-              m "recv_AppendEntries_rep: need to retry AppendEntires") ;
-          (* need to retry *)
-          let%lwt () =
-            update t NextIndex
-            @@ Lookup.set s.nextIndex ~key:follower_id
-                 ~data:(Lookup.get_exn s.nextIndex follower_id - 1)
-          in
-          Lwt.return @@ send_AppendEntries t follower_id )
-      in
-      Lwt.return_unit
-  | _ ->
-      Lwt.return_unit
-
-let recv_client_request t (msg : client_request) =
-  PL.debug (fun m -> m "recv_client_request: received client_request") ;
-  match (t.node_state, Lookup.get t.client_request_result_w msg.command.id) with
-  | Leader _s, Error _ ->
-      PL.debug (fun m -> m "recv_client_request: Leader and unfulfilled") ;
-      let index = Log.get_max_index t.log + 1 in
-      let%lwt () =
-        update t Log
-        @@ Log.set t.log ~index
-             ~value:{command= msg.command; term= t.currentTerm; index}
-      in
-      let waiter, fulfiller = Lwt.task () in
-      (* Set up responses *)
-      PL.debug (fun m -> m "recv_client_request: setting up fulfillers") ;
-      t.client_request_result_w <-
-        Lookup.set t.client_request_result_w ~key:msg.command.id ~data:waiter ;
-      t.client_request_result_f <-
-        Lookup.set t.client_request_result_f ~key:msg.command.id ~data:fulfiller ;
-      (* Wait for result from system *)
-      PL.debug (fun m -> m "recv_client_request: waiting for result") ;
-      let%lwt result = waiter in
-      PL.debug (fun m -> m "recv_client_request: got result") ;
-      Lwt.return_some {result}
-  | _, Ok res ->
-      PL.debug (fun m -> m "recv_client_request: Already submitted") ;
-      let%lwt result = res in
-      PL.debug (fun m -> m "recv_client_request: fulfilled") ;
-      Lwt.return_some {result}
-  | _ ->
-      Lwt.return_none
-
-(*---- Creation etc --------------------------------*)
-
-let create_and_start ~data_path ~node_list ~node_addr ~client_port
-    ~election_timeout =
-  let open Config in
-  let log_path = data_path ^ ".log" in
-  let term_path = data_path ^ ".term" in
-  let%lwt log = Log.get_log_from_file log_path in
-  let log_fd = Unix.openfile log_path [Unix.O_RDWR] 0o640 in
-  let log_file =
-    {fd= log_fd; channel= Lwt_io.of_unix_fd ~mode:Lwt_io.output log_fd}
-  in
-  let term_fd = Unix.openfile term_path [Unix.O_RDWR] 0o640 in
-  let term_file =
-    {fd= term_fd; channel= Lwt_io.of_unix_fd ~mode:Lwt_io.output term_fd}
-  in
-  let sm = StateMachine.create () in
-  let%lwt msg_layer, m_ps =
-    Msg_layer.create
-      ~node_list:(node_list |> List.map ~f:(fun (addr, uri, _id) -> (addr, uri)))
-      ~id:node_addr
-  in
-  let node_state = Follower {last_recv_from_leader= 0.} in
-  let followers =
-    node_list |> List.map ~f:(fun (addr, _uri, id) -> (id, addr))
-  in
-  let node_id =
-    followers |> List.Assoc.inverse
-    |> fun ls -> List.Assoc.find_exn ls node_addr ~equal:String.equal
-  in
-  let%lwt currentTerm = get_term_from_file term_path in
-  let currentTerm = Int.max currentTerm node_id in
+let serve (t : t Lwt.t) ~public_address ~listen_address ~secret_key ~id
+    ~cap_file ~client_cap_file =
   let config =
-    { majority= Int.((List.length node_list / 2) + 1)
-    ; followers
-    ; election_timeout
-    ; idle_timeout= Float.(election_timeout / 2.)
-    ; log_file
-    ; term_file
-    ; num_nodes= List.length node_list
-    ; node_id }
+    Capnp_rpc_unix.Vat_config.create ~public_address ~secret_key listen_address
+  in
+  let sturdy_uri = Capnp_rpc_unix.Vat_config.sturdy_uri config in
+  let services = Capnp_rpc_net.Restorer.Table.create sturdy_uri in
+  let service_id =
+    Capnp_rpc_unix.Vat_config.derived_id config ("service" ^ Int.to_string id)
+  in
+  let client_id =
+    Capnp_rpc_unix.Vat_config.derived_id config ("client" ^ Int.to_string id)
+  in
+  Capnp_rpc_net.Restorer.Table.add services service_id @@ Service.local t ;
+  Capnp_rpc_net.Restorer.Table.add services client_id @@ Service.client t ;
+  let restore = Capnp_rpc_net.Restorer.of_table services in
+  let%lwt vat = Capnp_rpc_unix.serve config ~restore in
+  let ( let* ) = Result.( >>= ) in
+  let res =
+    let* () = Capnp_rpc_unix.Cap_file.save_service vat service_id cap_file in
+    Capnp_rpc_unix.Cap_file.save_service vat client_id client_cap_file
+  in
+  match res with
+  | Error (`Msg m) ->
+      failwith m
+  | Ok () ->
+      Fmt.pr "Server running. Connect using %S.@." cap_file ;
+      fst @@ Lwt.wait ()
+
+let create ~public_address ~listen_address ~secret_key ~node_list
+    ~election_timeout ~idle_timeout ~log_path ~term_path ~node_id ~cap_file
+    ~client_cap_file =
+  let t_p, t_f = Lwt.wait () in
+  (* Create t as a promise such that the cap files are created before it is needed *)
+  let p_server =
+    serve t_p ~public_address ~listen_address ~secret_key ~id:node_id ~cap_file
+      ~client_cap_file
+  in
+  let majority = Int.((List.length node_list / 2) + 1) in
+  let%lwt log = Log.get_log_from_file log_path in
+  let%lwt currentTerm = get_term_from_file term_path in
+  let log_file = Config.create_file log_path in
+  let term_file = Config.create_file term_path in
+  let vat = Capnp_rpc_unix.client_only_vat () in
+  (*- Create the follower capnp capabilities ---------*)
+  let%lwt node_caps =
+    Lwt_list.map_p
+      (fun (id, path) ->
+        let%lwt sr = Send.get_sr_from_path path vat in
+        let%lwt cap = Send.connect sr in
+        Lwt.return (id, cap))
+      node_list
+  in
+  let config =
+    Config.
+      { quorum= Quorum.make_quorum majority
+      ; majority
+      ; node_list= node_caps
+      ; num_nodes= List.length node_caps
+      ; election_timeout
+      ; idle_timeout
+      ; log_file
+      ; term_file
+      ; node_id }
   in
   let t =
     { currentTerm
     ; log
     ; commitIndex= 0
     ; lastApplied= 0
-    ; node_state
-    ; state_machine= sm
-    ; client_request_result_w= Lookup.create (module Int)
-    ; client_request_result_f= Lookup.create (module Int)
+    ; node_state= Follower {last_recv_from_leader= 0.}
+    ; state_machine= StateMachine.create ()
+    ; config
     ; commitIndex_cond= Lwt_condition.create ()
     ; log_cond= Lwt_condition.create ()
-    ; msg_layer
-    ; config }
+    ; client_request_results = Lookup.create (module Int) 
+    ; is_leader = Lwt_condition.create ()
+    }
   in
-  Msg_layer.attach_watch_src msg_layer ~msg_filter:request_vote_request
-    ~callback:(recv_RequestVote_req t) ;
-  Msg_layer.attach_watch_src msg_layer ~msg_filter:request_vote_response
-    ~callback:(recv_RequestVote_rep t) ;
-  Msg_layer.attach_watch_src msg_layer ~msg_filter:append_entries_request
-    ~callback:(recv_AppendEntries_req t) ;
-  Msg_layer.attach_watch_src msg_layer ~msg_filter:append_entries_response
-    ~callback:(recv_AppendEntries_rep t) ;
-  let client_promise =
-    Msg_layer.client_socket msg_layer ~callback:(recv_client_request t)
-      ~port:client_port
-  in
-  let%lwt () = become_candidate t in
-  Lwt.join [client_promise; m_ps; commitIndex_cond_check t]
+  Lwt.wakeup_later t_f t ;
+  (* Allow the server to respond to requests bc t is now created *)
+  Lwt.join [p_server; Transition.candidate t]

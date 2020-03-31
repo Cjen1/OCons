@@ -1,35 +1,52 @@
 open Lib
 open Core
 
+let network_address =
+  Command.Arg_type.create (fun address ->
+      match String.split address ~on:':' with
+      | [ip; port] ->
+          `TCP (ip, Int.of_string port)
+      | _ ->
+          eprintf "%s is not a valid address" address ;
+          exit 1)
+
+let node_list =
+  Command.Arg_type.create (fun ls ->
+      String.split ls ~on:','
+      |> List.map ~f:(String.split ~on:';')
+      |> List.map ~f:(function
+           | [id; path] ->
+               (Int.of_string id, path)
+           | _ ->
+               assert false))
+
 let command =
   Core.Command.basic ~summary:"Ocaml_paxos"
     Core.Command.Let_syntax.(
-      let%map_open client_port = anon ("client_port" %: int)
-      and wal_loc = anon ("Log_location" %: string)
-      and node_name = anon ("node_name" %: string)
-      and endpoints = anon ("endpoints" %: string)
-      and election_timeout = anon ("election_timeout" %: float) in
+      let%map_open public_address = anon ("public_address" %: network_address)
+      and listen_address = anon ("listen_address" %: network_address)
+      and data_path = anon ("data_path" %: string)
+      and client_cap_file = anon ("client_cap_file" %: string)
+      and node_id = anon ("node_id" %: int)
+      and node_list = anon ("node_list" %: node_list)
+      and election_timeout = anon ("election_timeout" %: float)
+      and idle_timeout = anon ("idle_timeout" %: float) in
       fun () ->
-        let p =
-          let p, r = Lwt.task () in
-          Lwt.wakeup_later r () ;
-          let%lwt () = p in
-          let endpoints =
-            let pairs = Base.String.split ~on:',' endpoints in
-            Base.List.mapi pairs ~f:(fun i xs ->
-                match Base.String.split ~on:'=' xs with
-                | [node_name; addr] ->
-                    (node_name, addr, i)
-                | _ ->
-                    raise
-                      (Invalid_argument "Need endpoints of the form [node_name=uri]"))
-          in
-          Printf.printf "" ;
-          let client_port = Int.to_string client_port in
-          Paxos.create_and_start ~data_path:wal_loc ~node_list:endpoints
-            ~node_addr:node_name ~client_port ~election_timeout
+        let secret_key = `File (data_path ^ ".key") in
+        let log_path = data_path ^ ".log" in
+        let term_path = data_path ^ ".term" in
+        let cap_file =
+          match List.Assoc.find node_list ~equal:Int.equal node_id with
+          | Some file ->
+              file
+          | None ->
+              eprintf "%d not found in node_list" node_id ;
+              exit 1
         in
-        Lwt_main.run p)
+        Paxos.create ~public_address ~listen_address ~secret_key ~node_list
+          ~election_timeout ~idle_timeout ~log_path ~term_path ~node_id
+          ~cap_file ~client_cap_file
+        |> Lwt_main.run)
 
 let reporter =
   let report src level ~over k msgf =

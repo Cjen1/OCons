@@ -3,60 +3,38 @@ open Core
 open Lib.Client
 open Lib.Types
 
-let write =
-  Command.basic ~summary:"Creation operation"
+let node_list =
+  Command.Arg_type.create @@ String.split ~on:','
+
+let print_res res = 
+  let open StateMachine in
+  match%lwt res with
+  | Success -> Printf.printf "Success\n" |> Lwt.return
+  | ReadSuccess s -> Printf.printf "Read Success: %s\n" s |> Lwt.return
+  | Failure -> Printf.printf "Failure" |> Lwt.return
+
+let put =
+  Command.basic ~summary:"Put operation"
     Command.Let_syntax.(
-      let%map_open endpoints = anon ("endpoints" %: string)
+      let%map_open client_files = anon ("capacity_files" %: node_list)
       and key = anon ("key" %: string)
       and value = anon ("value" %: string) in
       fun () ->
-        let endpoints =
-          let pairs = Base.String.split ~on:',' endpoints in
-          Base.List.map pairs ~f:(fun xs ->
-              match Base.String.split ~on:'=' xs with
-              | [id; addr] ->
-                  (id, addr)
-              | _ ->
-                  raise
-                    (Invalid_argument
-                       ( "Need endpoints of the form [id=uri] but got "
-                       ^ endpoints )))
-        in
-        let c, p = new_client ~endpoints () in
-        Lwt_main.run
-        @@ Lwt.choose
-             [ p
-             ; (let%lwt res = op_write c key value in
-                res |> StateMachine.sexp_of_op_result |> Sexp.to_string_hum
-                |> print_endline ;
-                Lwt.return_unit) ])
+        Lwt_main.run @@ 
+        let%lwt c = new_client ~client_files () in
+        op_write c key value |> print_res
+    )
 
-let read =
-  Command.basic ~summary:"Read operation"
+let get = 
+    Command.basic ~summary:"Get operation"
     Command.Let_syntax.(
-      let%map_open endpoints = anon ("endpoints" %: string)
+      let%map_open client_files = anon ("capacity_files" %: node_list)
       and key = anon ("key" %: string) in
-      fun () ->
-        let endpoints =
-          let pairs = Base.String.split ~on:',' endpoints in
-          Base.List.map pairs ~f:(fun xs ->
-              match Base.String.split ~on:'=' xs with
-              | [id; addr] ->
-                  (id, addr)
-              | _ ->
-                  raise
-                    (Invalid_argument
-                       ( "Need endpoints of the form [id=uri] but got "
-                       ^ endpoints )))
-        in
-        let c, p = new_client ~endpoints () in
-        Lwt_main.run
-        @@ Lwt.choose
-             [ p
-             ; (let%lwt res = op_read c key in
-                res |> StateMachine.sexp_of_op_result |> Sexp.to_string_hum
-                |> print_endline ;
-                Lwt.return_unit) ])
+      fun () -> 
+        Lwt_main.run @@
+        let%lwt c = new_client ~client_files () in
+        op_read c key |> print_res
+    )
 
 let reporter =
   let report src level ~over k msgf =
@@ -76,7 +54,7 @@ let reporter =
 (* Handle the command line arguments and run application is specified mode *)
 let cmd =
   Command.group ~summary:"Cli client for Ocaml Paxos"
-    [("write", write); ("read", read)]
+    [("put", put); ("get", get)]
 
 let () =
   Lwt_engine.set (new Lwt_engine.libev ()) ;

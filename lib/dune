@@ -1,12 +1,20 @@
 (library
  (name lib)
  (public_name ocaml-paxos)
- (libraries oUnit core.uuid core lwt lwt.unix lwt_ppx yojson uri logs.lwt logs.fmt
-   fmt.tty ocaml-protoc ppx_deriving ppx_deriving.show ppx_deriving_protobuf zmq zmq-lwt)
+ (libraries base
+ lwt lwt.unix lwt_ppx logs.lwt logs.fmt zmq-lwt
+   fmt.tty ocaml-protoc ppx_deriving ppx_deriving.show ppx_deriving_protobuf zmq
+   capnp-rpc-lwt capnp-rpc-net capnp-rpc-unix 
+   )
  (preprocess
-  (pps ppx_deriving_protobuf ppx_deriving lwt_ppx ppx_jane)))
+  (pps ppx_deriving_protobuf ppx_deriving ppx_deriving.show lwt_ppx)))
+
+(rule
+ (targets messaging_api.ml messaging_api.mli)
+ (deps messaging_api.capnp)
+ (action (run capnpc -o %{bin:capnpc-ocaml} %{deps})))
 
 (env
  (dev
   (flags
-   (:standard -w -39))))
+   (:standard -w -39-53))))
