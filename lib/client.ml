@@ -9,7 +9,7 @@ module CLog = (val Logs.src_log client : Logs.LOG)
 type t = {cid: string; endpoints: Send.client_serv list}
 
 let send t op =
-  let id = Random.int Int.(floor_pow2 30 - 1) in
+  let id = Random.int32 Int32.max_value |> Int32.to_int_exn in 
   let cmd : command = {op; id} in
   let ps = List.map t.endpoints ~f:(fun cap -> Send.clientReq cap cmd) in
   Lwt.pick ps

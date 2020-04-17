@@ -9,9 +9,5 @@ let make_quorum_set threshold () =
 
 let make_quorum threshold () =
   let xs = ref [] in
-  let add x = 
-    xs := x :: !xs;
-  in {
-    add
-    ; sufficient = (fun () -> List.length !xs >= threshold)
-  }
+  let add x = xs := x :: !xs in
+  {add; sufficient= (fun () -> List.length !xs >= threshold)}

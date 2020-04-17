@@ -34,6 +34,7 @@ let log_entry_from_capnp entry =
 
 let command_to_capnp cmd_root (command : command) =
   let op_root = API.Builder.Command.op_init cmd_root in
+  API.Builder.Command.id_set_int cmd_root command.id;
   match command.op with
   | Read key ->
       API.Builder.Op.key_set op_root key ;
@@ -44,9 +45,12 @@ let command_to_capnp cmd_root (command : command) =
       API.Builder.Op.Write.value_set write value
 
 let log_entry_to_capnp entry =
-  let root = API.Builder.LogEntry.init_root () in
+  let open API.Builder.LogEntry in
+  let root = init_root () in
   let cmd_root = API.Builder.LogEntry.command_init root in
   command_to_capnp cmd_root entry.command ;
+  term_set_int root entry.term;
+  index_set_int root entry.index;
   root
 
 type 'a repairable_ref =
@@ -59,7 +63,19 @@ module Send = struct
   module Serv = API.Client.ServiceInterface
   module Cli = API.Client.ClientInterface
 
-  let get_sr_from_path _path _vat : 'a Sturdy_ref.t Lwt.t = assert false
+  let get_sr_from_path path vat : 'a Sturdy_ref.t Lwt.t =
+    let rec wait_until_exists path =
+      if%lwt Lwt_unix.file_exists path then Lwt.return_unit
+      else
+        let%lwt () = Lwt_unix.sleep 1. in
+        wait_until_exists path
+    in
+    let%lwt () = wait_until_exists path in
+    match Capnp_rpc_unix.Cap_file.load vat path with
+    | Ok sr ->
+        Lwt.return sr
+    | Error (`Msg m) ->
+        failwith m
 
   type service = Serv.t repairable_ref
 
@@ -67,24 +83,37 @@ module Send = struct
 
   let is_error_handleable e =
     let open Capnp_rpc.Exception in
-    MLog.err (fun m -> m "Exception got: %a" Capnp_rpc.Exception.pp e) ;
+    MLog.warn (fun m -> m "Exception got: %a" Capnp_rpc.Exception.pp e) ;
     match e.ty with `Disconnected | `Overloaded -> Ok () | _ -> Error e
 
   let rec register_reconnect fulfiller t =
     Capability.when_broken
       (fun e ->
-        MLog.err (fun m ->
+        MLog.warn (fun m ->
             m "Capability failed with: %a" Capnp_rpc.Exception.pp e) ;
         match is_error_handleable e with
         | Error _e ->
             failwith "Unable to recover"
         | Ok () ->
+            MLog.warn (fun m ->
+                m "Error is recoverable, attempting to recover.") ;
             Lwt.wakeup_later fulfiller () ;
             let repaired', fulfiller' = Lwt.task () in
-            let cap' = Lwt_main.run @@ Sturdy_ref.connect_exn t.sr in
-            t.cap <- cap' ;
-            t.repaired <- repaired' ;
-            register_reconnect fulfiller' t)
+            let rec p () =
+              match%lwt Sturdy_ref.connect t.sr with
+              | Ok cap' ->
+                  t.cap <- cap' ;
+                  t.repaired <- repaired' ;
+                  register_reconnect fulfiller' t |> Lwt.return
+              | Error e ->
+                  let repair_interval = 10. in
+                  MLog.err (fun m -> m "Got error repairing cap: %a" Capnp_rpc.Exception.pp e);
+                  MLog.warn (fun m ->
+                      m "Unable to repair cap, retrying in %f" repair_interval) ;
+                  let%lwt () = Lwt_unix.sleep repair_interval in
+                  p ()
+            in
+            Lwt.async p)
       t.cap
 
   let connect sr =
@@ -94,11 +123,12 @@ module Send = struct
     register_reconnect fulfiller t ;
     Lwt.return t
 
-  let rec requestVote (t : service) ~term ~leader_commit =
+  let rec requestVote (t : service) ~term ~leader_commit ~src_id =
     let open Serv.RequestVote in
     let request, params = Capability.Request.create Params.init_pointer in
     Params.term_set_int params term ;
     Params.leader_commit_set_int params leader_commit ;
+    Params.src_id_set_int params src_id;
     let%lwt result = Capability.call_for_value t.cap method_id request in
     match result with
     | Ok result ->
@@ -114,7 +144,7 @@ module Send = struct
       | _ ->
           MLog.err (fun m -> m "retrying after the conn is repaired") ;
           let%lwt () = t.repaired in
-          requestVote t ~term ~leader_commit )
+          requestVote t ~term ~leader_commit ~src_id)
 
   let rec appendEntries (t : service) ~term ~prevLogIndex ~prevLogTerm ~entries
       ~leaderCommit =
@@ -177,7 +207,7 @@ module type S = sig
   type t
 
   val request_vote :
-    t -> term:term -> leaderCommit:log_index -> request_vote_response Lwt.t
+    t -> term:term -> leaderCommit:log_index -> src_id:node_id -> request_vote_response Lwt.t
 
   val append_entries :
        t
@@ -191,16 +221,15 @@ module type S = sig
   val client_req : t -> command -> op_result Lwt.t
 end
 
-module Recv (Impl: S) =
-struct
-  let client (t: Impl.t Lwt.t) =
+module Recv (Impl : S) = struct
+  let client (t : Impl.t Lwt.t) =
+    MLog.debug (fun m -> m "Starting client service") ;
     let module Serv = API.Service.ClientInterface in
-    Serv.local
+    Lwt.return @@ Serv.local
     @@ object
          inherit Serv.service
 
          method client_request_impl params release_param_caps =
-           let t = Lwt_main.run t in
            (* Use a promise to t to fix file ordering issue *)
            let open Serv.ClientRequest in
            let command = Params.command_get params |> command_from_capnp in
@@ -209,6 +238,7 @@ struct
              Service.Response.create Results.init_pointer
            in
            let p () =
+             let%lwt t = t in
              let%lwt op_result = Impl.client_req t command in
              let root = Results.result_init results in
              let open API.Builder.CommandResult in
@@ -226,25 +256,26 @@ struct
            Service.return_lwt p
        end
 
-  let local (t: Impl.t Lwt.t) =
+  let local (t : Impl.t Lwt.t) =
     let module Serv = API.Service.ServiceInterface in
-    Serv.local
+    Lwt.return @@ Serv.local
     @@ object
          inherit Serv.service
 
          method request_vote_impl params release_param_caps =
-           let t = Lwt_main.run t in
            (* Use a promise to t to fix file ordering issue *)
            let open Serv.RequestVote in
            let term = Params.term_get_int_exn params in
            let leaderCommit = Params.leader_commit_get_int_exn params in
+           let src_id = Params.src_id_get_int_exn params in
            release_param_caps () ;
            let response, results =
              Service.Response.create Results.init_pointer
            in
            let p () =
+             let%lwt t = t in
              let%lwt {term; voteGranted; entries} =
-               Impl.request_vote t ~term ~leaderCommit
+               Impl.request_vote t ~term ~leaderCommit ~src_id
              in
              Results.term_set_int results term ;
              Results.vote_granted_set results voteGranted ;
@@ -257,12 +288,11 @@ struct
            Service.return_lwt p
 
          method append_entries_impl params release_param_caps =
-           let t = Lwt_main.run t in
            (* Use a promise to t to fix file ordering issue *)
            let open Serv.AppendEntries in
            let term = Params.term_get_int_exn params in
            let prevLogIndex = Params.prev_log_index_get_int_exn params in
-           let prevLogTerm = Params.prev_log_index_get_int_exn params in
+           let prevLogTerm = Params.prev_log_term_get_int_exn params in
            let entries =
              Params.entries_get_list params |> List.map log_entry_from_capnp
            in
@@ -272,6 +302,7 @@ struct
              Service.Response.create Results.init_pointer
            in
            let p =
+             let%lwt t = t in
              let%lwt {term; success} =
                Impl.append_entries t ~term ~prevLogIndex ~prevLogTerm ~entries
                  ~leaderCommit

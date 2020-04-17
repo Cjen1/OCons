@@ -32,7 +32,7 @@ struct LogEntry {
 
 interface ServiceInterface {
   requestVote @0
-    (term :Int64, leaderCommit :Int64) -> 
+    (term :Int64, leaderCommit :Int64, src_id :Int64) -> 
       (term :Int64, voteGranted :Bool, entries :List(LogEntry));
 
   appendEntries @1
