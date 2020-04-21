@@ -1,19 +1,17 @@
 (* main.ml *)
 open Core
-open Lib.Client
-open Lib.Types
+open Ocamlpaxos.Client
 
 let node_list = Command.Arg_type.create @@ String.split ~on:','
 
 let print_res res =
-  let open StateMachine in
   match%lwt res with
-  | Success ->
+  | Ok `Success ->
       Printf.printf "Success\n" |> Lwt.return
-  | ReadSuccess s ->
+  | Ok `ReadSuccess s ->
       Printf.printf "Read Success: %s\n" s |> Lwt.return
-  | Failure ->
-      Printf.printf "Failure" |> Lwt.return
+  | Error `Msg s ->
+      Printf.printf "Failure of %s\n" s |> Lwt.return
 
 let put =
   Command.basic ~summary:"Put operation"
