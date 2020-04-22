@@ -1,7 +1,7 @@
 (executable
  (name main)
  (public_name ocamlpaxos)
- (libraries ocamlpaxos core lwt uri lwt_ppx)
+ (libraries ocamlpaxos core lwt lwt_ppx)
  (preprocess
   (pps lwt_ppx ppx_jane))
  (modules main))
@@ -9,7 +9,7 @@
 (executable
  (name client)
  (public_name ocamlpaxos-client)
- (libraries ocamlpaxos core lwt uri lwt_ppx)
+ (libraries ocamlpaxos core lwt lwt_ppx)
  (preprocess
   (pps lwt_ppx ppx_jane))
  (modules client))

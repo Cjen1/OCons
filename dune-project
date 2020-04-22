@@ -1,18 +1,28 @@
 (lang dune 1.11)
 (using fmt 1.2)
-(name ocaml-paxos)
-(source (github chrislomaxjones/part-ii-project))
+(name ocamlpaxos)
+(source (github cjen1/OcamlPaxos))
 (authors "Chris Jones" "Chris Jensen")
 
 (allow_approximate_merlin)
 
+(generate_opam_files true)
+
 (package
-  (name ocaml-paxos)
+  (name ocamlpaxos)
   (synopsis "An ocaml implementation of the Paxos protocol")
   (depends 
-    oUnit 
-    core 
-    core.uuid 
-    lwt 
-    uri 
+    (ocaml (>= 4.08.0))
+    base
+    core
+    ppx_jane
+    lwt
+    lwt_ppx
+    conf-libev
+    logs
+    fmt
+    capnp-rpc-net
+    capnp-rpc-unix
+    capnp-rpc-lwt
+    capnp
     ))
