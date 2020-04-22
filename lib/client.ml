@@ -35,7 +35,7 @@ let new_client ?(cid = Types.create_id ()) ~client_files () =
     Lwt_list.map_p
       (fun path ->
         let%lwt sr = Send.get_sr_from_path path vat in
-        let%lwt cap = Send.connect sr in
+        let%lwt cap = RepairableRef.connect sr in
         Lwt.return cap)
       client_files
   in
