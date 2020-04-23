@@ -58,6 +58,7 @@ module PaxosTypes = struct
     { mutable node_state: node_state
     ; mutable currentTerm: term
     ; mutable log: log
+    ; mutable un_saved_op_list: Log.op list
     ; mutable state_machine: StateMachine.t
     ; mutable commitIndex: log_index
     ; mutable lastApplied: log_index
@@ -279,7 +280,7 @@ end = struct
         if t.commitIndex > t.lastApplied then (
           PL.debug (fun m -> m "commitIndex_cond_check: Updating SM") ;
           let%lwt () = update t @@ LastApplied (t.lastApplied + 1) in
-          PL.debug (fun m -> m "Log state = \n%s" (Log.to_string t.log)) ;
+          (*PL.debug (fun m -> m "Log state = \n%s" (Log.to_string t.log)) ;*)
           let command = (Log.get_exn t.log t.lastApplied).command in
           (* lastApplied must exist by match statement *)
           let result = StateMachine.update t.state_machine command in

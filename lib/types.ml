@@ -4,7 +4,7 @@ open Base
 
 type time = float
 
-let time_now : unit -> time = fun () -> Unix.time ()
+let time_now : unit -> time = fun () -> Unix.gettimeofday ()
 
 type unique_id = int [@@deriving protobuf]
 
