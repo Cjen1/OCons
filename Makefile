@@ -1,5 +1,6 @@
 build:
-	eval `opam env` && \
-	dune build @install && \
+	eval `opam env` 
+	opam install --deps-only . -y
+	dune build @install 
 	dune install 
 

@@ -289,7 +289,8 @@ end = struct
                 ()
             | Ok (_, fulfiller) ->
                 PL.debug (fun m ->
-                    m "commitIndex_cond_check: Alerting fulfiller for cid %d" command.id) ;
+                    m "commitIndex_cond_check: Alerting fulfiller for cid %d"
+                      command.id) ;
                 Lwt.wakeup_later fulfiller result ;
                 (*Lookup.remove t.client_request_results command.id*)
                 ()
@@ -640,14 +641,14 @@ let serve (t : t Lwt.t) ~public_address ~listen_address ~secret_key ~id
       failwith m
   | Ok () ->
       PL.info (fun m -> m "Server running. Connect using %S.@." cap_file) ;
-      fst @@ Lwt.wait ()
+      Lwt.return (local, fst @@ Lwt.wait ())
 
 let create ~public_address ~listen_address ~secret_key ~node_list
     ~election_timeout ~idle_timeout ~log_path ~term_path ~node_id ~cap_file
     ~client_cap_file =
   let t_p, t_f = Lwt.wait () in
   (* Create t as a promise such that the cap files are created before it is needed *)
-  let p_server =
+  let%lwt local_service, p_server =
     serve t_p ~public_address ~listen_address ~secret_key ~id:node_id ~cap_file
       ~client_cap_file
   in
@@ -663,9 +664,13 @@ let create ~public_address ~listen_address ~secret_key ~node_list
   let%lwt node_caps =
     Lwt_list.map_p
       (fun (id, path) ->
-        let%lwt sr = Send.get_sr_from_path path vat in
-        let%lwt cap = Send.connect sr in
-        Lwt.return (id, cap))
+         if id = node_id then 
+           let cap = RepairableRef.connect_local local_service in
+           Lwt.return (id, cap)
+        else
+          let%lwt sr = Send.get_sr_from_path path vat in
+          let%lwt cap = RepairableRef.connect sr in
+          Lwt.return (id, cap))
       node_list
   in
   PL.debug (fun m -> m "Connected to other node's caps") ;

@@ -1,4 +1,4 @@
-open Lib
+open Ocamlpaxos 
 open Core
 
 let network_address =

@@ -34,7 +34,7 @@ let log_entry_from_capnp entry =
 
 let command_to_capnp cmd_root (command : command) =
   let op_root = API.Builder.Command.op_init cmd_root in
-  API.Builder.Command.id_set_int cmd_root command.id;
+  API.Builder.Command.id_set_int cmd_root command.id ;
   match command.op with
   | Read key ->
       API.Builder.Op.key_set op_root key ;
@@ -49,14 +49,80 @@ let log_entry_to_capnp entry =
   let root = init_root () in
   let cmd_root = API.Builder.LogEntry.command_init root in
   command_to_capnp cmd_root entry.command ;
-  term_set_int root entry.term;
-  index_set_int root entry.index;
+  term_set_int root entry.term ;
+  index_set_int root entry.index ;
   root
 
-type 'a repairable_ref =
-  { mutable cap: 'a Capability.t
-  ; sr: 'a Sturdy_ref.t
-  ; mutable repaired: unit Lwt.t }
+module RepairableRef = struct
+  let is_error_handleable e =
+    let open Capnp_rpc.Exception in
+    MLog.warn (fun m -> m "Exception got: %a" Capnp_rpc.Exception.pp e) ;
+    match e.ty with `Disconnected | `Overloaded -> Ok () | _ -> Error e
+
+  type 'a remote_ref =
+    { mutable cap: 'a Capability.t option
+    ; sr: 'a Sturdy_ref.t
+    ; mutable repaired: unit Lwt.t * unit Lwt.u}
+
+  type 'a t = Remote of 'a remote_ref | Local of 'a Capability.t
+
+  let rec reconnect t =
+    match%lwt Sturdy_ref.connect t.sr with
+    | Ok cap ->
+        Capability.when_broken
+          (fun e ->
+            MLog.warn (fun m ->
+                m "Capability failed with: %a" Capnp_rpc.Exception.pp e) ;
+            match is_error_handleable e with
+            | Error _e ->
+                failwith "Unable to recover"
+            | Ok () ->
+                MLog.warn (fun m ->
+                    m "Error is recoverable, attempting to recover.") ;
+                Lwt.async (fun () -> reconnect t))
+          cap ;
+        t.cap <- Some cap;
+        let repaired = t.repaired in
+        t.repaired <- Lwt.task ();
+        Lwt.wakeup_later (snd repaired) ();
+        Lwt.return_unit
+    | Error e ->
+        let repair_interval = 10. in
+        MLog.err (fun m ->
+            m "Got error repairing cap: %a" Capnp_rpc.Exception.pp e) ;
+        MLog.warn (fun m ->
+            m "Unable to repair cap, retrying in %f" repair_interval) ;
+        let%lwt () = Lwt_unix.sleep repair_interval in
+        reconnect t
+
+  let connect sr =
+    let t = {cap= None; sr; repaired=Lwt.task ()} in
+    let%lwt () = reconnect t in
+    Lwt.return @@ Remote t
+
+  let connect_local cap = Local cap
+
+  let rec call_for_value t mid req =
+    match t with
+    | Local cap ->
+        Capability.call_for_value cap mid req
+    | Remote {cap=Some cap; repaired; _} -> (
+        let%lwt result = Capability.call_for_value cap mid req in
+        match result with
+        | Ok result ->
+            Lwt.return_ok result
+        | Error e -> (
+          match e with
+          | `Cancelled ->
+              raise Lwt.Canceled
+          | _ ->
+              MLog.err (fun m -> m "retrying after the conn is repaired") ;
+              let%lwt () = fst repaired in
+              call_for_value t mid req ) )
+    | Remote {cap=None; repaired; _} -> 
+      let%lwt () = fst repaired in
+      call_for_value t mid req
+end
 
 module Send = struct
   (* Module containing a few utility functions and the main client facing api's *)
@@ -77,74 +143,25 @@ module Send = struct
     | Error (`Msg m) ->
         failwith m
 
-  type service = Serv.t repairable_ref
+  type service = Serv.t RepairableRef.t
 
-  type client_serv = Cli.t repairable_ref
-
-  let is_error_handleable e =
-    let open Capnp_rpc.Exception in
-    MLog.warn (fun m -> m "Exception got: %a" Capnp_rpc.Exception.pp e) ;
-    match e.ty with `Disconnected | `Overloaded -> Ok () | _ -> Error e
-
-  let rec register_reconnect fulfiller t =
-    Capability.when_broken
-      (fun e ->
-        MLog.warn (fun m ->
-            m "Capability failed with: %a" Capnp_rpc.Exception.pp e) ;
-        match is_error_handleable e with
-        | Error _e ->
-            failwith "Unable to recover"
-        | Ok () ->
-            MLog.warn (fun m ->
-                m "Error is recoverable, attempting to recover.") ;
-            Lwt.wakeup_later fulfiller () ;
-            let repaired', fulfiller' = Lwt.task () in
-            let rec p () =
-              match%lwt Sturdy_ref.connect t.sr with
-              | Ok cap' ->
-                  t.cap <- cap' ;
-                  t.repaired <- repaired' ;
-                  register_reconnect fulfiller' t |> Lwt.return
-              | Error e ->
-                  let repair_interval = 10. in
-                  MLog.err (fun m -> m "Got error repairing cap: %a" Capnp_rpc.Exception.pp e);
-                  MLog.warn (fun m ->
-                      m "Unable to repair cap, retrying in %f" repair_interval) ;
-                  let%lwt () = Lwt_unix.sleep repair_interval in
-                  p ()
-            in
-            Lwt.async p)
-      t.cap
-
-  let connect sr =
-    let repaired, fulfiller = Lwt.task () in
-    let%lwt cap = Sturdy_ref.connect_exn sr in
-    let t = {repaired; cap; sr} in
-    register_reconnect fulfiller t ;
-    Lwt.return t
+  type client_serv = Cli.t RepairableRef.t
 
   let rec requestVote (t : service) ~term ~leader_commit ~src_id =
     let open Serv.RequestVote in
     let request, params = Capability.Request.create Params.init_pointer in
     Params.term_set_int params term ;
     Params.leader_commit_set_int params leader_commit ;
-    Params.src_id_set_int params src_id;
-    let%lwt result = Capability.call_for_value t.cap method_id request in
-    match result with
+    Params.src_id_set_int params src_id ;
+    match%lwt RepairableRef.call_for_value t method_id request with
     | Ok result ->
         let term = Results.term_get_int_exn result in
         let voteGranted = Results.vote_granted_get result in
         let entries = Results.entries_get_list result in
         let entries = List.map log_entry_from_capnp entries in
         Lwt.return {term; voteGranted; entries}
-    | Error e -> (
-      match e with
-      | `Cancelled ->
-          raise Lwt.Canceled
-      | _ ->
-          MLog.err (fun m -> m "retrying after the conn is repaired") ;
-          let%lwt () = t.repaired in
-          requestVote t ~term ~leader_commit ~src_id)
+    | Error (`Capnp e) ->
+        failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 
   let rec appendEntries (t : service) ~term ~prevLogIndex ~prevLogTerm ~entries
       ~leaderCommit =
@@ -158,27 +175,20 @@ module Send = struct
         (List.map log_entry_to_capnp entries |> Array.of_list)
     in
     Params.leader_commit_set_int params leaderCommit ;
-    match%lwt Capability.call_for_value t.cap method_id request with
+    match%lwt RepairableRef.call_for_value t method_id request with
     | Ok result ->
         let term = Results.term_get_int_exn result in
         let success = Results.success_get result in
         Lwt.return {term; success}
-    | Error e -> (
-      match e with
-      | `Cancelled ->
-          raise Lwt.Canceled
-      | _ ->
-          MLog.err (fun m -> m "retrying after the conn is repaired") ;
-          let%lwt () = t.repaired in
-          appendEntries t ~term ~prevLogIndex ~prevLogTerm ~entries
-            ~leaderCommit )
+    | Error (`Capnp e) ->
+        failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 
   let rec clientReq (t : client_serv) command =
     let open Cli.ClientRequest in
     let request, params = Capability.Request.create Params.init_pointer in
     let cmd_root = Params.command_init params in
     command_to_capnp cmd_root command ;
-    match%lwt Capability.call_for_value t.cap method_id request with
+    match%lwt RepairableRef.call_for_value t method_id request with
     | Ok result -> (
         let result = Cli.ClientRequest.Results.result_get result in
         let open API.Reader.CommandResult in
@@ -193,21 +203,19 @@ module Send = struct
             failwith
               (Printf.sprintf
                  "Undefined result got from capnp response, idx = %d" s) )
-    | Error e -> (
-      match e with
-      | `Cancelled ->
-          raise Lwt.Canceled
-      | _ ->
-          MLog.err (fun m -> m "retrying after the conn is repaired") ;
-          let%lwt () = t.repaired in
-          clientReq t command )
+    | Error (`Capnp e) ->
+        failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 end
 
 module type S = sig
   type t
 
   val request_vote :
-    t -> term:term -> leaderCommit:log_index -> src_id:node_id -> request_vote_response Lwt.t
+       t
+    -> term:term
+    -> leaderCommit:log_index
+    -> src_id:node_id
+    -> request_vote_response Lwt.t
 
   val append_entries :
        t
