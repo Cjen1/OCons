@@ -122,26 +122,6 @@ type op_result = StateMachine.op_result
 
 type term = int [@@deriving protobuf]
 
-let get_term_from_file file =
-  let open Unix in
-  let term_fd = openfile file [O_RDWR; O_CREAT] 0o640 in
-  let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input term_fd in
-  let%lwt (term : term) =
-    let term = 0 in
-    let rec loop (term : int) =
-      let%lwt value =
-        try%lwt
-          let%lwt v = Lwt_io.read_value input_channel in
-          Lwt.return_some v
-        with End_of_file -> Lwt.return_none
-      in
-      match value with Some term -> loop term | None -> Lwt.return term
-    in
-    loop term
-  in
-  let%lwt () = Lwt_io.close input_channel in
-  Lwt.return term
-
 type log_index = int [@@deriving protobuf]
 
 let log_index_mod : int Base__.Hashtbl_intf.Key.t = (module Int)
@@ -216,7 +196,8 @@ module Log = struct
         let entry = get_exn t index in
         entry.term
 
-  type op = Set of log_index * log_entry | Remove of log_index
+  type op = Set of log_index * log_entry [@key 1] | Remove of log_index [@key 2]
+  [@@deriving protobuf]
 
   let set t ~index ~value : t * op list =
     Logs.debug (fun m -> m "Setting %d to %s" index (string_of_entry value)) ;
@@ -297,31 +278,7 @@ module Log = struct
     | Remove index ->
         Lookup.remove t index ; t
 
-  let get_log_from_file file =
-    let open Unix in
-    let log_fd = openfile file [O_RDWR; O_CREAT] 0o640 in
-    let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input log_fd in
-    let%lwt (log : t) =
-      let init_log = Lookup.create log_index_mod in
-      let rec loop curr_log =
-        let%lwt value =
-          try%lwt
-            let%lwt v = Lwt_io.read_value input_channel in
-            Lwt.return_some v
-          with End_of_file -> Lwt.return_none
-        in
-        match value with
-        | Some v ->
-            let next_log = apply curr_log v in
-            loop next_log
-        | None ->
-            Lwt.return curr_log
-      in
-      loop init_log
-    in
-    let%lwt () = Lwt_io.close input_channel in
-    Lwt.return log
-end
+end 
 
 type log = Log.t
 

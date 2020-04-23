@@ -25,21 +25,89 @@ module PaxosTypes = struct
       ; term_file: file
       ; node_id: node_id }
 
+    module PE = Protobuf.Encoder
+
+    let write_value payload channel =
+      let p_len = Bytes.length payload in
+      let buf = Bytes.create (p_len + 4) in
+      Bytes.blit ~src:payload ~src_pos:0 ~dst:buf ~dst_pos:4 ~len:p_len ;
+      EndianBytes.LittleEndian.set_int32 payload 0 (Int32.of_int_exn p_len) ;
+      Lwt_io.write_from_exactly channel buf 0 (Bytes.length buf)
+
     let write_to_term t (v : term) =
-      let%lwt () = Lwt_io.write_value t.term_file.channel v in
+      let payload = PE.encode_exn term_to_protobuf v in
+      let%lwt () = write_value payload t.term_file.channel in
       let%lwt () = Lwt_io.flush t.term_file.channel in
       Lwt.return @@ Unix.fsync t.term_file.fd
 
     let write_to_log t (v : Log.op) =
-      let%lwt () = Lwt_io.write_value t.log_file.channel v in
+      let payload = PE.encode_exn Log.op_to_protobuf v in
+      let%lwt () = write_value payload t.log_file.channel in
       let%lwt () = Lwt_io.flush t.log_file.channel in
-      Lwt.return @@ Unix.fsync t.term_file.fd
+      Lwt.return @@ Unix.fsync t.log_file.fd
 
     (* vs is oldest to newest *)
     let write_all_to_log t (vs : Log.op list) =
-      let%lwt () = Lwt_list.iter_s (Lwt_io.write_value t.log_file.channel) vs in
+      let%lwt () =
+        Lwt_list.iter_s
+          (fun v ->
+            let payload = PE.encode_exn Log.op_to_protobuf v in
+            write_value payload t.log_file.channel)
+          vs
+      in
       let%lwt () = Lwt_io.flush t.log_file.channel in
-      Lwt.return @@ Unix.fsync t.term_file.fd
+      Lwt.return @@ Unix.fsync t.log_file.fd
+
+    module PD = Protobuf.Decoder
+
+    let read_value channel =
+      let rd_buf = Bytes.create 4 in
+      let%lwt () = Lwt_io.read_into_exactly channel rd_buf 0 4 in
+      let size =
+        EndianBytes.LittleEndian.get_int32 rd_buf 0 |> Int32.to_int_exn
+      in
+      let payload_buf = Bytes.create size in
+      let%lwt () = Lwt_io.read_into_exactly channel payload_buf 0 size in
+      payload_buf |> Lwt.return
+
+    let get_term_from_file file =
+      let open Unix in
+      let term_fd = openfile file [O_RDWR; O_CREAT] 0o640 in
+      let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input term_fd in
+      let stream = Lwt_stream.from (fun () -> 
+          try%lwt 
+            let%lwt v = read_value input_channel in
+            PD.decode_exn term_from_protobuf v |> Lwt.return_some
+          with End_of_file -> Lwt.return_none
+        ) in
+      let%lwt term = 
+        Lwt_stream.fold (
+          fun v acc -> 
+            max v acc
+        ) stream 0
+      in 
+      PL.info (fun m -> m "Got term=%d from file" term);
+      let%lwt () = Lwt_io.close input_channel in
+      Lwt.return term
+
+    let get_log_from_file file =
+      let open Unix in
+      let log_fd = openfile file [O_RDWR; O_CREAT] 0o640 in
+      let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input log_fd in
+      let stream = Lwt_stream.from (fun () -> 
+          try%lwt 
+            let%lwt v = read_value input_channel in
+            PD.decode_exn Log.op_from_protobuf v |> Lwt.return_some
+          with End_of_file -> Lwt.return_none
+        ) in
+      let%lwt log = 
+        Lwt_stream.fold (
+          fun v acc -> 
+            Log.apply acc v
+        ) stream (Lookup.create log_index_mod)
+      in 
+      let%lwt () = Lwt_io.close input_channel in
+      Lwt.return log
   end
 
   type config = Config.t
@@ -653,8 +721,8 @@ let create ~public_address ~listen_address ~secret_key ~node_list
       ~client_cap_file
   in
   let majority = Int.((List.length node_list / 2) + 1) in
-  let%lwt log = Log.get_log_from_file log_path in
-  let%lwt currentTerm = get_term_from_file term_path in
+  let%lwt log = Config.get_log_from_file log_path in
+  let%lwt currentTerm = Config.get_term_from_file term_path in
   PL.debug (fun m -> m "Got current log and term") ;
   let log_file = Config.create_file log_path in
   let term_file = Config.create_file term_path in
@@ -664,9 +732,9 @@ let create ~public_address ~listen_address ~secret_key ~node_list
   let%lwt node_caps =
     Lwt_list.map_p
       (fun (id, path) ->
-         if id = node_id then 
-           let cap = RepairableRef.connect_local local_service in
-           Lwt.return (id, cap)
+        if id = node_id then
+          let cap = RepairableRef.connect_local local_service in
+          Lwt.return (id, cap)
         else
           let%lwt sr = Send.get_sr_from_path path vat in
           let%lwt cap = RepairableRef.connect sr in
