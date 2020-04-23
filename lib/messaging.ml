@@ -54,66 +54,60 @@ let log_entry_to_capnp entry =
   root
 
 module RepairableRef = struct
-  type 'a remote_ref =
-    { mutable cap: 'a Capability.t
-    ; sr: 'a Sturdy_ref.t
-    ; mutable repaired: unit Lwt.t }
-
-  type 'a t = Remote of 'a remote_ref | Local of 'a Capability.t
-
   let is_error_handleable e =
     let open Capnp_rpc.Exception in
     MLog.warn (fun m -> m "Exception got: %a" Capnp_rpc.Exception.pp e) ;
     match e.ty with `Disconnected | `Overloaded -> Ok () | _ -> Error e
 
-  let rec register_reconnect fulfiller t =
-    Capability.when_broken
-      (fun e ->
-        MLog.warn (fun m ->
-            m "Capability failed with: %a" Capnp_rpc.Exception.pp e) ;
-        match is_error_handleable e with
-        | Error _e ->
-            failwith "Unable to recover"
-        | Ok () ->
+  type 'a remote_ref =
+    { mutable cap: 'a Capability.t option
+    ; sr: 'a Sturdy_ref.t
+    ; mutable repaired: unit Lwt.t * unit Lwt.u}
+
+  type 'a t = Remote of 'a remote_ref | Local of 'a Capability.t
+
+  let rec reconnect t =
+    match%lwt Sturdy_ref.connect t.sr with
+    | Ok cap ->
+        Capability.when_broken
+          (fun e ->
             MLog.warn (fun m ->
-                m "Error is recoverable, attempting to recover.") ;
-            Lwt.wakeup_later fulfiller () ;
-            let repaired', fulfiller' = Lwt.task () in
-            let rec p () =
-              match%lwt Sturdy_ref.connect t.sr with
-              | Ok cap' ->
-                  t.cap <- cap' ;
-                  t.repaired <- repaired' ;
-                  register_reconnect fulfiller' t |> Lwt.return
-              | Error e ->
-                  let repair_interval = 10. in
-                  MLog.err (fun m ->
-                      m "Got error repairing cap: %a" Capnp_rpc.Exception.pp e) ;
-                  MLog.warn (fun m ->
-                      m "Unable to repair cap, retrying in %f" repair_interval) ;
-                  let%lwt () = Lwt_unix.sleep repair_interval in
-                  p ()
-            in
-            Lwt.async p)
-      t.cap
+                m "Capability failed with: %a" Capnp_rpc.Exception.pp e) ;
+            match is_error_handleable e with
+            | Error _e ->
+                failwith "Unable to recover"
+            | Ok () ->
+                MLog.warn (fun m ->
+                    m "Error is recoverable, attempting to recover.") ;
+                Lwt.async (fun () -> reconnect t))
+          cap ;
+        t.cap <- Some cap;
+        let repaired = t.repaired in
+        t.repaired <- Lwt.task ();
+        Lwt.wakeup_later (snd repaired) ();
+        Lwt.return_unit
+    | Error e ->
+        let repair_interval = 10. in
+        MLog.err (fun m ->
+            m "Got error repairing cap: %a" Capnp_rpc.Exception.pp e) ;
+        MLog.warn (fun m ->
+            m "Unable to repair cap, retrying in %f" repair_interval) ;
+        let%lwt () = Lwt_unix.sleep repair_interval in
+        reconnect t
 
   let connect sr =
-    let repaired, fulfiller = Lwt.task () in
-    let%lwt cap = Sturdy_ref.connect_exn sr in
-    let t = {repaired; cap; sr} in
-    register_reconnect fulfiller t ;
+    let t = {cap= None; sr; repaired=Lwt.task ()} in
+    let%lwt () = reconnect t in
     Lwt.return @@ Remote t
 
   let connect_local cap = Local cap
-
-  let get_cap = function Remote {cap; _} -> cap | Local cap -> cap
 
   let rec call_for_value t mid req =
     match t with
     | Local cap ->
         Capability.call_for_value cap mid req
-    | Remote t_r -> (
-        let%lwt result = Capability.call_for_value t_r.cap mid req in
+    | Remote {cap=Some cap; repaired; _} -> (
+        let%lwt result = Capability.call_for_value cap mid req in
         match result with
         | Ok result ->
             Lwt.return_ok result
@@ -123,8 +117,11 @@ module RepairableRef = struct
               raise Lwt.Canceled
           | _ ->
               MLog.err (fun m -> m "retrying after the conn is repaired") ;
-              let%lwt () = t_r.repaired in
+              let%lwt () = fst repaired in
               call_for_value t mid req ) )
+    | Remote {cap=None; repaired; _} -> 
+      let%lwt () = fst repaired in
+      call_for_value t mid req
 end
 
 module Send = struct
