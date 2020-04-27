@@ -5,13 +5,14 @@ authors: ["Chris Jones" "Chris Jensen"]
 homepage: "https://github.com/cjen1/OcamlPaxos"
 bug-reports: "https://github.com/cjen1/OcamlPaxos/issues"
 depends: [
-  "dune" {>= "1.11"}
   "ocaml" {>= "4.08.0"}
   "base"
   "core"
+  "dune"
   "ppx_jane"
   "lwt"
   "lwt_ppx"
+  "ppx_deriving_protobuf"
   "conf-libev"
   "logs"
   "fmt"

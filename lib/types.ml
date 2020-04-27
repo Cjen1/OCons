@@ -8,8 +8,8 @@ let time_now : unit -> time = fun () -> Unix.gettimeofday ()
 
 type unique_id = int [@@deriving protobuf]
 
-let create_id () = 
-  Random.self_init ();
+let create_id () =
+  Random.self_init () ;
   Random.int32 Int32.max_value |> Int32.to_int_exn
 
 type node_id = unique_id [@@deriving protobuf]
@@ -33,12 +33,13 @@ module Lookup = struct
 
   let get_exn t key = Result.ok_exn (get t key)
 
-  let remove t key = Hashtbl.remove t key
+  let remove t key = Hashtbl.remove t key ; t
 
   let set t ~key ~data = Hashtbl.set t ~key ~data ; t
 
   let removep t p =
-    Hashtbl.iteri t ~f:(fun ~key ~data -> if p data then remove t key)
+    Hashtbl.iteri t ~f:(fun ~key ~data -> if p data then remove t key |> ignore) ;
+    t
 
   let create key_module = Base.Hashtbl.create key_module
 
@@ -116,6 +117,96 @@ end = struct
         false
 end
 
+module type Persistable = sig
+  type t
+
+  val init : unit -> t
+
+  type op
+
+  val op_to_protobuf : op -> Protobuf.Encoder.t -> unit
+
+  val op_from_protobuf : Protobuf.Decoder.t -> op
+
+  val apply : t -> op -> t
+end
+
+module Persistant (P : Persistable) : sig
+  type t =
+    { t: P.t
+    ; mutable unsyncd: P.op list
+    ; fd: Lwt_unix.file_descr
+    ; channel: Lwt_io.output_channel}
+
+  type op = P.op
+
+  val sync : t -> t Lwt.t
+
+  val of_file : string -> t Lwt.t
+
+  val change : t -> op -> t
+end = struct
+  include P
+
+  type t =
+    { t: P.t
+    ; mutable unsyncd: P.op list
+    ; fd: Lwt_unix.file_descr
+    ; channel: Lwt_io.output_channel }
+
+  let sync t =
+    match t.unsyncd with
+    | [] ->
+        Lwt.return t
+    | _ ->
+        let vs = t.unsyncd |> List.rev in
+        t.unsyncd <- [];
+        let%lwt () =
+          Lwt_list.iter_s
+            (fun v ->
+              let payload = Protobuf.Encoder.encode_exn P.op_to_protobuf v in
+              let p_len = Bytes.length payload in
+              let buf = Bytes.create (p_len + 4) in
+              Bytes.blit ~src:payload ~src_pos:0 ~dst:buf ~dst_pos:4 ~len:p_len ;
+              EndianBytes.LittleEndian.set_int32 payload 0
+                (Int32.of_int_exn p_len) ;
+              Lwt_io.write_from_exactly t.channel buf 0 (Bytes.length buf))
+            vs
+        in
+        let%lwt () = Lwt_io.flush t.channel in
+        let%lwt () = Lwt_unix.fsync t.fd in
+        Lwt.return {t with unsyncd= []}
+
+  let read_value channel =
+    let rd_buf = Bytes.create 4 in
+    let%lwt () = Lwt_io.read_into_exactly channel rd_buf 0 4 in
+    let size =
+      EndianBytes.LittleEndian.get_int32 rd_buf 0 |> Int32.to_int_exn
+    in
+    let payload_buf = Bytes.create size in
+    let%lwt () = Lwt_io.read_into_exactly channel payload_buf 0 size in
+    payload_buf |> Lwt.return
+
+  let of_file file =
+    let%lwt fd = Lwt_unix.openfile file Lwt_unix.[O_RDONLY; O_CREAT] 0o640 in
+    let input_channel = Lwt_io.of_fd ~mode:Lwt_io.input fd in
+    let stream =
+      Lwt_stream.from (fun () ->
+          try%lwt
+            let%lwt v = read_value input_channel in
+            Protobuf.Decoder.decode_exn P.op_from_protobuf v |> Lwt.return_some
+          with End_of_file -> Lwt.return_none)
+    in
+    let%lwt t = Lwt_stream.fold (fun v t -> P.apply t v) stream (P.init ()) in
+    let%lwt () = Lwt_io.close input_channel in
+    let%lwt () = Lwt_unix.close fd in
+    let%lwt fd = Lwt_unix.openfile file Lwt_unix.[O_WRONLY; O_APPEND] 0o640 in
+    let channel = Lwt_io.of_fd ~mode:Lwt_io.output fd in
+    Lwt.return {t; unsyncd= []; fd; channel}
+
+  let change t op = {t with t= P.apply t.t op; unsyncd= op :: t.unsyncd}
+end
+
 type command = StateMachine.command
 
 type op_result = StateMachine.op_result
@@ -147,140 +238,6 @@ let string_of_entry entry =
 let string_of_entries entries =
   let res = entries |> List.map ~f:string_of_entry |> String.concat ~sep:" " in
   Printf.sprintf "(%s)" res
-
-(*
-module Log' = struct
-  type t = log_entry list
-
-  let get t idx = List.nth t (idx + 1)
-
-  let get_exn t idx = List.nth_exn t (idx + 1)
-
-  let get_term t index = 
-    match index with
-    | 0 -> 0
-    | _ -> 
-      let entry = get_exn t index in
-      entry.term
-
-  type op = Set of log_index * log_entry | Remove of log_index
-
-  let set t ~index ~value : t * op list = 
-    if index < 0 then raise @@ Invalid_argument "Index cannot be negative";
-    if index = 0 then raise @@ Invalid_argument "Cannot set initial element";
-    let rec iter ls = function
-      | 1 -> 
-
-        *)
-
-module Log = struct
-  (* Common operations:
-      - Get max_index
-      - Indices after
-      - Get specific index (close to end generally)
-      - Append to end of log
-  *)
-  type t = (log_index, log_entry) Lookup.t
-
-  type t_list = log_entry list (* Lowest index first *)
-
-  let get = Lookup.get
-
-  let get_exn = Lookup.get_exn
-
-  let get_term t index =
-    match index with
-    | 0 ->
-        0
-    | _ ->
-        let entry = get_exn t index in
-        entry.term
-
-  type op = Set of log_index * log_entry [@key 1] | Remove of log_index [@key 2]
-  [@@deriving protobuf]
-
-  let set t ~index ~value : t * op list =
-    Logs.debug (fun m -> m "Setting %d to %s" index (string_of_entry value)) ;
-    (Lookup.set t ~key:index ~data:value, [Set (index, value)])
-
-  let remove t i = Lookup.remove t i ; Remove i
-
-  let removep t p =
-    let acc = ref [] in
-    Lookup.removep t (fun x ->
-        if p x then (
-          acc := Remove x.index :: !acc ;
-          true )
-        else false) ;
-    !acc
-
-  let get_max_index (t : t) =
-    Lookup.fold t ~init:0 ~f:(fun v acc -> Int.max v.index acc)
-
-  (*
-  (* Entries after i inclusive *)
-  let entries_after_inc log ~index : t_list =
-    let index = if index = 0 then 1 else 0 in (* Avoids printing errors *)
-    let rec loop i acc =
-      match get log index with
-      | Ok v ->
-          loop (i + 1) (v :: acc)
-      | Error _ ->
-          acc
-    in
-    List.rev @@ loop (index) []
-      *)
-  let entries_after_inc log ~index : t_list =
-    let res =
-      Hashtbl.fold log ~init:[] ~f:(fun ~key ~data acc ->
-          if key >= index then data :: acc else acc)
-    in
-    List.sort res ~compare:(fun a b -> Int.compare a.index b.index)
-
-  let to_string t = 
-    let entries = entries_after_inc t ~index:1 in
-    string_of_entries entries
-
-  let add_entries_remove_conflicts t (entries : t_list) =
-    let rec delete_geq t i =
-      match get t i with
-      | Ok v ->
-          assert (Int.(v.index = i)) ;
-          remove t i :: delete_geq t (i + 1)
-      | Error _ ->
-          []
-    in
-    List.fold_left entries ~init:(t, []) ~f:(fun (t, ops_acc) e ->
-        match get t e.index with
-        | Ok {term; command; _}
-          when Int.(term = e.term)
-               && StateMachine.command_equal command e.command ->
-            (* No log inconsistency *)
-            (t, ops_acc)
-        | Error _ ->
-            (* No entry at index *)
-            let t, ops = set t ~index:e.index ~value:e in
-            (t, ops @ ops_acc)
-        | Ok _ ->
-            (* inconsitent log *)
-            let t, ops = set t ~index:e.index ~value:e in
-            let ops = ops @ delete_geq t e.index in
-            (t, ops @ ops_acc))
-
-  let append t v =
-    let max_index = get_max_index t in
-    set t ~index:(max_index + 1) ~value:v
-
-  let apply t op =
-    match op with
-    | Set (index, value) ->
-        set t ~index ~value |> fst
-    | Remove index ->
-        Lookup.remove t index ; t
-
-end 
-
-type log = Log.t
 
 type partial_log = log_entry list
 

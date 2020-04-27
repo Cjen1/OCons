@@ -21,96 +21,162 @@ module PaxosTypes = struct
       ; num_nodes: int
       ; election_timeout: float
       ; idle_timeout: float
-      ; log_file: file
-      ; term_file: file
       ; node_id: node_id }
 
     module PE = Protobuf.Encoder
-
-    let write_value payload channel =
-      let p_len = Bytes.length payload in
-      let buf = Bytes.create (p_len + 4) in
-      Bytes.blit ~src:payload ~src_pos:0 ~dst:buf ~dst_pos:4 ~len:p_len ;
-      EndianBytes.LittleEndian.set_int32 payload 0 (Int32.of_int_exn p_len) ;
-      Lwt_io.write_from_exactly channel buf 0 (Bytes.length buf)
-
-    let write_to_term t (v : term) =
-      let payload = PE.encode_exn term_to_protobuf v in
-      let%lwt () = write_value payload t.term_file.channel in
-      let%lwt () = Lwt_io.flush t.term_file.channel in
-      Lwt.return @@ Unix.fsync t.term_file.fd
-
-    let write_to_log t (v : Log.op) =
-      let payload = PE.encode_exn Log.op_to_protobuf v in
-      let%lwt () = write_value payload t.log_file.channel in
-      let%lwt () = Lwt_io.flush t.log_file.channel in
-      Lwt.return @@ Unix.fsync t.log_file.fd
-
-    (* vs is oldest to newest *)
-    let write_all_to_log t (vs : Log.op list) =
-      let%lwt () =
-        Lwt_list.iter_s
-          (fun v ->
-            let payload = PE.encode_exn Log.op_to_protobuf v in
-            write_value payload t.log_file.channel)
-          vs
-      in
-      let%lwt () = Lwt_io.flush t.log_file.channel in
-      Lwt.return @@ Unix.fsync t.log_file.fd
-
-    module PD = Protobuf.Decoder
-
-    let read_value channel =
-      let rd_buf = Bytes.create 4 in
-      let%lwt () = Lwt_io.read_into_exactly channel rd_buf 0 4 in
-      let size =
-        EndianBytes.LittleEndian.get_int32 rd_buf 0 |> Int32.to_int_exn
-      in
-      let payload_buf = Bytes.create size in
-      let%lwt () = Lwt_io.read_into_exactly channel payload_buf 0 size in
-      payload_buf |> Lwt.return
-
-    let get_term_from_file file =
-      let open Unix in
-      let term_fd = openfile file [O_RDWR; O_CREAT] 0o640 in
-      let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input term_fd in
-      let stream = Lwt_stream.from (fun () -> 
-          try%lwt 
-            let%lwt v = read_value input_channel in
-            PD.decode_exn term_from_protobuf v |> Lwt.return_some
-          with End_of_file -> Lwt.return_none
-        ) in
-      let%lwt term = 
-        Lwt_stream.fold (
-          fun v acc -> 
-            max v acc
-        ) stream 0
-      in 
-      PL.info (fun m -> m "Got term=%d from file" term);
-      let%lwt () = Lwt_io.close input_channel in
-      Lwt.return term
-
-    let get_log_from_file file =
-      let open Unix in
-      let log_fd = openfile file [O_RDWR; O_CREAT] 0o640 in
-      let input_channel = Lwt_io.of_unix_fd ~mode:Lwt_io.input log_fd in
-      let stream = Lwt_stream.from (fun () -> 
-          try%lwt 
-            let%lwt v = read_value input_channel in
-            PD.decode_exn Log.op_from_protobuf v |> Lwt.return_some
-          with End_of_file -> Lwt.return_none
-        ) in
-      let%lwt log = 
-        Lwt_stream.fold (
-          fun v acc -> 
-            Log.apply acc v
-        ) stream (Lookup.create log_index_mod)
-      in 
-      let%lwt () = Lwt_io.close input_channel in
-      Lwt.return log
   end
 
   type config = Config.t
+
+  module Log : sig
+    type t
+
+    val sync : t -> t Lwt.t
+
+    type entry_list = log_entry list
+
+    val of_file : node_addr -> t Lwt.t
+
+    val get : t -> log_index -> (log_entry, exn) Result.t
+
+    val get_exn : t -> log_index -> log_entry
+
+    val get_term : t -> log_index -> term
+
+    val set : t -> index:log_index -> value:log_entry -> t
+
+    val remove : t -> log_index -> t
+
+    val get_max_index : t -> log_index
+
+    val entries_after_inc : t -> index:log_index -> entry_list
+
+    val to_string : t -> string
+
+    val add_entries_remove_conflicts : t -> entry_list -> t
+
+    val append : t -> log_entry -> t
+  end = struct
+    (* Common operations:
+        - Get max_index
+        - Indices after
+        - Get specific index (close to end generally)
+        - Append to end of log
+    *)
+    module P_t = struct
+      type t = (log_index, log_entry) Lookup.t
+
+      let init () = Lookup.create (module Int)
+
+      type op =
+        | Set of log_index * log_entry [@key 1]
+        | Remove of log_index [@key 2]
+      [@@deriving protobuf]
+
+      let apply t op =
+        match op with
+        | Set (index, value) ->
+            Lookup.set t ~key:index ~data:value
+        | Remove index ->
+            Lookup.remove t index
+    end
+
+    include P_t
+    module P = Persistant (P_t)
+    include P
+
+    type t = P.t
+
+    type entry_list = log_entry list (* Lowest index first *)
+
+    let get (t : t) = Lookup.get t.t
+
+    let get_exn t = Lookup.get_exn t.t
+
+    let get_term t index =
+      match index with
+      | 0 ->
+          0
+      | _ ->
+          let entry = get_exn t index in
+          entry.term
+
+    let set t ~index ~value =
+      Logs.debug (fun m -> m "Setting %d to %s" index (string_of_entry value)) ;
+      change t (Set (index, value))
+
+    let remove t i = change t (Remove i)
+
+    let get_max_index (t : t) =
+      Lookup.fold t.t ~init:0 ~f:(fun v acc -> Int.max v.index acc)
+
+    (*
+  (* Entries after i inclusive *)
+  let entries_after_inc log ~index : entry_list =
+    let index = if index = 0 then 1 else 0 in (* Avoids printing errors *)
+    let rec loop i acc =
+      match get log index with
+      | Ok v ->
+          loop (i + 1) (v :: acc)
+      | Error _ ->
+          acc
+    in
+    List.rev @@ loop (index) []
+      *)
+    let entries_after_inc t ~index : entry_list =
+      let res =
+        Hashtbl.fold t.t ~init:[] ~f:(fun ~key ~data acc ->
+            if key >= index then data :: acc else acc)
+      in
+      List.sort res ~compare:(fun a b -> Int.compare a.index b.index)
+
+    let to_string t =
+      let entries = entries_after_inc t ~index:1 in
+      string_of_entries entries
+
+    let add_entries_remove_conflicts t (entries : entry_list) =
+      let rec delete_geq t i =
+        match get t i with
+        | Ok v ->
+            assert (Int.(v.index = i)) ;
+            let t = change t (Remove i) in
+            delete_geq t (i + 1)
+        | Error _ ->
+            t
+      in
+      List.fold_left entries ~init:t ~f:(fun t e ->
+          match get t e.index with
+          | Ok {term; command; _}
+            when Int.(term = e.term)
+                 && StateMachine.command_equal command e.command ->
+              (* no log inconsistency *)
+              t
+          | Error _ ->
+              (* No entry at index *)
+              change t (Set (e.index, e))
+          | Ok _ ->
+              (* inconsitent log *)
+              let t = delete_geq t e.index in
+              change t (Set (e.index, e)))
+
+    let append t v =
+      let max_index = get_max_index t in
+      change t (Set (max_index + 1, v))
+  end
+
+  type log = Log.t
+
+  module Term_t = struct
+    type t = term
+
+    let init () = 0
+
+    type op = int [@@deriving protobuf]
+
+    let apply _t op = op
+  end
+
+  module Term = Persistant (Term_t)
 
   type node_state =
     | Follower of {mutable last_recv_from_leader: time}
@@ -124,9 +190,8 @@ module PaxosTypes = struct
 
   type t =
     { mutable node_state: node_state
-    ; mutable currentTerm: term
+    ; mutable currentTerm: Term.t
     ; mutable log: log
-    ; mutable un_saved_op_list: Log.op list
     ; mutable state_machine: StateMachine.t
     ; mutable commitIndex: log_index
     ; mutable lastApplied: log_index
@@ -141,7 +206,7 @@ module PaxosTypes = struct
 
   type value_type =
     | CurrentTerm of term
-    | Log of (log * Log.op list)
+    | Log of log
     | CommitIndex of log_index
     | LastApplied of log_index
     | NextIndex of (node_id * log_index)
@@ -165,12 +230,13 @@ module PaxosTypes = struct
     match v with
     | CurrentTerm v ->
         PL.debug (fun m -> m "Updating currentTerm to %d" v) ;
-        t.currentTerm <- v ;
-        Config.write_to_term t.config v
-    | Log (log, ops) ->
+        (* This ordering should preserve correctness of execution *)
+        t.currentTerm <- Term.change t.currentTerm v ;
+        let%lwt term = Term.sync t.currentTerm in 
+        t.currentTerm <- term ;
+        Lwt.return_unit
+    | Log log ->
         t.log <- log ;
-        PL.debug (fun m -> m "Writing log to disk") ;
-        let%lwt () = Config.write_all_to_log t.config ops in
         Lwt_condition.broadcast t.log_cond () ;
         PL.debug (fun m -> m "Writing log to disk") ;
         Lwt.return_unit
@@ -213,13 +279,21 @@ module rec Transition : sig
 end = struct
   let follower t =
     PL.debug (fun m -> m "Becomming a follower") ;
-    t.node_state <- Follower {last_recv_from_leader= 0.0} ;
+    t.node_state <- Follower {last_recv_from_leader= time_now ()} ;
     Lwt.async (Condition_checks.election_timeout_expired t)
 
   let leader t entries term =
     match t.node_state with
     | Candidate cterm when Int.(cterm = term) ->
-        PL.debug (fun m -> m "Elected leader of term %d" t.currentTerm) ;
+        PL.debug (fun m -> m "Elected leader of term %d" t.currentTerm.t) ;
+        let string_of_entries_list entries_list =
+          let res =
+            List.fold entries_list ~init:"(" ~f:(fun acc entries ->
+                Printf.sprintf "%s %s" acc (string_of_entries entries))
+          in
+          res ^ " )"
+        in
+        PL.debug (fun m -> m "Entries: %s" (string_of_entries_list entries)) ;
         let rec merge xs ys =
           let rec loop :
                  log_entry list
@@ -242,21 +316,22 @@ end = struct
           entries
           |> List.fold ~init:[] ~f:merge
           |> List.map ~f:(fun entry ->
-                 { term= t.currentTerm
+                 { term= t.currentTerm.t
                  ; command= entry.command
                  ; index= entry.index })
           |> List.rev
         in
         (* Update log *)
         let%lwt () =
-          let log, ops =
-            List.fold_left entries_to_add ~init:(t.log, [])
-              ~f:(fun (log, ops_acc) entry ->
-                let log, ops = Log.set log ~index:entry.index ~value:entry in
-                (log, ops @ ops_acc))
+          let log =
+            List.fold_left entries_to_add ~init:t.log
+              ~f:(fun log entry ->
+                let log = Log.set log ~index:entry.index ~value:entry in
+                log)
           in
           PL.debug (fun m -> m "Adding ops to log") ;
-          update t @@ Log (log, List.rev ops)
+          let%lwt log = Log.sync log in
+          update t @@ Log log
         in
         let nextIndex, matchIndex, heartbeat_last_sent =
           List.fold t.config.node_list
@@ -293,16 +368,16 @@ end = struct
     let updated_term : term =
       let id_in_current_epoch =
         Int.(
-          t.currentTerm
-          - (t.currentTerm % t.config.num_nodes)
+          t.currentTerm.t
+          - (t.currentTerm.t % t.config.num_nodes)
           + t.config.node_id)
       in
-      if id_in_current_epoch < t.currentTerm then
+      if id_in_current_epoch < t.currentTerm.t then
         id_in_current_epoch + t.config.num_nodes
       else id_in_current_epoch
     in
-    t.currentTerm <- updated_term ;
-    t.node_state <- Candidate updated_term ;
+    t.currentTerm <- Term.change t.currentTerm updated_term ;
+    t.node_state <- Candidate t.currentTerm.t ;
     let commitIndex = t.commitIndex in
     PL.debug (fun m -> m "New term = %d" updated_term) ;
     let%lwt () = update t @@ CurrentTerm updated_term in
@@ -352,18 +427,8 @@ end = struct
           let command = (Log.get_exn t.log t.lastApplied).command in
           (* lastApplied must exist by match statement *)
           let result = StateMachine.update t.state_machine command in
-          let () =
-            match Lookup.get t.client_request_results command.id with
-            | Error _ ->
-                ()
-            | Ok (_, fulfiller) ->
-                PL.debug (fun m ->
-                    m "commitIndex_cond_check: Alerting fulfiller for cid %d"
-                      command.id) ;
-                Lwt.wakeup_later fulfiller result ;
-                (*Lookup.remove t.client_request_results command.id*)
-                ()
-          in
+          let _, fulfiller = Lookup.find_or_add t.client_request_results command.id ~default:Lwt.task in
+          Lwt.wakeup_later fulfiller result;
           update_SM () )
         else Lwt.return_unit
       in
@@ -379,6 +444,11 @@ end = struct
       PL.debug (fun m -> m "election_timeout_expired_check: ended sleep") ;
       match t.node_state with
       | Follower s ->
+          PL.debug (fun m ->
+              m
+                "election_timeout_expired_check: time since last recv from \
+                 leader: %f"
+                (time_now () -. s.last_recv_from_leader)) ;
           if
             Float.(
               time_now () -. s.last_recv_from_leader > t.config.election_timeout)
@@ -387,18 +457,16 @@ end = struct
                 m "election_timeout_expired_check: becomming candidate") ;
             (* Election timeout expired => leader most likely dead *)
             Transition.candidate t )
-          else (
-            (* If not becomming candidate then continue looping *)
-            PL.debug (fun m ->
-                m "election_timeout_expired_check: %f remaining"
-                  (time_now () -. s.last_recv_from_leader)) ;
-            loop () )
+          else (* If not becomming candidate then continue looping *)
+            loop ()
       | _ ->
           Lwt.return_unit
     in
     loop
 
   let send_append_entries t ~leader_term ~host:(id, cap) =
+    let%lwt log = Log.sync t.log in
+    t.log <- log; (* Sync log to disk before sending anything *)
     let rec ae_req () =
       match t.node_state with
       | Leader {nextIndex; term; _} when term = leader_term -> (
@@ -464,7 +532,7 @@ end = struct
             | lastSent when Float.(lastSent < t.config.idle_timeout) ->
                 PL.debug (fun m -> m "managed lookup, timed out") ;
                 Lwt.async (fun () ->
-                    send_append_entries t ~leader_term:t.currentTerm ~host)
+                    send_append_entries t ~leader_term:t.currentTerm.t ~host)
             | _ ->
                 PL.debug (fun m ->
                     m "managed lookup, don't need to send keepalive") ;
@@ -534,7 +602,7 @@ and Utils : sig
     -> 'b list Lwt.t
 end = struct
   let preempted_check t term =
-    if term > t.currentTerm then (
+    if term > t.currentTerm.t then (
       PL.debug (fun m -> m "preempted_check: preempted by term %d" term) ;
       let%lwt () = update t (CurrentTerm term) in
       Transition.follower t |> Lwt.return )
@@ -569,28 +637,39 @@ open Utils
 module CoreRpcServer = struct
   type nonrec t = t
 
+  let sync_term_log t =
+    let%lwt log = Log.sync t.log 
+    and currentTerm = Term.sync t.currentTerm 
+    in 
+    t.log <- log;
+    t.currentTerm <- currentTerm;
+    Lwt.return_unit
+
+
   let request_vote t ~term ~leaderCommit ~src_id : request_vote_response Lwt.t =
+    let%lwt () = sync_term_log t in
     PL.debug (fun m -> m "request_vote: received request") ;
-    if term < t.currentTerm then (
+    if term < t.currentTerm.t then (
       PL.debug (fun m ->
           m "request_vote: vote not granted to %d for term %d" src_id term) ;
-      Lwt.return {term= t.currentTerm; voteGranted= false; entries= []} )
+      Lwt.return {term= t.currentTerm.t; voteGranted= false; entries= []} )
     else
       let%lwt () = preempted_check t term in
       PL.debug (fun m ->
           m "request_vote: vote granted to %d for term %d" src_id term) ;
       update_last_recv t ;
       let entries = Log.entries_after_inc t.log ~index:leaderCommit in
-      Lwt.return {term= t.currentTerm; voteGranted= true; entries}
+      Lwt.return {term= t.currentTerm.t; voteGranted= true; entries}
 
   let append_entries t ~term ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
+    let%lwt () = sync_term_log t in
     PL.debug (fun m ->
         m "append_entries: received request: (%d %d %d %s %d)" term prevLogIndex
           prevLogTerm
           (string_of_entries entries)
           leaderCommit) ;
     let%lwt () = preempted_check t term in
-    match (term < t.currentTerm, Log.get_term t.log prevLogIndex) with
+    match (term < t.currentTerm.t, Log.get_term t.log prevLogIndex) with
     | false, term when term = prevLogTerm ->
         PL.debug (fun m -> m "append_entries: received valid") ;
         update_last_recv t ;
@@ -613,7 +692,7 @@ module CoreRpcServer = struct
                 update t @@ CommitIndex leaderCommit )
           else Lwt.return_unit
         in
-        Lwt.return {term= t.currentTerm; success= true}
+        Lwt.return {term= t.currentTerm.t; success= true}
     | false, term ->
         (* Log inconsistency *)
         PL.debug (fun m ->
@@ -622,12 +701,12 @@ module CoreRpcServer = struct
                expected term: %d, got %d"
               term prevLogTerm) ;
         (* term < currentTerm or log inconsistent *)
-        Lwt.return {term= t.currentTerm; success= false}
+        Lwt.return {term= t.currentTerm.t; success= false}
     | true, _ ->
         PL.debug (fun m ->
             m "append_entries: responding negative due to preemption") ;
         (* term < currentTerm or log inconsistent *)
-        Lwt.return {term= t.currentTerm; success= false}
+        Lwt.return {term= t.currentTerm.t; success= false}
 
   (* If leader will submit request
    * If not leader
@@ -648,12 +727,12 @@ module CoreRpcServer = struct
             ~default:Lwt.task
         in
         let index = Log.get_max_index t.log + 1 in
-        let entry = {command; term= t.currentTerm; index} in
+        let entry = {command; term= t.currentTerm.t; index} in
         PL.debug (fun m ->
             m "client_req: adding entry to log %s" (string_of_entry entry)) ;
         let%lwt () =
           let log' =
-            Log.set t.log ~index ~value:{command; term= t.currentTerm; index}
+            Log.set t.log ~index ~value:{command; term= t.currentTerm.t; index}
           in
           update t (Log log')
         in
@@ -662,13 +741,7 @@ module CoreRpcServer = struct
         let leader_p =
           let%lwt () = Lwt_condition.wait t.is_leader in
           (* Is now the leader -> can submit the request *)
-          if
-            not
-            @@ Hashtbl.exists t.log ~f:(fun e ->
-                   StateMachine.command_equal e.command command)
-          then client_req t command
-          else assert false
-          (* TODO play back log to figure out state *)
+          client_req t command
         in
         let waiter, _ =
           Lookup.find_or_add t.client_request_results command.id
@@ -722,11 +795,9 @@ let create ~public_address ~listen_address ~secret_key ~node_list
       ~client_cap_file
   in
   let majority = Int.((List.length node_list / 2) + 1) in
-  let%lwt log = Config.get_log_from_file log_path in
-  let%lwt currentTerm = Config.get_term_from_file term_path in
+  let%lwt log = Log.of_file log_path in
+  let%lwt currentTerm = Term.of_file term_path in
   PL.debug (fun m -> m "Got current log and term") ;
-  let log_file = Config.create_file log_path in
-  let term_file = Config.create_file term_path in
   let vat = Capnp_rpc_unix.client_only_vat () in
   (*- Create the follower capnp capabilities ---------*)
   PL.debug (fun m -> m "Trying to connect to caps") ;
@@ -751,8 +822,6 @@ let create ~public_address ~listen_address ~secret_key ~node_list
       ; num_nodes= List.length node_caps
       ; election_timeout
       ; idle_timeout
-      ; log_file
-      ; term_file
       ; node_id }
   in
   let t =
