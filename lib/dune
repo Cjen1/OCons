@@ -4,7 +4,7 @@
  (libraries base lwt lwt.unix lwt_ppx logs.lwt logs.fmt fmt.tty
    capnp-rpc-lwt capnp-rpc-net capnp-rpc-unix)
  (preprocess
-  (pps lwt_ppx)))
+  (pps lwt_ppx ppx_deriving_protobuf)))
 
 (rule
  (targets messaging_api.ml messaging_api.mli)

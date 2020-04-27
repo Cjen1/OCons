@@ -1,6 +1,6 @@
 open Base
 
-type 'a t = {add: 'a -> unit; sufficient: unit -> bool} [@@deriving show]
+type 'a t = {add: 'a -> unit; sufficient: unit -> bool}
 
 let make_quorum_set threshold () =
   let set = Base.Hash_set.create (module String) in
