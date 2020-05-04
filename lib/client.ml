@@ -21,12 +21,12 @@ let send t op =
 
 let op_read t k = 
   try%lwt
-      send t @@ StateMachine.Read k
+      send t @@ StateMachine.Read (Bytes.to_string k)
   with _e -> `Msg "Failed" |> Lwt.return_error
 
 let op_write t k v = 
   try%lwt
-      send t @@ StateMachine.Write (k,v)
+      send t @@ StateMachine.Write (Bytes.to_string k,Bytes.to_string v)
   with _e -> `Msg "Failed" |> Lwt.return_error
 
 let new_client ?(cid = Types.create_id ()) ~client_files () =

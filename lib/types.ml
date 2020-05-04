@@ -136,7 +136,7 @@ module Persistant (P : Persistable) : sig
     { t: P.t
     ; mutable unsyncd: P.op list
     ; fd: Lwt_unix.file_descr
-    ; channel: Lwt_io.output_channel}
+    ; channel: Lwt_io.output_channel }
 
   type op = P.op
 
@@ -159,22 +159,30 @@ end = struct
     | [] ->
         Lwt.return t
     | _ ->
+        Logs.debug (fun m ->
+            m "There are %d ops to sync" (List.length t.unsyncd)) ;
         let vs = t.unsyncd |> List.rev in
-        t.unsyncd <- [];
+        t.unsyncd <- [] ;
         let%lwt () =
           Lwt_list.iter_s
             (fun v ->
+              Logs.debug (fun m -> m "Syncing op") ;
               let payload = Protobuf.Encoder.encode_exn P.op_to_protobuf v in
               let p_len = Bytes.length payload in
               let buf = Bytes.create (p_len + 4) in
               Bytes.blit ~src:payload ~src_pos:0 ~dst:buf ~dst_pos:4 ~len:p_len ;
-              EndianBytes.LittleEndian.set_int32 payload 0
-                (Int32.of_int_exn p_len) ;
-              Lwt_io.write_from_exactly t.channel buf 0 (Bytes.length buf))
+              EndianBytes.LittleEndian.set_int32 buf 0 (Int32.of_int_exn p_len) ;
+              let%lwt () =
+                Lwt_io.write_from_exactly t.channel buf 0 (Bytes.length buf)
+              in
+              Lwt.return_unit)
             vs
         in
+        Logs.debug (fun m -> m "Ops written to channel") ;
         let%lwt () = Lwt_io.flush t.channel in
+        Logs.debug (fun m -> m "Channel flushed") ;
         let%lwt () = Lwt_unix.fsync t.fd in
+        Logs.debug (fun m -> m "Ops fsync'd") ;
         Lwt.return {t with unsyncd= []}
 
   let read_value channel =
@@ -188,6 +196,7 @@ end = struct
     payload_buf |> Lwt.return
 
   let of_file file =
+    Logs.debug (fun m -> m "Trying to open file") ;
     let%lwt fd = Lwt_unix.openfile file Lwt_unix.[O_RDONLY; O_CREAT] 0o640 in
     let input_channel = Lwt_io.of_fd ~mode:Lwt_io.input fd in
     let stream =
@@ -197,9 +206,10 @@ end = struct
             Protobuf.Decoder.decode_exn P.op_from_protobuf v |> Lwt.return_some
           with End_of_file -> Lwt.return_none)
     in
+    Logs.debug (fun m -> m "Reading in") ;
     let%lwt t = Lwt_stream.fold (fun v t -> P.apply t v) stream (P.init ()) in
     let%lwt () = Lwt_io.close input_channel in
-    let%lwt () = Lwt_unix.close fd in
+    Logs.debug (fun m -> m "Creating fd for persistance") ;
     let%lwt fd = Lwt_unix.openfile file Lwt_unix.[O_WRONLY; O_APPEND] 0o640 in
     let channel = Lwt_io.of_fd ~mode:Lwt_io.output fd in
     Lwt.return {t; unsyncd= []; fd; channel}

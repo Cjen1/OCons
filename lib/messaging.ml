@@ -161,6 +161,7 @@ module Send = struct
         let entries = List.map log_entry_from_capnp entries in
         Lwt.return {term; voteGranted; entries}
     | Error (`Capnp e) ->
+        MLog.err (fun m -> m "Got e upon a rv call: %a" Capnp_rpc.Error.pp e);
         failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 
   let rec appendEntries (t : service) ~term ~prevLogIndex ~prevLogTerm ~entries
@@ -181,6 +182,7 @@ module Send = struct
         let success = Results.success_get result in
         Lwt.return {term; success}
     | Error (`Capnp e) ->
+        MLog.err (fun m -> m "Got e upon a ae call: %a" Capnp_rpc.Error.pp e);
         failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 
   let rec clientReq (t : client_serv) command =
@@ -204,6 +206,7 @@ module Send = struct
               (Printf.sprintf
                  "Undefined result got from capnp response, idx = %d" s) )
     | Error (`Capnp e) ->
+        MLog.err (fun m -> m "Got e upon a cr call: %a" Capnp_rpc.Error.pp e);
         failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 end
 

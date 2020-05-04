@@ -228,17 +228,20 @@ module PaxosTypes = struct
 
   let update t v =
     match v with
+    | CurrentTerm v when Int.(v = t.currentTerm.t) ->
+        Lwt.return_unit
     | CurrentTerm v ->
         PL.debug (fun m -> m "Updating currentTerm to %d" v) ;
         (* This ordering should preserve correctness of execution *)
         t.currentTerm <- Term.change t.currentTerm v ;
-        let%lwt term = Term.sync t.currentTerm in 
+        PL.debug (fun m -> m "Syncing term") ;
+        let%lwt term = Term.sync t.currentTerm in
+        PL.debug (fun m -> m "Sync'd term") ;
         t.currentTerm <- term ;
         Lwt.return_unit
     | Log log ->
         t.log <- log ;
         Lwt_condition.broadcast t.log_cond () ;
-        PL.debug (fun m -> m "Writing log to disk") ;
         Lwt.return_unit
     | CommitIndex v ->
         PL.debug (fun m -> m "Updating commitIndex to %d" v) ;
@@ -324,8 +327,7 @@ end = struct
         (* Update log *)
         let%lwt () =
           let log =
-            List.fold_left entries_to_add ~init:t.log
-              ~f:(fun log entry ->
+            List.fold_left entries_to_add ~init:t.log ~f:(fun log entry ->
                 let log = Log.set log ~index:entry.index ~value:entry in
                 log)
           in
@@ -376,11 +378,10 @@ end = struct
         id_in_current_epoch + t.config.num_nodes
       else id_in_current_epoch
     in
-    t.currentTerm <- Term.change t.currentTerm updated_term ;
-    t.node_state <- Candidate t.currentTerm.t ;
-    let commitIndex = t.commitIndex in
     PL.debug (fun m -> m "New term = %d" updated_term) ;
     let%lwt () = update t @@ CurrentTerm updated_term in
+    t.node_state <- Candidate t.currentTerm.t ;
+    let commitIndex = t.commitIndex in
     let%lwt resps =
       (* Only voteGranted requests return *)
       Utils.recv_quorum
@@ -427,8 +428,11 @@ end = struct
           let command = (Log.get_exn t.log t.lastApplied).command in
           (* lastApplied must exist by match statement *)
           let result = StateMachine.update t.state_machine command in
-          let _, fulfiller = Lookup.find_or_add t.client_request_results command.id ~default:Lwt.task in
-          Lwt.wakeup_later fulfiller result;
+          let _, fulfiller =
+            Lookup.find_or_add t.client_request_results command.id
+              ~default:Lwt.task
+          in
+          Lwt.wakeup_later fulfiller result ;
           update_SM () )
         else Lwt.return_unit
       in
@@ -466,7 +470,8 @@ end = struct
 
   let send_append_entries t ~leader_term ~host:(id, cap) =
     let%lwt log = Log.sync t.log in
-    t.log <- log; (* Sync log to disk before sending anything *)
+    t.log <- log ;
+    (* Sync log to disk before sending anything *)
     let rec ae_req () =
       match t.node_state with
       | Leader {nextIndex; term; _} when term = leader_term -> (
@@ -558,10 +563,12 @@ end = struct
           PL.debug (fun m -> m "log_cond_check%d: got cond" id) ;
           let max_log_index = Log.get_max_index t.log in
           let next_index = Lookup.get_exn nextIndex id in
-          if max_log_index >= next_index then
-            let%lwt () = send_append_entries t ~leader_term ~host in
-            log_host_loop host
-          else Lwt.return_unit
+          let%lwt () =
+            if max_log_index >= next_index then
+              send_append_entries t ~leader_term ~host
+            else Lwt.return_unit
+          in
+          log_host_loop host
       | _ ->
           Lwt.return_unit
     in
@@ -638,13 +645,10 @@ module CoreRpcServer = struct
   type nonrec t = t
 
   let sync_term_log t =
-    let%lwt log = Log.sync t.log 
-    and currentTerm = Term.sync t.currentTerm 
-    in 
-    t.log <- log;
-    t.currentTerm <- currentTerm;
+    let%lwt log = Log.sync t.log and currentTerm = Term.sync t.currentTerm in
+    t.log <- log ;
+    t.currentTerm <- currentTerm ;
     Lwt.return_unit
-
 
   let request_vote t ~term ~leaderCommit ~src_id : request_vote_response Lwt.t =
     let%lwt () = sync_term_log t in
@@ -717,7 +721,9 @@ module CoreRpcServer = struct
      (In effect the unsubmitted client requests are held in the Lwt promise queue 
          rather than an explicitly managed one)
    *)
-  let rec client_req t (command : command) =
+  let rec client_req _t (_command : command) =
+    StateMachine.Failure |> Lwt.return
+    (*
     match t.node_state with
     | Leader _ ->
         (* leader and not yet requested *)
@@ -736,6 +742,7 @@ module CoreRpcServer = struct
           in
           update t (Log log')
         in
+        PL.debug (fun m -> m "client_req: updated log") ;
         result
     | _ ->
         let leader_p =
@@ -748,6 +755,7 @@ module CoreRpcServer = struct
             ~default:Lwt.task
         in
         Lwt.pick [leader_p; waiter]
+       *)
 end
 
 module Service = Messaging.Recv (CoreRpcServer)
@@ -795,6 +803,7 @@ let create ~public_address ~listen_address ~secret_key ~node_list
       ~client_cap_file
   in
   let majority = Int.((List.length node_list / 2) + 1) in
+  PL.debug (fun m -> m "Getting current log and term") ;
   let%lwt log = Log.of_file log_path in
   let%lwt currentTerm = Term.of_file term_path in
   PL.debug (fun m -> m "Got current log and term") ;
@@ -840,4 +849,5 @@ let create ~public_address ~listen_address ~secret_key ~node_list
   Lwt.wakeup_later t_f t ;
   Lwt.async @@ Condition_checks.commitIndex t ;
   (* Allow the server to respond to requests bc t is now created *)
-  Lwt.join [p_server; Transition.candidate t]
+  Lwt.async (fun () -> Transition.candidate t) ;
+  p_server

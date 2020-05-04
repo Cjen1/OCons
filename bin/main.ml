@@ -68,5 +68,5 @@ let () =
   Fmt_tty.setup_std_outputs () ;
   Logs.Src.list () |> List.iter ~f:(fun e -> Format.printf "%a\n" Logs.Src.pp e);
   Logs.(set_level (Some Debug)) ;
-  Logs.Src.set_level Capnp_rpc.Debug.src (Some Info);
+  (*Logs.Src.set_level Capnp_rpc.Debug.src (Some Info);*)
   Logs.set_reporter reporter ; Core.Command.run command

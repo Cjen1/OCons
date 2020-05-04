@@ -4,6 +4,8 @@ open Ocamlpaxos.Client
 
 let node_list = Command.Arg_type.create @@ String.split ~on:','
 
+let bytes = Command.Arg_type.create @@ Bytes.of_string
+
 let print_res res =
   match%lwt res with
   | Ok `Success ->
@@ -17,8 +19,8 @@ let put =
   Command.basic ~summary:"Put operation"
     Command.Let_syntax.(
       let%map_open client_files = anon ("capacity_files" %: node_list)
-      and key = anon ("key" %: string)
-      and value = anon ("value" %: string) in
+      and key = anon ("key" %: bytes)
+      and value = anon ("value" %: bytes) in
       fun () ->
         Lwt_main.run
         @@ let%lwt c = new_client ~client_files () in
@@ -28,7 +30,7 @@ let get =
   Command.basic ~summary:"Get operation"
     Command.Let_syntax.(
       let%map_open client_files = anon ("capacity_files" %: node_list)
-      and key = anon ("key" %: string) in
+      and key = anon ("key" %: bytes) in
       fun () ->
         Lwt_main.run
         @@ let%lwt c = new_client ~client_files () in
