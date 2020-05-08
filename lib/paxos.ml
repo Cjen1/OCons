@@ -140,7 +140,7 @@ module PaxosTypes = struct
         | Ok v ->
             assert (Int.(v.index = i)) ;
             let t = change t (Remove i) in
-            delete_geq t (i + 1)
+            (delete_geq[@tailcall]) t (i + 1)
         | Error _ ->
             t
       in
@@ -297,23 +297,16 @@ end = struct
           res ^ " )"
         in
         PL.debug (fun m -> m "Entries: %s" (string_of_entries_list entries)) ;
-        let rec merge xs ys =
-          let rec loop :
-                 log_entry list
-              -> log_entry list
-              -> log_entry list
-              -> log_entry list =
-           fun xs ys acc ->
-            match (xs, ys) with
-            | [], ys ->
-                ys
-            | xs, [] ->
-                xs
-            | x :: xs, y :: ys ->
-                assert (Int.(x.index = y.index)) ;
-                (if x.term > y.term then x else y) :: acc |> loop xs ys
+        let merge xs ys =
+          let rec loop =
+           function
+           | [], ys -> ys
+           | xs, [] -> xs
+           | x::xs, y::ys ->
+             assert (Int.(x.index = y.index));
+             (if x.term > y.term then x else y) :: loop (xs,ys)
           in
-          loop xs ys [] |> List.rev
+          loop (xs,ys)
         in
         let entries_to_add =
           entries
@@ -433,15 +426,15 @@ end = struct
               ~default:Lwt.task
           in
           Lwt.wakeup_later fulfiller result ;
-          update_SM () )
+          (update_SM[@tailcall]) () )
         else Lwt.return_unit
       in
       let%lwt () = update_SM () in
-      loop ()
+      (loop[@tailcall]) ()
     in
     loop
 
-  let rec election_timeout_expired t =
+  let election_timeout_expired t =
     let rec loop () =
       PL.debug (fun m -> m "election_timeout_expired_check: sleeping") ;
       let%lwt () = Lwt_unix.sleep t.config.election_timeout in
@@ -462,7 +455,7 @@ end = struct
             (* Election timeout expired => leader most likely dead *)
             Transition.candidate t )
           else (* If not becomming candidate then continue looping *)
-            loop ()
+            (loop[@tailcall]) ()
       | _ ->
           Lwt.return_unit
     in
@@ -515,7 +508,7 @@ end = struct
               PL.debug (fun m ->
                   m "Failed in appendEntries on %d due to log inconsistency" id) ;
               let%lwt () = update t (NextIndex (id, entries_start_index - 1)) in
-              ae_req ()
+              (ae_req[@tailcall]) ()
           | {success= false; _} ->
               PL.warn (fun m -> m "Preempted upon receipt from %d" id) ;
               (* Preempted *)
@@ -526,7 +519,7 @@ end = struct
       | _ ->
           Lwt.return_unit
     in
-    ae_req ()
+    (ae_req[@tailcall]) ()
 
   let rec leader_heartbeat t () =
     PL.debug (fun m -> m "leader_heartbeat_check: call entry") ;
@@ -545,12 +538,12 @@ end = struct
         PL.debug (fun m -> m "leader_heartbeat_check: sleeping") ;
         let%lwt () = Lwt_unix.sleep (t.config.election_timeout /. 2.1) in
         PL.debug (fun m -> m "leader_heartbeat_check: end sleep") ;
-        leader_heartbeat t ()
+        (leader_heartbeat[@tailcall]) t ()
     | _ ->
         PL.debug (fun m -> m "leader_heartbeat_check: call exit") ;
         Lwt.return_unit
 
-  let rec log t leader_term () =
+  let log t leader_term () =
     (* Dispatch log loop for each node to simplify logic
      * Can't have multiple ongoing rpcs to remote but due 
      * to batching shouldn't have much effect
@@ -568,7 +561,7 @@ end = struct
               send_append_entries t ~leader_term ~host
             else Lwt.return_unit
           in
-          log_host_loop host
+          (log_host_loop[@tailcall]) host
       | _ ->
           Lwt.return_unit
     in
@@ -589,7 +582,7 @@ end = struct
           in
           PL.debug (fun m -> m "matchIndex_cond_check: new commitIndex = %d" n) ;
           let%lwt () = update t @@ CommitIndex n in
-          loop ()
+          (loop[@tailcall]) ()
       | _ ->
           PL.debug (fun m -> m "matchIndex_cond_check: call exit") ;
           Lwt.return_unit
@@ -631,7 +624,7 @@ end = struct
       else
         let%lwt resolved, todo = Lwt.nchoose_split ps in
         List.iter resolved ~f:quorum.add ;
-        loop todo (resolved @ acc)
+        (loop[@tailcall]) todo (resolved @ acc)
     in
     let%lwt resolved, outstanding = loop dispatches [] in
     PL.debug (fun m -> m "recv_quorum: Got a quorum of responses") ;
@@ -721,9 +714,7 @@ module CoreRpcServer = struct
      (In effect the unsubmitted client requests are held in the Lwt promise queue 
          rather than an explicitly managed one)
    *)
-  let rec client_req _t (_command : command) =
-    StateMachine.Failure |> Lwt.return
-    (*
+  let rec client_req t (command : command) =
     match t.node_state with
     | Leader _ ->
         (* leader and not yet requested *)
@@ -748,14 +739,13 @@ module CoreRpcServer = struct
         let leader_p =
           let%lwt () = Lwt_condition.wait t.is_leader in
           (* Is now the leader -> can submit the request *)
-          client_req t command
+          (client_req[@tailcall]) t command
         in
         let waiter, _ =
           Lookup.find_or_add t.client_request_results command.id
             ~default:Lwt.task
         in
-        Lwt.pick [leader_p; waiter]
-       *)
+        Lwt.choose [leader_p; waiter]
 end
 
 module Service = Messaging.Recv (CoreRpcServer)
@@ -763,7 +753,7 @@ module Service = Messaging.Recv (CoreRpcServer)
 let serve (t : t Lwt.t) ~public_address ~listen_address ~secret_key ~id
     ~cap_file ~client_cap_file =
   let config =
-    Capnp_rpc_unix.Vat_config.create ~public_address ~secret_key listen_address
+    Capnp_rpc_unix.Vat_config.create ~public_address ~secret_key ~serve_tls:false listen_address
   in
   let sturdy_uri = Capnp_rpc_unix.Vat_config.sturdy_uri config in
   let services = Capnp_rpc_net.Restorer.Table.create sturdy_uri in

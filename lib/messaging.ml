@@ -93,7 +93,7 @@ module RepairableRef = struct
         MLog.warn (fun m ->
             m "Unable to repair cap, retrying in %f" repair_interval) ;
         let%lwt () = Lwt_unix.sleep repair_interval in
-        reconnect t
+        (reconnect [@tailcall]) t
 
   let connect sr =
     let t = {cap= None; sr; repaired=Lwt.task ()} in
@@ -118,10 +118,10 @@ module RepairableRef = struct
           | _ ->
               MLog.err (fun m -> m "retrying after the conn is repaired") ;
               let%lwt () = fst repaired in
-              call_for_value t mid req ) )
+              (call_for_value[@tailcall]) t mid req ) )
     | Remote {cap=None; repaired; _} -> 
       let%lwt () = fst repaired in
-      call_for_value t mid req
+      (call_for_value[@tailcall]) t mid req
 end
 
 module Send = struct
@@ -134,7 +134,7 @@ module Send = struct
       if%lwt Lwt_unix.file_exists path then Lwt.return_unit
       else
         let%lwt () = Lwt_unix.sleep 1. in
-        wait_until_exists path
+        (wait_until_exists[@tailcall]) path
     in
     let%lwt () = wait_until_exists path in
     match Capnp_rpc_unix.Cap_file.load vat path with
@@ -147,7 +147,7 @@ module Send = struct
 
   type client_serv = Cli.t RepairableRef.t
 
-  let rec requestVote (t : service) ~term ~leader_commit ~src_id =
+  let requestVote (t : service) ~term ~leader_commit ~src_id =
     let open Serv.RequestVote in
     let request, params = Capability.Request.create Params.init_pointer in
     Params.term_set_int params term ;
@@ -164,7 +164,7 @@ module Send = struct
         MLog.err (fun m -> m "Got e upon a rv call: %a" Capnp_rpc.Error.pp e);
         failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 
-  let rec appendEntries (t : service) ~term ~prevLogIndex ~prevLogTerm ~entries
+  let appendEntries (t : service) ~term ~prevLogIndex ~prevLogTerm ~entries
       ~leaderCommit =
     let open Serv.AppendEntries in
     let request, params = Capability.Request.create Params.init_pointer in
@@ -185,7 +185,7 @@ module Send = struct
         MLog.err (fun m -> m "Got e upon a ae call: %a" Capnp_rpc.Error.pp e);
         failwith @@ Fmt.str "Got e upon a call: %a" Capnp_rpc.Error.pp e
 
-  let rec clientReq (t : client_serv) command =
+  let clientReq (t : client_serv) command =
     let open Cli.ClientRequest in
     let request, params = Capability.Request.create Params.init_pointer in
     let cmd_root = Params.command_init params in

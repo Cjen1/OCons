@@ -12,7 +12,7 @@ let send t op =
   let id = Random.int32 Int32.max_value |> Int32.to_int_exn in 
   let cmd : command = {op; id} in
   let ps = List.map t.endpoints ~f:(fun cap -> Send.clientReq cap cmd) in
-  match%lwt Lwt.pick ps with
+  match%lwt Lwt.choose ps with
   | StateMachine.Success -> Lwt.return_ok `Success
   | StateMachine.ReadSuccess v -> Lwt.return_ok (`ReadSuccess v)
   | StateMachine.Failure -> Lwt.return_error (`Msg "Application failed on cluster")

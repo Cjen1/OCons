@@ -237,10 +237,10 @@ let string_of_entry entry =
   let open StateMachine in
   let cmd =
     match entry.command with
-    | {op= Read k; _} ->
-        Printf.sprintf "(Read %s)" k
-    | {op= Write (k, v); _} ->
-        Printf.sprintf "(Write %s %s)" k v
+    | {op= Read _; _} ->
+        Printf.sprintf "(Read)" 
+    | {op= Write _; _} ->
+        Printf.sprintf "(Write)" 
   in
   let term, index = (Int.to_string entry.term, Int.to_string entry.index) in
   Printf.sprintf "(%s %s %s)" index term cmd
