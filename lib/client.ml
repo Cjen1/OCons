@@ -1,3 +1,5 @@
+
+(*
 open Base
 open Types
 open Messaging
@@ -41,3 +43,4 @@ let new_client ?(cid = Types.create_id ()) ~client_files () =
   in
   let t = {cid= Int.to_string cid; endpoints} in
   Lwt.return t
+   *)
