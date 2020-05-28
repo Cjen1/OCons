@@ -1,4 +1,4 @@
-(executable
- (name test)
- (libraries ocamlpaxos crowbar)
+(test
+ (name msg_layer)
+ (libraries ocamlpaxos alcotest alcotest-lwt)
  )

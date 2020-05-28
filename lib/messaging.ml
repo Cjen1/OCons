@@ -93,7 +93,9 @@ module ConnManager = struct
 
   type t =
     { mutable outgoing_conns: (int * outgoing) list
+    ; outgoing_cond: unit Lwt_condition.t
     ; id: int
+    ; switch: Lwt_switch.t
     ; retry_connect_timeout: float
     ; recv_stream: (message * int) Lwt_stream.t
     ; recv_stream_push: message * int -> unit Lwt.t }
@@ -152,9 +154,10 @@ module ConnManager = struct
     | Error e ->
         Fmt.failwith "Failed when binding socket: %a" Fmt.exn e
     | Ok socket ->
+        Lwt_switch.add_hook (Some t.switch) (fun () -> Lwt_unix.close socket) ;
         let open API.Reader in
         let rec recv_loop client id =
-          Msg_layer.Incomming_socket.recv client 
+          Msg_layer.Incomming_socket.recv client "recv_loop"
           >>>= fun msg ->
           let msg = ServerMessage.of_message msg in
           t.recv_stream_push (msg, id)
@@ -168,8 +171,7 @@ module ConnManager = struct
           | Ok (client_sock, _) ->
               let handler client_sock () =
                 let recv =
-                  Msg_layer.Incomming_socket.recv client_sock >>= fun _ ->
-                  Msg_layer.Incomming_socket.recv client_sock
+                  Msg_layer.Incomming_socket.recv client_sock "accept_loop"
                   >>>= fun msg ->
                   let msg = ServerMessage.of_message msg in
                   match ServerMessage.get msg with
@@ -210,19 +212,19 @@ module ConnManager = struct
       | Error ex ->
           Lwt.return_error (`Exn ex)
       | Ok socket ->
-          let switch = Lwt_switch.create () in
+          let switch = t.switch in
           Lwt_switch.add_hook (Some switch) (fun () -> Lwt_unix.close socket) ;
           let outgoing = Msg_layer.Outgoing_socket.create ~switch socket in
           let open API.Builder in
           let root = ServerMessage.init_root () in
           let r = ServerMessage.register_init root in
           Register.id_set_int r t.id ;
-          Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) >>= fun _ -> 
-          Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) >>= fun _ -> 
+          (*Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) >>= fun _ ->*)
           Msg_layer.Outgoing_socket.send outgoing (message_of_builder root)
           >>>= fun () ->
           t.outgoing_conns <-
             (id, {sock= outgoing; addr; switch}) :: t.outgoing_conns ;
+          Lwt_condition.broadcast t.outgoing_cond () ;
           Lwt.return_ok ()
     in
     connect ()
@@ -239,18 +241,25 @@ module ConnManager = struct
         Lwt_unix.sleep t.retry_connect_timeout
         >>= fun () -> add_outgoing t addr id
 
-  let send t id msg =
+  let rec send sym t id msg =
     let fail_handle () =
-      match List.assoc_opt id t.outgoing_conns with
-      | None ->
-          Lwt.return_unit (* If not in list then already getting re-added *)
-      | Some conn ->
+      match (List.assoc_opt id t.outgoing_conns, sym) with
+      | None, `AtLeastOnce ->
+          Lwt_condition.wait t.outgoing_cond >>= fun () -> send sym t id msg
+      | Some conn, `AtLeastOnce ->
+          t.outgoing_conns <- List.remove_assoc id t.outgoing_conns ;
+          Lwt.async (fun () -> add_outgoing t conn.addr id) ;
+          Lwt_condition.wait t.outgoing_cond >>= fun () -> send sym t id msg
+      | None, `AtMostOnce ->
+          Lwt.return_unit
+      | Some conn, `AtMostOnce ->
           t.outgoing_conns <- List.remove_assoc id t.outgoing_conns ;
           Lwt.async (fun () -> add_outgoing t conn.addr id) ;
           Lwt.return_unit
     in
     match List.assoc_opt id t.outgoing_conns with
     | None ->
+        Log.debug (fun m -> m "Socket not found") ;
         fail_handle ()
     | Some conn -> (
         Msg_layer.Outgoing_socket.send conn.sock msg
@@ -265,15 +274,24 @@ module ConnManager = struct
     let addresses = List.filter (fun (v, _) -> v <> id) addresses in
     let t =
       { id
+      ; switch= Lwt_switch.create ()
       ; retry_connect_timeout
       ; recv_stream
       ; recv_stream_push
-      ; outgoing_conns= [] }
+      ; outgoing_conns= []
+      ; outgoing_cond= Lwt_condition.create () }
     in
     Lwt.async (create_incomming t listen_address) ;
     Lwt.async (fun () ->
-        Lwt_list.iter_p (fun (id, addr) -> add_outgoing t addr id) addresses) ;
+        Lwt_list.iter_p
+          (fun (id, addr) ->
+            add_outgoing t addr id
+            >>= fun () ->
+            Log.debug (fun f -> f "Connected to %d" id) |> Lwt.return)
+          addresses) ;
     t
+
+  let close mgr = Lwt_switch.turn_off mgr.switch
 
   let listen mgr handler () : unit Lwt.t =
     let rec handle_loop () =
@@ -296,14 +314,14 @@ module Send = struct
 
   let message_size = 256
 
-  let requestVote conn_mgr (t : service) ~term ~leader_commit =
+  let requestVote ?(sym=`AtMostOnce)conn_mgr (t : service) ~term ~leader_commit =
     let root = ServerMessage.init_root ~message_size () in
     let rv = ServerMessage.request_vote_init root in
     RequestVote.term_set_int rv term ;
     RequestVote.leader_commit_set_int rv leader_commit ;
-    ConnManager.send conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let requestVoteResp conn_mgr (t : service) ~term ~voteGranted ~entries =
+  let requestVoteResp ?(sym=`AtMostOnce) conn_mgr (t : service) ~term ~voteGranted ~entries =
     let root = ServerMessage.init_root ~message_size () in
     let rvr = ServerMessage.request_vote_resp_init root in
     RequestVoteResp.term_set_int rvr term ;
@@ -311,10 +329,10 @@ module Send = struct
     let _residual_reference =
       RequestVoteResp.entries_set_list rvr (List.map log_entry_to_capnp entries)
     in
-    ConnManager.send conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let appendEntries conn_mgr (t : service) ~term ~prevLogIndex ~prevLogTerm
-      ~entries ~leaderCommit =
+  let appendEntries ?(sym = `AtMostOnce) conn_mgr (t : service) ~term ~prevLogIndex ~prevLogTerm
+      ~entries  ~leaderCommit =
     let root = ServerMessage.init_root ~message_size () in
     let ae = ServerMessage.append_entries_init root in
     AppendEntries.term_set_int ae term ;
@@ -324,23 +342,23 @@ module Send = struct
       AppendEntries.entries_set_list ae (List.map log_entry_to_capnp entries)
     in
     AppendEntries.leader_commit_set_int ae leaderCommit ;
-    ConnManager.send conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let appendEntriesResp conn_mgr (t : service) ~term ~success ~matchIndex =
+  let appendEntriesResp ?(sym = `AtMostOnce) conn_mgr (t : service) ~term ~success ~matchIndex =
     let root = ServerMessage.init_root ~message_size () in
     let aer = ServerMessage.append_entries_resp_init root in
     AppendEntriesResp.term_set_int aer term ;
     AppendEntriesResp.success_set aer success ;
     AppendEntriesResp.match_index_set_int aer matchIndex ;
-    ConnManager.send conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let clientRequest conn_mgr (t : service) ~command =
+  let clientRequest ?(sym = `AtMostOnce) conn_mgr (t : service) ~command =
     let root = ServerMessage.init_root ~message_size () in
     let crq = ServerMessage.client_request_init root in
     command_to_capnp crq command ;
-    ConnManager.send conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let clientResponse conn_mgr (t : service) ~id ~result =
+  let clientResponse ?(sym = `AtMostOnce) conn_mgr (t : service) ~id ~result =
     let root = ServerMessage.init_root ~message_size () in
     let crp = ServerMessage.client_response_init root in
     ClientResponse.id_set_int crp id ;
@@ -354,11 +372,11 @@ module Send = struct
       | StateMachine.Failure ->
           CommandResult.failure_set cr
     in
-    ConnManager.send conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let register conn_mgr (t : service) ~id =
+  let register ?(sym = `AtMostOnce) conn_mgr (t : service) ~id =
     let root = ServerMessage.init_root ~message_size () in
     let r = ServerMessage.register_init root in
     Register.id_set_int r id ;
-    ConnManager.send conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (message_of_builder root)
 end

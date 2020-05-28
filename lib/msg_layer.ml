@@ -21,10 +21,6 @@ module Outgoing_socket = struct
   let send_raw t size cont = 
     let buf = Lwt_bytes.create size in
     assert (size = cont buf);
-    Log.debug (fun m -> m "Sending") ;
-    Log.debug (fun m ->
-        m "hexdump_send:\n%s"
-          (Lwt_bytes.to_string buf |> Hex.of_string |> Hex.hexdump_s)) ;
     let rec send_loop offset len () =
       Lwt_bytes.write t.fd buf offset len
       >>= fun len' ->
@@ -51,7 +47,7 @@ module Incomming_socket = struct
     ; switch: Lwt_switch.t
     ; recv_cond: unit Lwt_condition.t }
 
-  let rec recv t =
+  let rec recv t call_loc =
     match Capnp.Codecs.FramedStream.get_next_frame t.decoder with
     | _ when not (Lwt_switch.is_on t.switch) ->
         Lwt.return_error `Closed
@@ -61,15 +57,13 @@ module Incomming_socket = struct
         failwith "Unsupported Cap'n'Proto frame received"
     | Error Capnp.Codecs.FramingError.Incomplete ->
         Log.debug (fun f -> f "Incomplete; waiting for more data...") ;
-        Lwt_condition.wait t.recv_cond >>= fun () -> recv t
+        Lwt_condition.wait t.recv_cond >>= fun () ->
+        recv t call_loc
 
   let recv_thread ?(buf_size = 4096) t =
     let handler recv_buffer len =
       if len > 0 then (
-        Log.debug (fun m -> m "Read %d bytes" len) ;
         let buf = Bytes.sub recv_buffer 0 len in
-        Log.debug (fun m ->
-            m "hexdump_recv:\n%s" (buf |> Hex.of_bytes |> Hex.hexdump_s)) ;
         Capnp.Codecs.FramedStream.add_fragment t.decoder
           (Bytes.unsafe_to_string buf) ;
         Lwt_condition.broadcast t.recv_cond () ;
