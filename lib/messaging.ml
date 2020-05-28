@@ -81,25 +81,9 @@ let log_entry_to_capnp entry =
   index_set_int root entry.index ;
   root
 
-module ConnManager = struct
-  type address = Unix of string | TCP of (string * int)
+type address = Unix of string | TCP of (string * int)
 
-  type incomming = Msg_layer.Incomming_socket.t
-
-  type outgoing =
-    {sock: Msg_layer.Outgoing_socket.t; addr: address; switch: Lwt_switch.t}
-
-  type message = API.Reader.ServerMessage.t
-
-  type t =
-    { mutable outgoing_conns: (int * outgoing) list
-    ; outgoing_cond: unit Lwt_condition.t
-    ; id: int
-    ; switch: Lwt_switch.t
-    ; retry_connect_timeout: float
-    ; recv_stream: (message * int) Lwt_stream.t
-    ; recv_stream_push: message * int -> unit Lwt.t }
-
+module ConnUtils = struct
   let addr_of_host host =
     match Unix.gethostbyname host with
     | exception Not_found ->
@@ -145,7 +129,7 @@ module ConnManager = struct
         Lwt_unix.bind socket (Unix.ADDR_INET (addr_of_host host, port))
         >|= fun () -> socket
 
-  let create_incomming t addr () : unit Lwt.t =
+  let listen_incomming addr switch handler () : unit Lwt.t =
     Lwt_result.catch (bind_socket addr)
     >>>= (fun socket ->
            try Lwt_unix.listen socket 128 ; Lwt.return_ok socket
@@ -154,13 +138,13 @@ module ConnManager = struct
     | Error e ->
         Fmt.failwith "Failed when binding socket: %a" Fmt.exn e
     | Ok socket ->
-        Lwt_switch.add_hook (Some t.switch) (fun () -> Lwt_unix.close socket) ;
+        Lwt_switch.add_hook (Some switch) (fun () -> Lwt_unix.close socket) ;
         let open API.Reader in
         let rec recv_loop client id =
           Msg_layer.Incomming_socket.recv client "recv_loop"
           >>>= fun msg ->
           let msg = ServerMessage.of_message msg in
-          t.recv_stream_push (msg, id)
+          handler msg id
           >>= fun () -> (recv_loop [@tailcall]) client id
         in
         let rec accept_loop () =
@@ -204,7 +188,7 @@ module ConnManager = struct
         in
         accept_loop ()
 
-  let rec add_outgoing t addr id =
+  let rec connect_outgoing switch addr id src_id retry_timeout =
     let connect () =
       Log.info (fun m -> m "Trying to connect to %d" id) ;
       Lwt_result.catch (connect_socket addr)
@@ -212,34 +196,67 @@ module ConnManager = struct
       | Error ex ->
           Lwt.return_error (`Exn ex)
       | Ok socket ->
-          let switch = t.switch in
+          let switch = switch in
           Lwt_switch.add_hook (Some switch) (fun () -> Lwt_unix.close socket) ;
           let outgoing = Msg_layer.Outgoing_socket.create ~switch socket in
           let open API.Builder in
           let root = ServerMessage.init_root () in
           let r = ServerMessage.register_init root in
-          Register.id_set_int r t.id ;
+          Register.id_set_int r src_id ;
           (*Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) >>= fun _ ->*)
           Msg_layer.Outgoing_socket.send outgoing (message_of_builder root)
           >>>= fun () ->
-          t.outgoing_conns <-
-            (id, {sock= outgoing; addr; switch}) :: t.outgoing_conns ;
-          Lwt_condition.broadcast t.outgoing_cond () ;
-          Lwt.return_ok ()
+          Lwt.return_ok outgoing
     in
-    connect ()
-    >>= function
-    | Ok () ->
+    let rec loop () = 
+      connect ()
+      >>= function
+      | Ok res ->
         Log.info (fun m -> m "Connected to %d" id) ;
-        Lwt.return_unit
-    | Error `Closed ->
+        Lwt.return res
+      | Error `Closed ->
         Log.err (fun m -> m "Failed to connect, already closed... retrying") ;
-        Lwt_unix.sleep t.retry_connect_timeout
-        >>= fun () -> add_outgoing t addr id
-    | Error (`Exn e) ->
+        Lwt_unix.sleep retry_timeout
+        >>= fun () -> loop ()
+      | Error (`Exn e) ->
         Log.err (fun m -> m "Failed to connect, retrying %a" Fmt.exn e) ;
-        Lwt_unix.sleep t.retry_connect_timeout
-        >>= fun () -> add_outgoing t addr id
+        Lwt_unix.sleep retry_timeout
+        >>= fun () -> loop ()
+    in loop ()
+
+end 
+
+module ConnManager = struct
+  open ConnUtils
+
+  type incomming = Msg_layer.Incomming_socket.t
+
+  type outgoing =
+    {sock: Msg_layer.Outgoing_socket.t; addr: address; switch: Lwt_switch.t}
+
+  type message = API.Reader.ServerMessage.t
+
+  type t =
+    { mutable outgoing_conns: (int * outgoing) list
+    ; outgoing_cond: unit Lwt_condition.t
+    ; id: int
+    ; switch: Lwt_switch.t
+    ; retry_connect_timeout: float
+    ; recv_stream: (message * int) Lwt_stream.t
+    ; recv_stream_push: message * int -> unit Lwt.t }
+
+  let create_incomming t addr () = 
+    let handler msg id = 
+      t.recv_stream_push (msg,id)
+    in 
+    listen_incomming addr t.switch handler ()
+
+  let add_outgoing t addr id = 
+    connect_outgoing t.switch addr id t.id t.retry_connect_timeout >>= fun outgoing ->
+    t.outgoing_conns <-
+      (id, {sock= outgoing; addr; switch=t.switch}) :: t.outgoing_conns ;
+    Lwt_condition.broadcast t.outgoing_cond () ;
+    Lwt.return ()
 
   let rec send sym t id msg =
     let fail_handle () =

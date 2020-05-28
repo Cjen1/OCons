@@ -3,7 +3,6 @@ open Lwt.Infix
 open Messaging
 
 let addresses =
-  let open ConnManager in
   [(1, TCP ("127.0.0.1", 4000)); (2, TCP ("127.0.0.1", 4001))]
 
 let src = Logs.Src.create "test"
@@ -137,6 +136,10 @@ let test_entries =
   let open Types in
   [ {command= test_read; term= 1512; index= 8512}
   ; {command= test_write; term= 684; index= 2461} ]
+
+let () = 
+  Logs.set_reporter @@ Logs_fmt.reporter ();
+  Logs.set_level (Some Logs.Debug)
 
 let () =
   let open Types.StateMachine in
