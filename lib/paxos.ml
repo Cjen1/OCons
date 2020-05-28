@@ -261,8 +261,8 @@ module PaxosTypes = struct
         L.debug (fun m ->
             m "append_entries: sending request to %d: (%d %d %d %d)" host term
               prevLogIndex prevLogTerm leaderCommit) ;
-        Send.appendEntries t.config.cmgr host ~term ~prevLogIndex ~prevLogTerm ~entries
-          ~leaderCommit
+        Send.appendEntries t.config.cmgr host ~term ~prevLogIndex ~prevLogTerm
+          ~entries ~leaderCommit
     | _ ->
         Lwt.return_unit
 end
@@ -557,8 +557,8 @@ module CoreRpcServer = struct
           m "request_vote: vote not granted to %d for term %d" src term) ;
       sync_term_log t
       >>= fun () ->
-      Send.requestVoteResp t.config.cmgr src ~term:t.currentTerm.t ~voteGranted:false
-        ~entries:[] )
+      Send.requestVoteResp t.config.cmgr src ~term:t.currentTerm.t
+        ~voteGranted:false ~entries:[] )
     else
       preempted_check t term
       >>= fun () ->
@@ -569,7 +569,8 @@ module CoreRpcServer = struct
       let entries = Log.entries_after_inc t.log ~index:leaderCommit in
       sync_term_log t
       >>= fun () ->
-      Send.requestVoteResp t.config.cmgr src ~term:t.currentTerm.t ~voteGranted:true ~entries
+      Send.requestVoteResp t.config.cmgr src ~term:t.currentTerm.t
+        ~voteGranted:true ~entries
 
   let handle_request_vote_resp t src msg =
     match t.node_state with
@@ -618,22 +619,22 @@ module CoreRpcServer = struct
           let v' = min last_index leaderCommit in
           L.debug (fun m -> m "append_entries: %d is newer" v') ;
           update_commit_index t v' ) ;
-        Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t ~success:true
-          ~matchIndex:last_index
+        Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t
+          ~success:true ~matchIndex:last_index
     | false, term ->
         (* Log inconsistency *)
         L.debug (fun m ->
             m "append_entries: log inconsistency (expected term, got): %d %d"
               term prevLogTerm) ;
-        Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t ~success:false
-          ~matchIndex:prevLogIndex
+        Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t
+          ~success:false ~matchIndex:prevLogIndex
     | true, _ ->
         L.debug (fun m ->
             m "append_entries: responding negative due to preemption") ;
         preempted_check t term
         >>= fun () ->
-        Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t ~success:false
-          ~matchIndex:prevLogIndex
+        Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t
+          ~success:false ~matchIndex:prevLogIndex
 
   let handle_append_entries_resp t src msg =
     let ae_term = AppendEntriesResp.term_get_int_exn msg in
@@ -647,8 +648,7 @@ module CoreRpcServer = struct
       ->
         let ni = Lookup.get_exn s.nextIndex src in
         update_next_index t src ni
-        >>= fun () ->
-        send_append_entries t ~leader_term:s.term ~host:src
+        >>= fun () -> send_append_entries t ~leader_term:s.term ~host:src
     | _ ->
         preempted_check t ae_term
 
@@ -665,55 +665,74 @@ module CoreRpcServer = struct
         Lwt.return_unit
 
   let handle_client_response _t _host _msg =
-    L.err (fun m -> m "Got client_response...");
+    L.err (fun m -> m "Got client_response...") ;
     Lwt.return_unit
 
   let handle_message t src msg =
     let open ServerMessage in
     match ServerMessage.get msg with
-    | RequestVote msg -> handle_request_vote t src msg 
-    | RequestVoteResp msg -> handle_request_vote_resp t src msg
-    | AppendEntries msg -> handle_append_entries t src msg
-    | AppendEntriesResp msg -> handle_append_entries_resp t src msg
-    | ClientRequest msg -> handle_client_request t src msg
-    | ClientResponse msg -> handle_client_response t src msg
-    | Register msg -> L.err (fun m -> m "Got register from %d on old connection" (API.Reader.Register.id_get_int_exn msg)); Lwt.return_unit
-    | Undefined i -> L.err (fun m -> m "Got undefined msg %d" i); Lwt.return_unit
+    | RequestVote msg ->
+        handle_request_vote t src msg
+    | RequestVoteResp msg ->
+        handle_request_vote_resp t src msg
+    | AppendEntries msg ->
+        handle_append_entries t src msg
+    | AppendEntriesResp msg ->
+        handle_append_entries_resp t src msg
+    | ClientRequest msg ->
+        handle_client_request t src msg
+    | ClientResponse msg ->
+        handle_client_response t src msg
+    | Register msg ->
+        L.err (fun m ->
+            m "Got register from %d on old connection"
+              (API.Reader.Register.id_get_int_exn msg)) ;
+        Lwt.return_unit
+    | Undefined i ->
+        L.err (fun m -> m "Got undefined msg %d" i) ;
+        Lwt.return_unit
 end
 
-let create ~listen_address ~node_list ?(election_timeout=0.5) ?(idle_timeout=0.1) ?(retry_connect_timeout=0.1) ?(log_path="./log") ?(term_path="./term") node_id  =
-  let cmgr = ConnManager.create ~retry_connect_timeout listen_address node_list node_id in
+let create ~listen_address ~client_listen_address ~node_list
+    ?(election_timeout = 0.5) ?(idle_timeout = 0.1)
+    ?(retry_connect_timeout = 0.1) ?(log_path = "./log") ?(term_path = "./term")
+    node_id =
+  let cmgr =
+    ConnManager.create ~retry_connect_timeout listen_address
+      client_listen_address node_list node_id
+  in
   let majority = List.length node_list / 2 in
-  let quorum_gen callback = 
+  let quorum_gen callback =
     Quorum.make_quorum ~threshold:majority ~equal:Int.equal ~f:callback
-  in 
+  in
   let config =
-      { quorum_gen
-      ; majority
-      ; node_list = List.map node_list ~f:(fun (x, _) -> x)
-      ; num_nodes= List.length node_list
-      ; cmgr
-      ; election_timeout
-      ; idle_timeout
-      ; node_id }
-  in 
+    { quorum_gen
+    ; majority
+    ; node_list= List.map node_list ~f:(fun (x, _) -> x)
+    ; num_nodes= List.length node_list
+    ; cmgr
+    ; election_timeout
+    ; idle_timeout
+    ; node_id }
+  in
   let log_p = Log.of_file log_path in
   let term_p = Term.of_file term_path in
-  Lwt.both log_p term_p >>= fun (log, currentTerm) ->
-  let t = 
+  Lwt.both log_p term_p
+  >>= fun (log, currentTerm) ->
+  let t =
     { currentTerm
     ; log
-    ; commitIndex = 0
-    ; lastApplied = 0
-    ; node_state = Follower {last_recv_from_leader = time_now ()}
-    ; state_machine = StateMachine.create ()
+    ; commitIndex= 0
+    ; lastApplied= 0
+    ; node_state= Follower {last_recv_from_leader= time_now ()}
+    ; state_machine= StateMachine.create ()
     ; config
-    ; commitIndex_cond= Lwt_condition.create () 
-    ; log_cond = Lwt_condition.create ()
-    ; client_result_forwarders = Lookup.create (module Int)
-    ; is_leader = Lwt_condition.create () }
-  in 
-  Lwt.async (ConnManager.listen t.config.cmgr (CoreRpcServer.handle_message t));
-  Lwt.async (Condition_checks.commitIndex t);
-  Lwt.async (fun () -> Transition.candidate t);
+    ; commitIndex_cond= Lwt_condition.create ()
+    ; log_cond= Lwt_condition.create ()
+    ; client_result_forwarders= Lookup.create (module Int)
+    ; is_leader= Lwt_condition.create () }
+  in
+  Lwt.async (ConnManager.listen t.config.cmgr (CoreRpcServer.handle_message t)) ;
+  Lwt.async (Condition_checks.commitIndex t) ;
+  Lwt.async (fun () -> Transition.candidate t) ;
   Lwt.return ()

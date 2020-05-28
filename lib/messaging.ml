@@ -84,6 +84,8 @@ let log_entry_to_capnp entry =
 type address = Unix of string | TCP of (string * int)
 
 module ConnUtils = struct
+  let pp_addr = function Unix s -> s | TCP (s, p) -> Fmt.str "%s:%d" s p
+
   let addr_of_host host =
     match Unix.gethostbyname host with
     | exception Not_found ->
@@ -129,7 +131,7 @@ module ConnUtils = struct
         Lwt_unix.bind socket (Unix.ADDR_INET (addr_of_host host, port))
         >|= fun () -> socket
 
-  let listen_incomming addr switch handler () : unit Lwt.t =
+  let accept_incomming addr recv_handler ?switch () : unit Lwt.t =
     Lwt_result.catch (bind_socket addr)
     >>>= (fun socket ->
            try Lwt_unix.listen socket 128 ; Lwt.return_ok socket
@@ -138,44 +140,37 @@ module ConnUtils = struct
     | Error e ->
         Fmt.failwith "Failed when binding socket: %a" Fmt.exn e
     | Ok socket ->
-        Lwt_switch.add_hook (Some switch) (fun () -> Lwt_unix.close socket) ;
+        Lwt_switch.add_hook switch (fun () -> Lwt_unix.close socket) ;
         let open API.Reader in
-        let rec recv_loop client id =
-          Msg_layer.Incomming_socket.recv client "recv_loop"
-          >>>= fun msg ->
-          let msg = ServerMessage.of_message msg in
-          handler msg id
-          >>= fun () -> (recv_loop [@tailcall]) client id
-        in
         let rec accept_loop () =
           Lwt_result.catch (Lwt_unix.accept socket)
           >>= function
           | Error e ->
               Fmt.failwith "Failed when accepting connection: %a" Fmt.exn e
           | Ok (client_sock, _) ->
-              let handler client_sock () =
+              let accept_handler client_sock switch () =
                 let recv =
-                  Msg_layer.Incomming_socket.recv client_sock "accept_loop"
+                  Msg_layer.Incomming_socket.recv client_sock
                   >>>= fun msg ->
                   let msg = ServerMessage.of_message msg in
                   match ServerMessage.get msg with
                   | ServerMessage.Register msg ->
-                      recv_loop client_sock (Register.id_get_int_exn msg)
+                      let id = Register.id_get_int_exn msg in
+                      recv_handler client_sock socket switch id
                   | _ ->
                       Lwt.return_error
                         (`Msg "Did not first get register from client_sock")
                 in
                 recv
-                >>= function
+                >>= fun res ->
+                ( match res with
                 | Ok () ->
-                    Log.info (fun m -> m "Socket closed") ;
-                    Lwt.return_unit
+                    Log.info (fun m -> m "Recv thread finished")
                 | Error `Closed ->
-                    Log.err (fun m -> m "Socket closed unexpectedly") ;
-                    Lwt.return_unit
+                    Log.err (fun m -> m "Socket closed unexpectedly")
                 | Error (`Msg v) ->
-                    Log.err (fun m -> m "Socket closed with msg %s" v) ;
-                    Lwt.return_unit
+                    Log.err (fun m -> m "Socket closed with msg %s" v) ) ;
+                Lwt_switch.turn_off switch
               in
               let switch = Lwt_switch.create () in
               Lwt_switch.add_hook (Some switch) (fun () ->
@@ -183,14 +178,14 @@ module ConnUtils = struct
               let client_sock =
                 Msg_layer.Incomming_socket.create ~switch client_sock
               in
-              Lwt.async (handler client_sock) ;
+              Lwt.async (accept_handler client_sock switch) ;
               (accept_loop [@tailcall]) ()
         in
         accept_loop ()
 
-  let rec connect_outgoing switch addr id src_id retry_timeout =
+  let rec connect_outgoing switch addr src_id retry_timeout =
     let connect () =
-      Log.info (fun m -> m "Trying to connect to %d" id) ;
+      Log.info (fun m -> m "Trying to connect to %s" (pp_addr addr)) ;
       Lwt_result.catch (connect_socket addr)
       >>= function
       | Error ex ->
@@ -205,26 +200,23 @@ module ConnUtils = struct
           Register.id_set_int r src_id ;
           (*Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) >>= fun _ ->*)
           Msg_layer.Outgoing_socket.send outgoing (message_of_builder root)
-          >>>= fun () ->
-          Lwt.return_ok outgoing
+          >>>= fun () -> Lwt.return_ok outgoing
     in
-    let rec loop () = 
+    let rec loop () =
       connect ()
       >>= function
       | Ok res ->
-        Log.info (fun m -> m "Connected to %d" id) ;
-        Lwt.return res
+          Log.info (fun m -> m "Connected to %s" (pp_addr addr)) ;
+          Lwt.return res
       | Error `Closed ->
-        Log.err (fun m -> m "Failed to connect, already closed... retrying") ;
-        Lwt_unix.sleep retry_timeout
-        >>= fun () -> loop ()
+          Log.err (fun m -> m "Failed to connect, already closed... retrying") ;
+          Lwt_unix.sleep retry_timeout >>= fun () -> loop ()
       | Error (`Exn e) ->
-        Log.err (fun m -> m "Failed to connect, retrying %a" Fmt.exn e) ;
-        Lwt_unix.sleep retry_timeout
-        >>= fun () -> loop ()
-    in loop ()
-
-end 
+          Log.err (fun m -> m "Failed to connect, retrying %a" Fmt.exn e) ;
+          Lwt_unix.sleep retry_timeout >>= fun () -> loop ()
+    in
+    loop ()
+end
 
 module ConnManager = struct
   open ConnUtils
@@ -238,6 +230,7 @@ module ConnManager = struct
 
   type t =
     { mutable outgoing_conns: (int * outgoing) list
+    ; mutable outgoing_client_conns: (int * Msg_layer.Outgoing_socket.t) list
     ; outgoing_cond: unit Lwt_condition.t
     ; id: int
     ; switch: Lwt_switch.t
@@ -245,16 +238,41 @@ module ConnManager = struct
     ; recv_stream: (message * int) Lwt_stream.t
     ; recv_stream_push: message * int -> unit Lwt.t }
 
-  let create_incomming t addr () = 
-    let handler msg id = 
-      t.recv_stream_push (msg,id)
-    in 
-    listen_incomming addr t.switch handler ()
+  let create_incomming t addr () =
+    let handler client_sock _raw _switch id =
+      let rec loop () =
+        Msg_layer.Incomming_socket.recv client_sock
+        >>>= fun msg ->
+        let msg = API.Reader.ServerMessage.of_message msg in
+        t.recv_stream_push (msg, id) >>= fun () -> (loop [@tailcall]) ()
+      in
+      loop ()
+    in
+    accept_incomming addr ~switch:t.switch handler ()
 
-  let add_outgoing t addr id = 
-    connect_outgoing t.switch addr id t.id t.retry_connect_timeout >>= fun outgoing ->
+  let create_client_incomming t addr () =
+    let handler client_sock raw switch id =
+      let rec loop () =
+        Msg_layer.Incomming_socket.recv client_sock
+        >>>= fun msg ->
+        let msg = API.Reader.ServerMessage.of_message msg in
+        t.recv_stream_push (msg, id) >>= fun () -> (loop [@tailcall]) ()
+      in
+      let outgoing = Msg_layer.Outgoing_socket.create ~switch raw in
+      Lwt_switch.add_hook (Some switch) (fun () ->
+          t.outgoing_client_conns <-
+            List.filter (fun (i, _) -> i = id) t.outgoing_client_conns ;
+          Lwt.return_unit) ;
+      t.outgoing_client_conns <- (id, outgoing) :: t.outgoing_client_conns ;
+      loop ()
+    in
+    accept_incomming addr ~switch:t.switch handler ()
+
+  let add_outgoing t addr id =
+    connect_outgoing t.switch addr t.id t.retry_connect_timeout
+    >>= fun outgoing ->
     t.outgoing_conns <-
-      (id, {sock= outgoing; addr; switch=t.switch}) :: t.outgoing_conns ;
+      (id, {sock= outgoing; addr; switch= t.switch}) :: t.outgoing_conns ;
     Lwt_condition.broadcast t.outgoing_cond () ;
     Lwt.return ()
 
@@ -274,39 +292,21 @@ module ConnManager = struct
           Lwt.async (fun () -> add_outgoing t conn.addr id) ;
           Lwt.return_unit
     in
-    match List.assoc_opt id t.outgoing_conns with
-    | None ->
-        Log.debug (fun m -> m "Socket not found") ;
-        fail_handle ()
-    | Some conn -> (
+    match
+      ( List.assoc_opt id t.outgoing_conns
+      , List.assoc_opt id t.outgoing_client_conns )
+    with
+    | Some conn, _ -> (
         Msg_layer.Outgoing_socket.send conn.sock msg
         >>= function Error _ -> fail_handle () | Ok () -> Lwt.return_unit )
+    | None, Some conn -> (
+        Msg_layer.Outgoing_socket.send conn msg
+        >>= function Error _ -> fail_handle () | Ok () -> Lwt.return_unit )
+    | None, None ->
+        Log.debug (fun m -> m "Socket not found") ;
+        fail_handle ()
 
   let recv t = Lwt_stream.next t.recv_stream
-
-  let create ?(buf_size = 1000) ?(retry_connect_timeout = 0.1) listen_address
-      addresses id =
-    let recv_stream, push_obj = Lwt_stream.create_bounded buf_size in
-    let recv_stream_push = push_obj#push in
-    let addresses = List.filter (fun (v, _) -> v <> id) addresses in
-    let t =
-      { id
-      ; switch= Lwt_switch.create ()
-      ; retry_connect_timeout
-      ; recv_stream
-      ; recv_stream_push
-      ; outgoing_conns= []
-      ; outgoing_cond= Lwt_condition.create () }
-    in
-    Lwt.async (create_incomming t listen_address) ;
-    Lwt.async (fun () ->
-        Lwt_list.iter_p
-          (fun (id, addr) ->
-            add_outgoing t addr id
-            >>= fun () ->
-            Log.debug (fun f -> f "Connected to %d" id) |> Lwt.return)
-          addresses) ;
-    t
 
   let close mgr = Lwt_switch.turn_off mgr.switch
 
@@ -319,6 +319,39 @@ module ConnManager = struct
       (handle_loop [@tailcall]) ()
     in
     handle_loop ()
+
+  let create ?(buf_size = 1000) ?(retry_connect_timeout = 0.1) listen_address
+      client_address addresses id =
+    let recv_stream, push_obj = Lwt_stream.create_bounded buf_size in
+    let recv_stream_push = push_obj#push in
+    let addresses = List.filter (fun (v, _) -> v <> id) addresses in
+    let t =
+      { id
+      ; switch= Lwt_switch.create ()
+      ; retry_connect_timeout
+      ; recv_stream
+      ; recv_stream_push
+      ; outgoing_conns= []
+      ; outgoing_client_conns= []
+      ; outgoing_cond= Lwt_condition.create () }
+    in
+    Lwt.async (create_incomming t listen_address) ;
+    Lwt.async (create_client_incomming t client_address) ;
+    Lwt.async (fun () ->
+        Lwt_list.iter_p
+          (fun (id, addr) ->
+            add_outgoing t addr id
+            >>= fun () ->
+            Log.debug (fun f -> f "Connected to %d" id) |> Lwt.return)
+          addresses) ;
+    t
+end
+
+module ClientConn = struct
+  open ConnUtils
+
+  let connect switch addr id retry_timeout =
+    connect_outgoing switch addr id retry_timeout
 end
 
 (** [Send] contains a few utility functions and the main user facing api's *)
@@ -331,14 +364,16 @@ module Send = struct
 
   let message_size = 256
 
-  let requestVote ?(sym=`AtMostOnce)conn_mgr (t : service) ~term ~leader_commit =
+  let requestVote ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
+      ~leader_commit =
     let root = ServerMessage.init_root ~message_size () in
     let rv = ServerMessage.request_vote_init root in
     RequestVote.term_set_int rv term ;
     RequestVote.leader_commit_set_int rv leader_commit ;
     ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let requestVoteResp ?(sym=`AtMostOnce) conn_mgr (t : service) ~term ~voteGranted ~entries =
+  let requestVoteResp ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
+      ~voteGranted ~entries =
     let root = ServerMessage.init_root ~message_size () in
     let rvr = ServerMessage.request_vote_resp_init root in
     RequestVoteResp.term_set_int rvr term ;
@@ -348,8 +383,8 @@ module Send = struct
     in
     ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let appendEntries ?(sym = `AtMostOnce) conn_mgr (t : service) ~term ~prevLogIndex ~prevLogTerm
-      ~entries  ~leaderCommit =
+  let appendEntries ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
+      ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
     let root = ServerMessage.init_root ~message_size () in
     let ae = ServerMessage.append_entries_init root in
     AppendEntries.term_set_int ae term ;
@@ -361,7 +396,8 @@ module Send = struct
     AppendEntries.leader_commit_set_int ae leaderCommit ;
     ConnManager.send sym conn_mgr t (message_of_builder root)
 
-  let appendEntriesResp ?(sym = `AtMostOnce) conn_mgr (t : service) ~term ~success ~matchIndex =
+  let appendEntriesResp ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
+      ~success ~matchIndex =
     let root = ServerMessage.init_root ~message_size () in
     let aer = ServerMessage.append_entries_resp_init root in
     AppendEntriesResp.term_set_int aer term ;

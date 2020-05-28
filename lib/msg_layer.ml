@@ -47,7 +47,7 @@ module Incomming_socket = struct
     ; switch: Lwt_switch.t
     ; recv_cond: unit Lwt_condition.t }
 
-  let rec recv t call_loc =
+  let rec recv t =
     match Capnp.Codecs.FramedStream.get_next_frame t.decoder with
     | _ when not (Lwt_switch.is_on t.switch) ->
         Lwt.return_error `Closed
@@ -58,7 +58,7 @@ module Incomming_socket = struct
     | Error Capnp.Codecs.FramingError.Incomplete ->
         Log.debug (fun f -> f "Incomplete; waiting for more data...") ;
         Lwt_condition.wait t.recv_cond >>= fun () ->
-        recv t call_loc
+        recv t
 
   let recv_thread ?(buf_size = 4096) t =
     let handler recv_buffer len =

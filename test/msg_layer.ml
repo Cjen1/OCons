@@ -3,13 +3,16 @@ open Lwt.Infix
 open Messaging
 
 let addresses =
-  [(1, TCP ("127.0.0.1", 4000)); (2, TCP ("127.0.0.1", 4001))]
+  [(1, TCP ("127.0.0.1", 4000)); (2, TCP ("127.0.0.1", 5000))]
+
+let client_addresses = 
+  [(1, TCP ("127.0.0.1", 4001)); (2, TCP ("127.0.0.1", 5001))]
 
 let src = Logs.Src.create "test"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-let mgr id = ConnManager.create (List.assoc id addresses) addresses id
+let mgr id = ConnManager.create (List.assoc id addresses) (List.assoc id client_addresses) addresses id
 
 let test_send to_msg send equal m1 m2 =
   Log.debug (fun m -> m "Created managers") ;
