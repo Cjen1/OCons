@@ -378,7 +378,7 @@ end = struct
     List.iter t.config.node_list ~f:(fun url ->
         Lwt.async (fun () ->
             Messaging.Send.requestVote t.config.cmgr url ~term:updated_term
-              ~leader_commit:commitIndex)) ;
+              ~leaderCommit:commitIndex)) ;
     Lwt.return_unit
 end
 

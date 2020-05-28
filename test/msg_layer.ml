@@ -29,11 +29,11 @@ let test_send to_msg send equal m1 m2 =
 
 let eq access m m' = access m = access m'
 
-let test_rv term leader_commit m1 m2 _ () =
+let test_rv term leaderCommit m1 m2 _ () =
   let open API.Reader.RequestVote in
-  let send mgr id = Send.requestVote mgr id ~term ~leader_commit ~sym:`AtLeastOnce in
+  let send mgr id = Send.requestVote mgr id ~term ~leaderCommit ~sym:`AtLeastOnce in
   let equal m' =
-    term = term_get_int_exn m' && leader_commit = leader_commit_get_int_exn m'
+    term = term_get_int_exn m' && leaderCommit = leader_commit_get_int_exn m'
   in
   let to_msg msg =
     match API.Reader.ServerMessage.get msg with
@@ -131,6 +131,33 @@ let test_crr result id m1 m2 _ () =
   in
   test_send to_msg send equal m1 m2
 
+let test_client m1 _ () = 
+  let open API.Reader.ServerMessage in
+  let switch = Lwt_switch.create () in
+  let eq msg_id msg' id id' = 
+    (id = id')
+    && begin
+      match get msg' with
+    | Register msg' -> 
+      msg_id = API.Reader.Register.id_get_int_exn msg'
+    | _ -> false
+    end 
+  in 
+  let test = 
+    Messaging.ClientConn.connect ~switch (List.assoc 1 client_addresses) 11 0.1 >>= fun o1 ->
+    Messaging.ClientConn.connect ~switch (List.assoc 1 client_addresses) 12 0.1 >>= fun o2 ->
+    let msg = Messaging.Send.Serialise.register ~id:1234 in
+    Msg_layer.Outgoing_socket.send o1 msg >>>= fun () ->
+    ConnManager.recv m1 >>= fun (msg', id) -> 
+    assert(eq 1234 msg' 11 id);
+    Msg_layer.Outgoing_socket.send o2 msg >>>= fun () ->
+    ConnManager.recv m1 >>= fun (msg', id) ->
+    assert(eq 1234 msg' 12 id);
+    Lwt.return_ok ()
+  in test >>= function
+  | Ok () -> Lwt.return_unit
+  | Error `Closed -> assert false
+
 let test_read = Types.StateMachine.{op= Read "asdf"; id= 12381}
 
 let test_write = Types.StateMachine.{op= Write ("asdf", "fsda"); id= 568}
@@ -169,5 +196,8 @@ let () =
            ; Alcotest_lwt.test_case "Msg ClientResponse" `Quick
                (test_crr Failure 4 m1 m2)
            ; Alcotest_lwt.test_case "Msg ClientResponse" `Quick
-               (test_crr (ReadSuccess "asdf") 4 m1 m2) ] ) ]
+               (test_crr (ReadSuccess "asdf") 4 m1 m2) 
+           ; Alcotest_lwt.test_case "Client connection" `Quick
+               (test_client m1)
+           ] ) ]
      >>= fun () -> ConnManager.close m1 >>= fun () -> ConnManager.close m2)

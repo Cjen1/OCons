@@ -350,7 +350,11 @@ end
 module ClientConn = struct
   open ConnUtils
 
-  let connect switch addr id retry_timeout =
+  let connect ?switch addr id retry_timeout =
+    let switch = match switch with
+      | Some s -> s
+      | None -> Lwt_switch.create () 
+    in 
     connect_outgoing switch addr id retry_timeout
 end
 
@@ -364,72 +368,110 @@ module Send = struct
 
   let message_size = 256
 
+  module Serialise = struct
+    let requestVote ~term ~leaderCommit =
+      let root = ServerMessage.init_root ~message_size () in
+      let rv = ServerMessage.request_vote_init root in
+      RequestVote.term_set_int rv term ;
+      RequestVote.leader_commit_set_int rv leaderCommit ;
+      message_of_builder root
+
+    let requestVoteResp ~term ~voteGranted ~entries =
+      let root = ServerMessage.init_root ~message_size () in
+      let rvr = ServerMessage.request_vote_resp_init root in
+      RequestVoteResp.term_set_int rvr term ;
+      RequestVoteResp.vote_granted_set rvr voteGranted ;
+      let _residual_reference =
+        RequestVoteResp.entries_set_list rvr
+          (List.map log_entry_to_capnp entries)
+      in
+      message_of_builder root
+
+    let appendEntries ~term ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
+      let root = ServerMessage.init_root ~message_size () in
+      let ae = ServerMessage.append_entries_init root in
+      AppendEntries.term_set_int ae term ;
+      AppendEntries.prev_log_index_set_int ae prevLogIndex ;
+      AppendEntries.prev_log_term_set_int ae prevLogTerm ;
+      let _residual_reference =
+        AppendEntries.entries_set_list ae (List.map log_entry_to_capnp entries)
+      in
+      AppendEntries.leader_commit_set_int ae leaderCommit ;
+      message_of_builder root
+
+    let appendEntriesResp ~term ~success ~matchIndex =
+      let root = ServerMessage.init_root ~message_size () in
+      let aer = ServerMessage.append_entries_resp_init root in
+      AppendEntriesResp.term_set_int aer term ;
+      AppendEntriesResp.success_set aer success ;
+      AppendEntriesResp.match_index_set_int aer matchIndex ;
+      message_of_builder root
+
+    let clientRequest ~command =
+      let root = ServerMessage.init_root ~message_size () in
+      let crq = ServerMessage.client_request_init root in
+      command_to_capnp crq command ;
+      message_of_builder root
+
+    let clientResponse ~id ~result =
+      let root = ServerMessage.init_root ~message_size () in
+      let crp = ServerMessage.client_response_init root in
+      ClientResponse.id_set_int crp id ;
+      let cr = ClientResponse.result_init crp in
+      let () =
+        match result with
+        | StateMachine.Success ->
+            CommandResult.success_set cr
+        | StateMachine.ReadSuccess s ->
+            CommandResult.read_success_set cr s
+        | StateMachine.Failure ->
+            CommandResult.failure_set cr
+      in
+      message_of_builder root
+
+    let register ~id =
+      let root = ServerMessage.init_root ~message_size () in
+      let r = ServerMessage.register_init root in
+      Register.id_set_int r id ; message_of_builder root
+  end
+
+  module RawSocket = struct
+    let clientRequest sock ~command =
+      Msg_layer.Outgoing_socket.send sock (Serialise.clientRequest ~command)
+
+    let clientResponse sock ~id ~result =
+      Msg_layer.Outgoing_socket.send sock (Serialise.clientResponse ~id ~result)
+
+    let register sock ~id =
+      Msg_layer.Outgoing_socket.send sock (Serialise.register ~id)
+  end
+
   let requestVote ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
-      ~leader_commit =
-    let root = ServerMessage.init_root ~message_size () in
-    let rv = ServerMessage.request_vote_init root in
-    RequestVote.term_set_int rv term ;
-    RequestVote.leader_commit_set_int rv leader_commit ;
-    ConnManager.send sym conn_mgr t (message_of_builder root)
+      ~leaderCommit =
+    ConnManager.send sym conn_mgr t (Serialise.requestVote ~term ~leaderCommit)
 
   let requestVoteResp ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
       ~voteGranted ~entries =
-    let root = ServerMessage.init_root ~message_size () in
-    let rvr = ServerMessage.request_vote_resp_init root in
-    RequestVoteResp.term_set_int rvr term ;
-    RequestVoteResp.vote_granted_set rvr voteGranted ;
-    let _residual_reference =
-      RequestVoteResp.entries_set_list rvr (List.map log_entry_to_capnp entries)
-    in
-    ConnManager.send sym conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t
+      (Serialise.requestVoteResp ~term ~voteGranted ~entries)
 
   let appendEntries ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
       ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
-    let root = ServerMessage.init_root ~message_size () in
-    let ae = ServerMessage.append_entries_init root in
-    AppendEntries.term_set_int ae term ;
-    AppendEntries.prev_log_index_set_int ae prevLogIndex ;
-    AppendEntries.prev_log_term_set_int ae prevLogTerm ;
-    let _residual_reference =
-      AppendEntries.entries_set_list ae (List.map log_entry_to_capnp entries)
-    in
-    AppendEntries.leader_commit_set_int ae leaderCommit ;
-    ConnManager.send sym conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t
+      (Serialise.appendEntries ~term ~prevLogIndex ~prevLogTerm ~entries
+         ~leaderCommit)
 
   let appendEntriesResp ?(sym = `AtMostOnce) conn_mgr (t : service) ~term
       ~success ~matchIndex =
-    let root = ServerMessage.init_root ~message_size () in
-    let aer = ServerMessage.append_entries_resp_init root in
-    AppendEntriesResp.term_set_int aer term ;
-    AppendEntriesResp.success_set aer success ;
-    AppendEntriesResp.match_index_set_int aer matchIndex ;
-    ConnManager.send sym conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t
+      (Serialise.appendEntriesResp ~term ~success ~matchIndex)
 
   let clientRequest ?(sym = `AtMostOnce) conn_mgr (t : service) ~command =
-    let root = ServerMessage.init_root ~message_size () in
-    let crq = ServerMessage.client_request_init root in
-    command_to_capnp crq command ;
-    ConnManager.send sym conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (Serialise.clientRequest ~command)
 
   let clientResponse ?(sym = `AtMostOnce) conn_mgr (t : service) ~id ~result =
-    let root = ServerMessage.init_root ~message_size () in
-    let crp = ServerMessage.client_response_init root in
-    ClientResponse.id_set_int crp id ;
-    let cr = ClientResponse.result_init crp in
-    let () =
-      match result with
-      | StateMachine.Success ->
-          CommandResult.success_set cr
-      | StateMachine.ReadSuccess s ->
-          CommandResult.read_success_set cr s
-      | StateMachine.Failure ->
-          CommandResult.failure_set cr
-    in
-    ConnManager.send sym conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (Serialise.clientResponse ~id ~result)
 
   let register ?(sym = `AtMostOnce) conn_mgr (t : service) ~id =
-    let root = ServerMessage.init_root ~message_size () in
-    let r = ServerMessage.register_init root in
-    Register.id_set_int r id ;
-    ConnManager.send sym conn_mgr t (message_of_builder root)
+    ConnManager.send sym conn_mgr t (Serialise.register ~id)
 end
