@@ -10,9 +10,9 @@ let print_res res =
   match%lwt res with
   | Ok `Success ->
       Printf.printf "Success\n" |> Lwt.return
-  | Ok `ReadSuccess s ->
+  | Ok (`ReadSuccess s) ->
       Printf.printf "Read Success: %s\n" s |> Lwt.return
-  | Error `Msg s ->
+  | Error (`Msg s) ->
       Printf.printf "Failure of %s\n" s |> Lwt.return
 
 let put =

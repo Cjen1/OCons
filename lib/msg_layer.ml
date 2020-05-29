@@ -18,25 +18,30 @@ module Outgoing_socket = struct
     in
     {fd; send_mtx; switch}
 
-  let send_raw t size cont = 
+  let send_raw t size cont =
     let buf = Lwt_bytes.create size in
-    assert (size = cont buf);
+    assert (size = cont buf) ;
     let rec send_loop offset len () =
-      Lwt_bytes.write t.fd buf offset len
-      >>= fun len' ->
-      if len' < len then send_loop (offset + len') (len - len') ()
-      else Lwt.return_unit
+      Lwt_result.catch (Lwt_bytes.write t.fd buf offset len)
+      >>= function
+      | Ok len' ->
+          Log.debug (fun m -> m "Wrote %d to fd" len') ;
+          Format.print_newline () ;
+          if len' < len then send_loop (offset + len') (len - len') ()
+          else Lwt.return_unit
+      | Error e ->
+          Log.debug (fun m -> m "Failed to send %a" Fmt.exn e) ;
+          Lwt.return_unit
     in
     Lwt_mutex.with_lock t.send_mtx (send_loop 0 size)
 
   let send t msg =
-    if Lwt_switch.is_on t.switch then (
+    if Lwt_switch.is_on t.switch then
       let blit dst src ~dst_pos ~len =
         Lwt_bytes.blit_from_bytes src 0 dst dst_pos len
       in
       let size, cont = Capnp.Codecs.serialize_generator msg blit in
-      send_raw t size cont
-      >>= fun () -> Lwt.return_ok () )
+      send_raw t size cont >>= fun () -> Lwt.return_ok ()
     else Lwt.return_error `Closed
 end
 
@@ -57,8 +62,7 @@ module Incomming_socket = struct
         failwith "Unsupported Cap'n'Proto frame received"
     | Error Capnp.Codecs.FramingError.Incomplete ->
         Log.debug (fun f -> f "Incomplete; waiting for more data...") ;
-        Lwt_condition.wait t.recv_cond >>= fun () ->
-        recv t
+        Lwt_condition.wait t.recv_cond >>= fun () -> recv t
 
   let recv_thread ?(buf_size = 4096) t =
     let handler recv_buffer len =

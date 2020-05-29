@@ -147,7 +147,7 @@ module ConnUtils = struct
           >>= function
           | Error e ->
               Fmt.failwith "Failed when accepting connection: %a" Fmt.exn e
-          | Ok (client_sock, _) ->
+          | Ok (client_sock_raw, _) ->
               let accept_handler client_sock switch () =
                 let recv =
                   Msg_layer.Incomming_socket.recv client_sock
@@ -156,7 +156,7 @@ module ConnUtils = struct
                   match ServerMessage.get msg with
                   | ServerMessage.Register msg ->
                       let id = Register.id_get_int_exn msg in
-                      recv_handler client_sock socket switch id
+                      recv_handler client_sock client_sock_raw switch id
                   | _ ->
                       Lwt.return_error
                         (`Msg "Did not first get register from client_sock")
@@ -174,9 +174,9 @@ module ConnUtils = struct
               in
               let switch = Lwt_switch.create () in
               Lwt_switch.add_hook (Some switch) (fun () ->
-                  Lwt_unix.close client_sock) ;
+                  Lwt_unix.close client_sock_raw) ;
               let client_sock =
-                Msg_layer.Incomming_socket.create ~switch client_sock
+                Msg_layer.Incomming_socket.create ~switch client_sock_raw
               in
               Lwt.async (accept_handler client_sock switch) ;
               (accept_loop [@tailcall]) ()
@@ -200,7 +200,7 @@ module ConnUtils = struct
           Register.id_set_int r src_id ;
           (*Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) >>= fun _ ->*)
           Msg_layer.Outgoing_socket.send outgoing (message_of_builder root)
-          >>>= fun () -> Lwt.return_ok outgoing
+          >>>= fun () -> Lwt.return_ok (outgoing, socket)
     in
     let rec loop () =
       connect ()
@@ -212,7 +212,7 @@ module ConnUtils = struct
           Log.err (fun m -> m "Failed to connect, already closed... retrying") ;
           Lwt_unix.sleep retry_timeout >>= fun () -> loop ()
       | Error (`Exn e) ->
-          Log.err (fun m -> m "Failed to connect, retrying %a" Fmt.exn e) ;
+          Log.err (fun m -> m "Failed to connect, %a retrying " Fmt.exn e) ;
           Lwt_unix.sleep retry_timeout >>= fun () -> loop ()
     in
     loop ()
@@ -261,7 +261,7 @@ module ConnManager = struct
       let outgoing = Msg_layer.Outgoing_socket.create ~switch raw in
       Lwt_switch.add_hook (Some switch) (fun () ->
           t.outgoing_client_conns <-
-            List.filter (fun (i, _) -> i = id) t.outgoing_client_conns ;
+            List.filter (fun (i, _) -> i <> id) t.outgoing_client_conns ;
           Lwt.return_unit) ;
       t.outgoing_client_conns <- (id, outgoing) :: t.outgoing_client_conns ;
       loop ()
@@ -270,7 +270,7 @@ module ConnManager = struct
 
   let add_outgoing t addr id =
     connect_outgoing t.switch addr t.id t.retry_connect_timeout
-    >>= fun outgoing ->
+    >>= fun (outgoing, _) ->
     t.outgoing_conns <-
       (id, {sock= outgoing; addr; switch= t.switch}) :: t.outgoing_conns ;
     Lwt_condition.broadcast t.outgoing_cond () ;
@@ -303,7 +303,6 @@ module ConnManager = struct
         Msg_layer.Outgoing_socket.send conn msg
         >>= function Error _ -> fail_handle () | Ok () -> Lwt.return_unit )
     | None, None ->
-        Log.debug (fun m -> m "Socket not found") ;
         fail_handle ()
 
   let recv t = Lwt_stream.next t.recv_stream
@@ -350,12 +349,75 @@ end
 module ClientConn = struct
   open ConnUtils
 
-  let connect ?switch addr id retry_timeout =
-    let switch = match switch with
-      | Some s -> s
-      | None -> Lwt_switch.create () 
-    in 
-    connect_outgoing switch addr id retry_timeout
+  type message = API.Reader.ServerMessage.t
+
+  type t =
+    { retry_timeout: float
+    ; mutable conns:
+        ( address
+        * ( Msg_layer.Outgoing_socket.t
+          * Msg_layer.Incomming_socket.t
+          * Lwt_switch.t ) )
+        list
+    ; conn_cond: unit Lwt_condition.t
+    ; id: int
+    ; recv_stream: message Lwt_stream.t
+    ; recv_stream_push: message -> unit Lwt.t }
+
+  let rec add_connection t addr =
+    let switch = Lwt_switch.create () in
+    connect_outgoing switch addr t.id t.retry_timeout
+    >>= fun (outgoing, raw) ->
+    let incoming = Msg_layer.Incomming_socket.create ~switch raw in
+    let recv_handler () =
+      let rec loop () =
+        Msg_layer.Incomming_socket.recv incoming
+        >>>= fun msg ->
+        t.recv_stream_push (API.Reader.ServerMessage.of_message msg)
+        >>= fun () -> loop ()
+      in
+      loop ()
+      >>= function
+      | Ok () ->
+          Fmt.failwith "Loop ended unexpectedly"
+      | Error `Closed ->
+          Log.info (fun m -> m "Socket closed") ;
+          Lwt_switch.turn_off switch
+          >>= fun () -> (add_connection [@tailcall]) t addr
+    in
+    Lwt.async recv_handler ;
+    t.conns <- (addr, (outgoing, incoming, switch)) :: t.conns ;
+    Lwt_switch.add_hook (Some switch) (fun () ->
+        t.conns <- List.filter (fun (i, _) -> i <> addr) t.conns ;
+        Lwt.return_unit) ;
+    Lwt.return_unit
+
+  let send t addr msg =
+    let rec loop () =
+      match List.assoc_opt addr t.conns with
+      | None ->
+          Lwt_condition.wait t.conn_cond >>= fun () -> loop ()
+      | Some (outgoing, _, switch) -> (
+          Msg_layer.Outgoing_socket.send outgoing msg
+          >>= function
+          | Ok () ->
+              Lwt.return_unit
+          | Error `Closed ->
+              Lwt.async (fun () -> Lwt_switch.turn_off switch) ;
+              Lwt_condition.wait t.conn_cond >>= fun () -> loop () )
+    in
+    loop ()
+
+  let recv t = Lwt_stream.next t.recv_stream
+
+  let create ?(bound = 128) ?(retry_timeout = 0.1) ~id () =
+    let recv_stream, push_obj = Lwt_stream.create_bounded bound in
+    { retry_timeout
+    ; conns= []
+    ; conn_cond= Lwt_condition.create ()
+    ; id
+    ; recv_stream
+    ; recv_stream_push= push_obj#push }
 end
 
 (** [Send] contains a few utility functions and the main user facing api's *)

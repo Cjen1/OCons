@@ -88,7 +88,6 @@ end = struct
         false
 end
 
-
 type command = StateMachine.command
 
 type op_result = StateMachine.op_result

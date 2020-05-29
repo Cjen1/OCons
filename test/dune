@@ -1,4 +1,3 @@
 (test
  (name msg_layer)
- (libraries ocamlpaxos alcotest alcotest-lwt)
- )
+ (libraries ocamlpaxos alcotest alcotest-lwt))
