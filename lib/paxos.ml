@@ -397,14 +397,22 @@ end = struct
     if t.commitIndex > t.lastApplied then (
       L.debug (fun m -> m "commitIndex_cond_check: Updating SM") ;
       update_last_applied t (t.lastApplied + 1) ;
-      let command = (Log.get_exn t.log t.lastApplied).command in
+      let entry = Log.get_exn t.log t.lastApplied in
+      let command = entry.command in
       (* lastApplied must exist by match statement *)
       let result = StateMachine.update t.state_machine command in
       let result_handler () =
         match Lookup.get t.client_result_forwarders command.id with
         | Ok src ->
-            Send.clientResponse t.config.cmgr src ~id:command.id ~result
+            t.client_result_forwarders <-
+              Lookup.remove t.client_result_forwarders command.id ;
+            L.debug (fun m ->
+                m "Got answer for %d at index %d sending to %d" command.id
+                  entry.index src) ;
+            Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr src ~id:command.id ~result
         | Error _ ->
+            L.debug (fun m ->
+                m "No forwarder for %d at index %d" command.id entry.index) ;
             Lwt.return_unit
       in
       Lwt.async result_handler ;
@@ -577,6 +585,7 @@ module CoreRpcServer = struct
     | Candidate {term; quorum}
       when RequestVoteResp.vote_granted_get msg
            && RequestVoteResp.term_get_int_exn msg = term ->
+        L.debug (fun m -> m "Got vote granted from %d" src) ;
         let entries =
           RequestVoteResp.entries_get_list msg
           |> List.map ~f:Messaging.log_entry_from_capnp
@@ -597,7 +606,7 @@ module CoreRpcServer = struct
         m "append_entries: received request from %d: (%d %d %d %d)" src term
           prevLogIndex prevLogTerm leaderCommit) ;
     match (term < t.currentTerm.t, Log.get_term t.log prevLogIndex) with
-    | false, term when term = prevLogTerm ->
+    | false, logterm when logterm = prevLogTerm ->
         preempted_check t term
         >>= fun () ->
         L.debug (fun m -> m "append_entries: received valid") ;
@@ -647,14 +656,23 @@ module CoreRpcServer = struct
     | Leader s when ae_term = s.term && not (AppendEntriesResp.success_get msg)
       ->
         let ni = Lookup.get_exn s.nextIndex src in
-        update_next_index t src ni
+        update_next_index t src (ni - 1)
         >>= fun () -> send_append_entries t ~leader_term:s.term ~host:src
     | _ ->
         preempted_check t ae_term
 
   (* If leader add to log, otherwise do nothing. *)
   let handle_client_request t host msg =
+    L.debug (fun m -> m "got client request from %d" host) ;
     let command = Messaging.command_from_capnp msg in
+    (*
+    Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr host ~id:command.id
+      ~result:StateMachine.Failure
+    >>= fun () ->
+    L.debug (fun m -> m "replied to %d" host) ;
+    Lwt.return_unit
+       *)
+
     match t.node_state with
     | Leader s ->
         t.client_result_forwarders <-
@@ -734,5 +752,6 @@ let create ~listen_address ~client_listen_address ~node_list
   in
   Lwt.async (ConnManager.listen t.config.cmgr (CoreRpcServer.handle_message t)) ;
   Lwt.async (Condition_checks.commitIndex t) ;
+  Lwt_unix.sleep 10. >>= fun () ->
   Lwt.async (fun () -> Transition.candidate t) ;
-  Lwt.return ()
+  Lwt.wait () |> fst

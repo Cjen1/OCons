@@ -34,6 +34,9 @@ module Outgoing_socket = struct
           Lwt.return_unit
     in
     Lwt_mutex.with_lock t.send_mtx (send_loop 0 size)
+    >>= fun () ->
+    Log.debug (fun m -> m "Sent to fd") ;
+    Lwt.return_unit
 
   let send t msg =
     if Lwt_switch.is_on t.switch then

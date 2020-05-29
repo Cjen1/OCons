@@ -1,13 +1,25 @@
 (* main.ml *)
 open Core
-open Ocamlpaxos.Client
+open Lwt.Infix
+open Ocamlpaxos
+open Client
 
-let node_list = Command.Arg_type.create @@ String.split ~on:','
+let node_list = 
+  let parse_individual s =
+    match Messaging.ConnUtils.addr_of_string s with
+    | Ok addr -> addr
+    | Error (`Msg e) -> 
+        Fmt.failwith "Expected ip:port | path rather than %s " e
+  in 
+  let parse s = 
+    String.split ~on:',' s 
+    |> List.map ~f:parse_individual
+  in 
+  Command.Arg_type.create parse
 
 let bytes = Command.Arg_type.create @@ Bytes.of_string
 
-let print_res res =
-  match%lwt res with
+let print_res = function
   | Ok `Success ->
       Printf.printf "Success\n" |> Lwt.return
   | Ok (`ReadSuccess s) ->
@@ -18,23 +30,30 @@ let print_res res =
 let put =
   Command.basic ~summary:"Put operation"
     Command.Let_syntax.(
-      let%map_open client_files = anon ("capacity_files" %: node_list)
+      let%map_open addresses = anon ("capacity_files" %: node_list)
       and key = anon ("key" %: bytes)
       and value = anon ("value" %: bytes) in
       fun () ->
-        Lwt_main.run
-        @@ let%lwt c = new_client ~client_files () in
-           op_write c key value |> print_res)
+        Random.self_init ();
+        Lwt_main.run begin
+          new_client addresses () >>= fun client ->
+          op_write 
+            client key value >>= print_res
+        end 
+    )
 
 let get =
   Command.basic ~summary:"Get operation"
     Command.Let_syntax.(
-      let%map_open client_files = anon ("capacity_files" %: node_list)
+      let%map_open addresses = anon ("capacity_files" %: node_list)
       and key = anon ("key" %: bytes) in
       fun () ->
-        Lwt_main.run
-        @@ let%lwt c = new_client ~client_files () in
-           op_read c key |> print_res)
+        Random.self_init ();
+        Lwt_main.run begin
+          new_client addresses () >>= fun client ->
+          op_read client key >>= print_res
+        end 
+    )
 
 let reporter =
   let report src level ~over k msgf =
@@ -59,5 +78,5 @@ let cmd =
 let () =
   Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
-  Logs.(set_level (Some Info)) ;
+  Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run cmd

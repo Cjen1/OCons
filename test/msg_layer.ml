@@ -207,9 +207,21 @@ let test_entries =
   [ {command= test_read; term= 1512; index= 8512}
   ; {command= test_write; term= 684; index= 2461} ]
 
-let () =
-  Logs.set_level (Some Logs.Debug) ;
-  Logs.set_reporter @@ Logs_fmt.reporter ()
+let reporter =
+  let report src level ~over k msgf =
+    let k _ = over () ; k () in
+    let src = Logs.Src.name src in
+    msgf
+    @@ fun ?header ?tags:_ fmt ->
+    Fmt.kpf k Fmt.stdout
+      ("[%a] %a %a @[" ^^ fmt ^^ "@]@.")
+      Core.Time.pp (Core.Time.now ())
+      Fmt.(styled `Magenta string)
+      (Printf.sprintf "%14s" src)
+      Logs_fmt.pp_header (level, header)
+  in
+  {Logs.report}
+
 
 let () =
   let open Types.StateMachine in

@@ -84,7 +84,23 @@ let log_entry_to_capnp entry =
 type address = Unix of string | TCP of (string * int)
 
 module ConnUtils = struct
-  let pp_addr = function Unix s -> s | TCP (s, p) -> Fmt.str "%s:%d" s p
+  let pp_addr f = function 
+    | Unix s -> 
+      Fmt.pf f "unix:%s" s
+    | TCP (s, p) -> 
+      Fmt.pf f "tcp://%s:%d" s p
+
+  let addr_of_string s = 
+    match String.split_on_char ':' s with
+    | [addr] -> Ok (Unix addr)
+    | [addr;port] -> begin
+      match int_of_string_opt port with
+      | Some port ->
+        Ok (TCP (addr, port))
+      | None -> 
+        Error (`Msg (Fmt.str "Port (%s) is not a valid int" port))
+    end 
+    | _ -> Error (`Msg (Fmt.str "Expected address of the form ip:port, not %s"  s))
 
   let addr_of_host host =
     match Unix.gethostbyname host with
@@ -131,7 +147,7 @@ module ConnUtils = struct
         Lwt_unix.bind socket (Unix.ADDR_INET (addr_of_host host, port))
         >|= fun () -> socket
 
-  let accept_incomming addr recv_handler ?switch () : unit Lwt.t =
+  let accept_incomming addr recv_handler ~switch () : unit Lwt.t =
     Lwt_result.catch (bind_socket addr)
     >>>= (fun socket ->
            try Lwt_unix.listen socket 128 ; Lwt.return_ok socket
@@ -140,13 +156,14 @@ module ConnUtils = struct
     | Error e ->
         Fmt.failwith "Failed when binding socket: %a" Fmt.exn e
     | Ok socket ->
-        Lwt_switch.add_hook switch (fun () -> Lwt_unix.close socket) ;
+        Lwt_switch.add_hook (Some switch) (fun () -> Lwt_unix.close socket) ;
         let open API.Reader in
-        let rec accept_loop () =
+        let rec accept_loop () : unit Lwt.t=
           Lwt_result.catch (Lwt_unix.accept socket)
           >>= function
-          | Error e ->
+          | Error e when Lwt_switch.is_on switch ->
               Fmt.failwith "Failed when accepting connection: %a" Fmt.exn e
+          | Error _ -> Lwt.return_unit
           | Ok (client_sock_raw, _) ->
               let accept_handler client_sock switch () =
                 let recv =
@@ -185,7 +202,7 @@ module ConnUtils = struct
 
   let rec connect_outgoing switch addr src_id retry_timeout =
     let connect () =
-      Log.info (fun m -> m "Trying to connect to %s" (pp_addr addr)) ;
+      Log.info (fun m -> m "Trying to connect to %a" pp_addr addr) ;
       Lwt_result.catch (connect_socket addr)
       >>= function
       | Error ex ->
@@ -206,7 +223,7 @@ module ConnUtils = struct
       connect ()
       >>= function
       | Ok res ->
-          Log.info (fun m -> m "Connected to %s" (pp_addr addr)) ;
+          Log.info (fun m -> m "Connected to %a" pp_addr addr) ;
           Lwt.return res
       | Error `Closed ->
           Log.err (fun m -> m "Failed to connect, already closed... retrying") ;
@@ -373,8 +390,11 @@ module ClientConn = struct
       let rec loop () =
         Msg_layer.Incomming_socket.recv incoming
         >>>= fun msg ->
+        Log.debug (fun m -> m "client got message, pushing onto stream");
         t.recv_stream_push (API.Reader.ServerMessage.of_message msg)
-        >>= fun () -> loop ()
+        >>= fun () -> 
+        Log.debug (fun m -> m "Pushed onto stream");
+        loop ()
       in
       loop ()
       >>= function
@@ -390,6 +410,7 @@ module ClientConn = struct
     Lwt_switch.add_hook (Some switch) (fun () ->
         t.conns <- List.filter (fun (i, _) -> i <> addr) t.conns ;
         Lwt.return_unit) ;
+    Lwt_condition.broadcast t.conn_cond ();
     Lwt.return_unit
 
   let send t addr msg =
@@ -398,17 +419,24 @@ module ClientConn = struct
       | None ->
           Lwt_condition.wait t.conn_cond >>= fun () -> loop ()
       | Some (outgoing, _, switch) -> (
+          Log.debug (fun m -> m "Sending");
           Msg_layer.Outgoing_socket.send outgoing msg
           >>= function
           | Ok () ->
+              Log.debug (fun m -> m "Sent");
               Lwt.return_unit
           | Error `Closed ->
+              Log.debug (fun m -> m "Failed to send retrying");
               Lwt.async (fun () -> Lwt_switch.turn_off switch) ;
               Lwt_condition.wait t.conn_cond >>= fun () -> loop () )
     in
     loop ()
 
-  let recv t = Lwt_stream.next t.recv_stream
+  let recv t = 
+    Log.debug (fun m -> m "waiting for msg");
+    Lwt_stream.next t.recv_stream >>= fun msg -> 
+    Log.debug (fun m -> m "received msg");
+    Lwt.return msg
 
   let create ?(bound = 128) ?(retry_timeout = 0.1) ~id () =
     let recv_stream, push_obj = Lwt_stream.create_bounded bound in

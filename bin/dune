@@ -1,7 +1,7 @@
 (executable
  (name main)
  (public_name ocamlpaxos)
- (libraries ocamlpaxos core lwt lwt_ppx)
+ (libraries ocamlpaxos lwt lwt_ppx core)
  (preprocess
   (pps lwt_ppx ppx_jane))
  (modules main))

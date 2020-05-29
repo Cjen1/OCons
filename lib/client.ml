@@ -6,7 +6,7 @@ let ( >>>= ) = Lwt_result.bind
 
 let client = Logs.Src.create "Client" ~doc:"Client module"
 
-module CLog = (val Logs.src_log client : Logs.LOG)
+module Log = (val Logs.src_log client : Logs.LOG)
 
 type t =
   { mgr: ClientConn.t
@@ -20,7 +20,9 @@ let send t op =
   let prom, fulfiller = Lwt.wait () in
   Hashtbl.add t.ongoing_requests id fulfiller ;
   List.iter
-    (fun addr -> Lwt.async (fun () -> ClientConn.send t.mgr addr msg))
+    (fun addr -> Lwt.async (fun () -> 
+         Log.debug (fun m -> m "Sending to %a" ConnUtils.pp_addr addr);
+         ClientConn.send t.mgr addr msg))
     t.addrs ;
   prom
   >>= function
@@ -57,16 +59,21 @@ let fulfiller_loop t =
     | _ ->
         ()
   in
-  let rec loop () = ClientConn.recv t.mgr >>= fun msg -> resp msg ; loop () in
+  let rec loop () = 
+    ClientConn.recv t.mgr >>= fun msg ->
+    Log.debug (fun m -> m "waiting to recieve");
+    resp msg ;
+    Log.debug (fun m -> m "received");
+    loop () in
   loop ()
 
 let send_wrapper t msg =
   Lwt_result.catch (send t msg)
   >|= function
   | Ok res ->
-      Ok res
+      res
   | Error e ->
-      Error (`Msg (Fmt.pr "Exception caught: %a" Fmt.exn e))
+      Error (`Msg (Fmt.str "Exception caught: %a" Fmt.exn e))
 
 let op_read t k = send_wrapper t @@ StateMachine.Read (Bytes.to_string k)
 
@@ -82,4 +89,5 @@ let new_client ?(cid = Types.create_id ()) addresses () =
   let t =
     {mgr= clientmgr; addrs= addresses; ongoing_requests= Hashtbl.create 1024}
   in
+  Lwt.async(fun () -> fulfiller_loop t);
   Lwt.return t
