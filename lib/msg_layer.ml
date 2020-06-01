@@ -40,8 +40,8 @@ module Outgoing_socket = struct
 
   let send t msg =
     if Lwt_switch.is_on t.switch then
-      let blit dst src ~dst_pos ~len =
-        Lwt_bytes.blit_from_bytes src 0 dst dst_pos len
+      let blit dst src ~offset ~len =
+        Lwt_bytes.blit_from_bytes src 0 dst offset len
       in
       let size, cont = Capnp.Codecs.serialize_generator msg blit in
       send_raw t size cont >>= fun () -> Lwt.return_ok ()

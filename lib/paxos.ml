@@ -672,7 +672,6 @@ module CoreRpcServer = struct
     L.debug (fun m -> m "replied to %d" host) ;
     Lwt.return_unit
        *)
-
     match t.node_state with
     | Leader s ->
         t.client_result_forwarders <-
@@ -680,7 +679,8 @@ module CoreRpcServer = struct
         let log' = Log.append t.log command s.term in
         update_log t log' ; Lwt.return_unit
     | _ ->
-        Lwt.return_unit
+      L.debug (fun m -> m "Not leader so ignoring");
+      Lwt.return_unit
 
   let handle_client_response _t _host _msg =
     L.err (fun m -> m "Got client_response...") ;
@@ -752,6 +752,5 @@ let create ~listen_address ~client_listen_address ~node_list
   in
   Lwt.async (ConnManager.listen t.config.cmgr (CoreRpcServer.handle_message t)) ;
   Lwt.async (Condition_checks.commitIndex t) ;
-  Lwt_unix.sleep 10. >>= fun () ->
   Lwt.async (fun () -> Transition.candidate t) ;
   Lwt.wait () |> fst
