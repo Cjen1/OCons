@@ -198,6 +198,7 @@ module PaxosTypes = struct
     ; commitIndex_cond: unit Lwt_condition.t
     ; log_cond: unit Lwt_condition.t
     ; mutable client_result_forwarders: (command_id, host) Lookup.t
+    ; mutable client_requests_seen: (command_id) Hash_set.t
     ; mutable is_leader: unit Lwt_condition.t }
 
   let update_current_term t = function
@@ -665,22 +666,23 @@ module CoreRpcServer = struct
   let handle_client_request t host msg =
     L.debug (fun m -> m "got client request from %d" host) ;
     let command = Messaging.command_from_capnp msg in
-    (*
     Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr host ~id:command.id
       ~result:StateMachine.Failure
     >>= fun () ->
     L.debug (fun m -> m "replied to %d" host) ;
     Lwt.return_unit
-       *)
-    match t.node_state with
-    | Leader s ->
+      (*
+    match t.node_state, Hash_set.mem t.client_requests_seen command.id with
+    | Leader s, false ->
         t.client_result_forwarders <-
           Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
+        Hash_set.add t.client_requests_seen command.id;
         let log' = Log.append t.log command s.term in
         update_log t log' ; Lwt.return_unit
     | _ ->
-      L.debug (fun m -> m "Not leader so ignoring");
+      L.debug (fun m -> m "Not leader, or already submitted so ignoring");
       Lwt.return_unit
+         *)
 
   let handle_client_response _t _host _msg =
     L.err (fun m -> m "Got client_response...") ;
@@ -748,6 +750,7 @@ let create ~listen_address ~client_listen_address ~node_list
     ; commitIndex_cond= Lwt_condition.create ()
     ; log_cond= Lwt_condition.create ()
     ; client_result_forwarders= Lookup.create (module Int)
+    ; client_requests_seen = Hash_set.create (module Int)
     ; is_leader= Lwt_condition.create () }
   in
   Lwt.async (ConnManager.listen t.config.cmgr (CoreRpcServer.handle_message t)) ;
