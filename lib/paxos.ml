@@ -68,6 +68,20 @@ module PaxosTypes = struct
         | Remove of log_index [@key 2]
       [@@deriving protobuf]
 
+      let encode_blit op =
+        let res = Protobuf.Encoder.encode_exn op_to_protobuf op in
+        let p_len = Bytes.length res in
+        let blit buf ~offset =
+          Bytes.blit ~src:res ~src_pos:0 ~dst:buf ~dst_pos:offset ~len:p_len
+        in
+        (p_len, blit)
+
+      let decode buf ~offset =
+        let decode_buf =
+          Bytes.sub buf ~pos:offset ~len:(Bytes.length buf - offset)
+        in
+        Protobuf.Decoder.decode_exn op_from_protobuf decode_buf
+
       let apply t op =
         match op with
         | Set (index, value) ->
@@ -106,18 +120,19 @@ module PaxosTypes = struct
       Lookup.fold t.t ~init:0 ~f:(fun v acc -> Int.max v.index acc)
 
     (*
-  (* Entries after i inclusive *)
-  let entries_after_inc log ~index : entry_list =
-    let index = if index = 0 then 1 else 0 in (* Avoids printing errors *)
-    let rec loop i acc =
-      match get log index with
-      | Ok v ->
-          loop (i + 1) (v :: acc)
-      | Error _ ->
-          acc
-    in
-    List.rev @@ loop (index) []
-      *)
+    (* Entries after i inclusive *)
+    let entries_after_inc log ~index : entry_list =
+      let index = if index = 0 then 1 else 0 in
+      let rec loop i acc =
+        match get log index with
+        | Ok v ->
+            loop (i + 1) (v :: acc)
+        | Error _ ->
+            acc
+      in
+      List.rev @@ loop index []
+        *)
+
     let entries_after_inc t ~index : entry_list =
       let res =
         Hashtbl.fold t.t ~init:[] ~f:(fun ~key ~data acc ->
@@ -168,7 +183,16 @@ module PaxosTypes = struct
 
     let init () = 0
 
-    type op = int [@@deriving protobuf]
+    type op = int
+
+    let encode_blit v =
+      let p_len = 8 in
+      let v = Int64.of_int v in
+      let blit buf ~offset = EndianBytes.LittleEndian.set_int64 buf offset v in
+      (p_len, blit)
+
+    let decode v ~offset =
+      EndianBytes.LittleEndian.get_int64 v offset |> Int64.to_int_exn
 
     let apply _t op = op
   end
@@ -187,8 +211,7 @@ module PaxosTypes = struct
         ; mutable heartbeat_last_sent: (node_id, time) Lookup.t
         ; term: term }
 
-  type t =
-    { mutable node_state: node_state
+  type t = { mutable node_state: node_state
     ; mutable currentTerm: Term.t
     ; mutable log: log
     ; mutable state_machine: StateMachine.t
@@ -198,7 +221,7 @@ module PaxosTypes = struct
     ; commitIndex_cond: unit Lwt_condition.t
     ; log_cond: unit Lwt_condition.t
     ; mutable client_result_forwarders: (command_id, host) Lookup.t
-    ; mutable client_requests_seen: (command_id) Hash_set.t
+    ; mutable client_requests_seen: command_id Hash_set.t
     ; mutable is_leader: unit Lwt_condition.t }
 
   let update_current_term t = function
@@ -315,8 +338,6 @@ end = struct
               log)
         in
         L.debug (fun m -> m "Adding ops to log") ;
-        Log.sync log
-        >>= fun log ->
         update_log t log ;
         let nextIndex, matchIndex, heartbeat_last_sent =
           List.fold t.config.node_list
@@ -348,7 +369,7 @@ end = struct
     | _ ->
         Lwt.return_unit
 
-  let candidate t =
+  let rec candidate t =
     L.debug (fun m -> m "Trying to become leader") ;
     let updated_term : term =
       let id_in_current_epoch =
@@ -364,22 +385,31 @@ end = struct
     L.debug (fun m -> m "New term = %d" updated_term) ;
     update_current_term t updated_term
     >>= fun () ->
-    let () =
-      let term = t.currentTerm.t in
-      (* When elected is called *)
-      let election_callback res =
-        let res = List.map res ~f:snd in
-        Lwt.async (fun () -> leader t updated_term res)
-      in
-      let quorum = t.config.quorum_gen election_callback in
-      quorum.add (t.config.node_id, []) ;
-      t.node_state <- Candidate {term; quorum}
+    let term = t.currentTerm.t in
+    (* When elected is called *)
+    let election_callback res =
+      let res = List.map res ~f:snd in
+      Lwt.async (fun () -> leader t updated_term res)
     in
+    let quorum = t.config.quorum_gen election_callback in
+    quorum.add (t.config.node_id, []) ;
+    t.node_state <- Candidate {term; quorum} ;
     let commitIndex = t.commitIndex in
     List.iter t.config.node_list ~f:(fun url ->
         Lwt.async (fun () ->
             Messaging.Send.requestVote t.config.cmgr url ~term:updated_term
               ~leaderCommit:commitIndex)) ;
+    let redo_election_if_unelected () =
+      Lwt_unix.sleep t.config.election_timeout
+      >>= fun () ->
+      match t.node_state with
+      | Candidate {term= term'; _} when term' = term ->
+          L.debug (fun m -> m "Not elected within timeout, retrying") ;
+          candidate t
+      | _ ->
+          Lwt.return_unit
+    in
+    Lwt.async redo_election_if_unelected ;
     Lwt.return_unit
 end
 
@@ -410,7 +440,8 @@ end = struct
             L.debug (fun m ->
                 m "Got answer for %d at index %d sending to %d" command.id
                   entry.index src) ;
-            Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr src ~id:command.id ~result
+            Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr src
+              ~id:command.id ~result
         | Error _ ->
             L.debug (fun m ->
                 m "No forwarder for %d at index %d" command.id entry.index) ;
@@ -666,23 +697,27 @@ module CoreRpcServer = struct
   let handle_client_request t host msg =
     L.debug (fun m -> m "got client request from %d" host) ;
     let command = Messaging.command_from_capnp msg in
-    Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr host ~id:command.id
-      ~result:StateMachine.Failure
-    >>= fun () ->
-    L.debug (fun m -> m "replied to %d" host) ;
-    Lwt.return_unit
-      (*
-    match t.node_state, Hash_set.mem t.client_requests_seen command.id with
-    | Leader s, false ->
-        t.client_result_forwarders <-
-          Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
-        Hash_set.add t.client_requests_seen command.id;
-        let log' = Log.append t.log command s.term in
-        update_log t log' ; Lwt.return_unit
-    | _ ->
-      L.debug (fun m -> m "Not leader, or already submitted so ignoring");
-      Lwt.return_unit
-         *)
+    let debug = true in
+    match debug with
+    | true ->
+        Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr host ~id:command.id
+          ~result:StateMachine.Failure
+        >>= fun () ->
+        L.debug (fun m -> m "replied to %d" host) ;
+        Lwt.return_unit
+    | false -> (
+      match (t.node_state, Hash_set.mem t.client_requests_seen command.id) with
+      | Leader s, false ->
+          t.client_result_forwarders <-
+            Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
+          Hash_set.add t.client_requests_seen command.id ;
+          let log' = Log.append t.log command s.term in
+          update_log t log' ;
+          L.debug (fun m -> m "Added request to log, finishing") ;
+          Lwt.return_unit
+      | _ ->
+          L.debug (fun m -> m "Not leader, or already submitted so ignoring") ;
+          Lwt.return_unit )
 
   let handle_client_response _t _host _msg =
     L.err (fun m -> m "Got client_response...") ;
@@ -750,7 +785,7 @@ let create ~listen_address ~client_listen_address ~node_list
     ; commitIndex_cond= Lwt_condition.create ()
     ; log_cond= Lwt_condition.create ()
     ; client_result_forwarders= Lookup.create (module Int)
-    ; client_requests_seen = Hash_set.create (module Int)
+    ; client_requests_seen= Hash_set.create (module Int)
     ; is_leader= Lwt_condition.create () }
   in
   Lwt.async (ConnManager.listen t.config.cmgr (CoreRpcServer.handle_message t)) ;

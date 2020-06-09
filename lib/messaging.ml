@@ -11,8 +11,6 @@ module API = Messaging_api.Make [@inlined] (Capnp.BytesMessage)
 
 let message_of_builder = Capnp.BytesMessage.StructStorage.message_of_builder
 
-let builder_of_message = Capnp.BytesMessage.StructStorage.message_of_builder
-
 let command_from_capnp command =
   let open API.Reader.Command in
   let op =
@@ -216,7 +214,7 @@ module ConnUtils = struct
           let r = ServerMessage.register_init root in
           Register.id_set_int r src_id ;
           (*Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) >>= fun _ ->*)
-          Msg_layer.Outgoing_socket.send outgoing (message_of_builder root)
+          Msg_layer.Outgoing_socket.send outgoing (message_of_builder root) |> Lwt.return
           >>>= fun () -> Lwt.return_ok (outgoing, socket)
     in
     let rec loop () =
@@ -314,10 +312,10 @@ module ConnManager = struct
       , List.assoc_opt id t.outgoing_client_conns )
     with
     | Some conn, _ -> (
-        Msg_layer.Outgoing_socket.send conn.sock msg
+        Msg_layer.Outgoing_socket.send conn.sock msg |> Lwt.return
         >>= function Error _ -> fail_handle () | Ok () -> Lwt.return_unit )
     | None, Some conn -> (
-        Msg_layer.Outgoing_socket.send conn msg
+        Msg_layer.Outgoing_socket.send conn msg |> Lwt.return
         >>= function Error _ -> fail_handle () | Ok () -> Lwt.return_unit )
     | None, None ->
         fail_handle ()
@@ -420,7 +418,7 @@ module ClientConn = struct
           Lwt_condition.wait t.conn_cond >>= fun () -> loop ()
       | Some (outgoing, _, switch) -> (
           Log.debug (fun m -> m "Sending");
-          Msg_layer.Outgoing_socket.send outgoing msg
+          Msg_layer.Outgoing_socket.send outgoing msg |> Lwt.return
           >>= function
           | Ok () ->
               Log.debug (fun m -> m "Sent");

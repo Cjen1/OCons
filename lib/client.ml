@@ -29,6 +29,7 @@ let send t op =
       t.addrs
   in
   Hashtbl.add t.ongoing_requests id (fulfiller, time_now (), send) ;
+  send ();
   prom
   >>= function
   | StateMachine.Success ->
@@ -76,6 +77,7 @@ let fulfiller_loop t () =
 
 let resend_loop t () =
   let rec loop () =
+    Log.debug (fun m -> m "Trying to sleep resend loop") ;
     Lwt_unix.sleep t.connection_retry
     >>= fun () ->
     let iter _ = function

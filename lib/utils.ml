@@ -30,6 +30,35 @@ module Lookup = struct
   let find_or_add = Base.Hashtbl.find_or_add
 end
 
+module Lwt_queue = struct
+  type 'a t =
+    { q: 'a Stdlib.Queue.t
+    ; cond: unit Lwt_condition.t
+    ; switch: Lwt_switch.t option }
+
+  let add t v =
+    Stdlib.Queue.add v t.q ;
+    Lwt_condition.signal t.cond ()
+
+  let take t =
+    let rec loop () =
+      match (Stdlib.Queue.take_opt t.q, t.switch) with
+      | _, Some switch when not (Lwt_switch.is_on switch) ->
+          Lwt.return_error `Closed
+      | Some v, _ ->
+          Lwt.return_ok v
+      | None, _ ->
+          Lwt_condition.wait t.cond >>= fun () -> loop ()
+    in
+    loop ()
+
+  let create ?switch () =
+    let cond = Lwt_condition.create () in
+    Lwt_switch.add_hook switch (fun () ->
+        Lwt_condition.broadcast cond () |> Lwt.return) ;
+    {q= Stdlib.Queue.create (); cond; switch}
+end
+
 module type Persistable = sig
   type t
 
@@ -37,9 +66,9 @@ module type Persistable = sig
 
   type op
 
-  val op_to_protobuf : op -> Protobuf.Encoder.t -> unit
+  val encode_blit : op -> int * (bytes -> offset:int -> unit)
 
-  val op_from_protobuf : Protobuf.Decoder.t -> op
+  val decode : bytes -> offset:int -> op
 
   val apply : t -> op -> t
 end
@@ -80,10 +109,9 @@ end = struct
           Lwt_list.iter_s
             (fun v ->
               Logs.debug (fun m -> m "Syncing op") ;
-              let payload = Protobuf.Encoder.encode_exn P.op_to_protobuf v in
-              let p_len = Bytes.length payload in
+              let p_len, p_blit = P.encode_blit v in
               let buf = Bytes.create (p_len + 4) in
-              Bytes.blit ~src:payload ~src_pos:0 ~dst:buf ~dst_pos:4 ~len:p_len ;
+              p_blit buf ~offset:4 ;
               EndianBytes.LittleEndian.set_int32 buf 0 (Int32.of_int_exn p_len) ;
               Lwt_io.write_from_exactly t.channel buf 0 (Bytes.length buf))
             vs
@@ -120,9 +148,7 @@ end = struct
           Lwt.catch
             (fun () ->
               read_value input_channel
-              >>= fun v ->
-              Protobuf.Decoder.decode_exn P.op_from_protobuf v
-              |> Lwt.return_some)
+              >>= fun v -> decode v ~offset:0 |> Lwt.return_some)
             (function _ -> Lwt.return_none))
     in
     Logs.debug (fun m -> m "Reading in") ;
