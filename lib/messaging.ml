@@ -146,7 +146,7 @@ module ConnUtils = struct
         >|= fun () -> socket
 
   let accept_incomming addr recv_handler ~switch () : unit Lwt.t =
-    Lwt_result.catch (bind_socket addr)
+    Utils.catch (fun () -> bind_socket addr)
     >>>= (fun socket ->
            try Lwt_unix.listen socket 128 ; Lwt.return_ok socket
            with e -> Lwt.return_error e)
@@ -157,7 +157,7 @@ module ConnUtils = struct
         Lwt_switch.add_hook (Some switch) (fun () -> Lwt_unix.close socket) ;
         let open API.Reader in
         let rec accept_loop () : unit Lwt.t=
-          Lwt_result.catch (Lwt_unix.accept socket)
+          Utils.catch (fun () -> Lwt_unix.accept socket)
           >>= function
           | Error e when Lwt_switch.is_on switch ->
               Fmt.failwith "Failed when accepting connection: %a" Fmt.exn e
@@ -201,7 +201,7 @@ module ConnUtils = struct
   let rec connect_outgoing switch addr src_id retry_timeout =
     let connect () =
       Log.info (fun m -> m "Trying to connect to %a" pp_addr addr) ;
-      Lwt_result.catch (connect_socket addr)
+      Utils.catch (fun () -> connect_socket addr)
       >>= function
       | Error ex ->
           Lwt.return_error (`Exn ex)
@@ -258,8 +258,10 @@ module ConnManager = struct
       let rec loop () =
         Msg_layer.Incomming_socket.recv client_sock
         >>>= fun msg ->
-        let msg = API.Reader.ServerMessage.of_message msg in
-        t.recv_stream_push (msg, id) >>= fun () -> (loop [@tailcall]) ()
+        try 
+          let msg = API.Reader.ServerMessage.of_message msg in
+          t.recv_stream_push (msg, id) >>= fun () -> (loop [@tailcall]) ()
+        with exn -> Fmt.failwith "Failed to read: %a" Fmt.exn exn
       in
       loop ()
     in
@@ -329,7 +331,15 @@ module ConnManager = struct
       let open Lwt.Infix in
       recv mgr
       >>= fun (req_message, id) ->
-      Lwt.async (fun () -> handler id req_message) ;
+      Lwt.async (fun () -> 
+          Utils.catch(fun () -> handler id req_message)
+          >>= (function
+          | Ok () -> Lwt.return_unit
+          | Error exn -> Fmt.failwith "Recv handler failed with: %a" Fmt.exn exn
+            ) >>= fun () -> 
+          Log.debug (fun m -> m "returned from handler");
+          Lwt.return_unit
+        );
       (handle_loop [@tailcall]) ()
     in
     handle_loop ()
@@ -356,7 +366,7 @@ module ConnManager = struct
           (fun (id, addr) ->
             add_outgoing t addr id
             >>= fun () ->
-            Log.debug (fun f -> f "Connected to %d" id) |> Lwt.return)
+            Log.info (fun f -> f "Connected to %d" id) |> Lwt.return)
           addresses) ;
     t
 end
@@ -424,7 +434,7 @@ module ClientConn = struct
               Log.debug (fun m -> m "Sent");
               Lwt.return_unit
           | Error `Closed ->
-              Log.debug (fun m -> m "Failed to send retrying");
+              Log.warn (fun m -> m "Failed to send retrying");
               Lwt.async (fun () -> Lwt_switch.turn_off switch) ;
               Lwt_condition.wait t.conn_cond >>= fun () -> loop () )
     in

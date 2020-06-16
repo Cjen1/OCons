@@ -8,11 +8,14 @@ let client = Logs.Src.create "Client" ~doc:"Client module"
 
 module Log = (val Logs.src_log client : Logs.LOG)
 
+type send_fn = unit -> unit
+
 type t =
   { mgr: ClientConn.t
   ; addrs: address list
-  ; ongoing_requests:
-      (int, StateMachine.op_result Lwt.u * float * (unit -> unit)) Hashtbl.t
+  ; send_stream: (send_fn * StateMachine.op_result Lwt.t) Lwt_stream.t
+  ; push: (send_fn * StateMachine.op_result Lwt.t) option -> unit
+  ; ongoing_requests: (int, StateMachine.op_result Lwt.u) Hashtbl.t
   ; connection_retry: float }
 
 let send t op =
@@ -28,8 +31,8 @@ let send t op =
             ClientConn.send t.mgr addr msg))
       t.addrs
   in
-  Hashtbl.add t.ongoing_requests id (fulfiller, time_now (), send) ;
-  send ();
+  Hashtbl.add t.ongoing_requests id fulfiller ;
+  t.push (Some (send, prom)) ;
   prom
   >>= function
   | StateMachine.Success ->
@@ -46,7 +49,7 @@ let fulfiller_loop t () =
     | ServerMessage.ClientResponse resp -> (
         let id = ClientResponse.id_get_int_exn resp in
         match Hashtbl.find_opt t.ongoing_requests id with
-        | Some (fulfiller, _, _) ->
+        | Some fulfiller ->
             let res =
               match ClientResponse.result_get resp |> CommandResult.get with
               | CommandResult.Success ->
@@ -75,26 +78,8 @@ let fulfiller_loop t () =
   in
   loop ()
 
-let resend_loop t () =
-  let rec loop () =
-    Log.debug (fun m -> m "Trying to sleep resend loop") ;
-    Lwt_unix.sleep t.connection_retry
-    >>= fun () ->
-    let iter _ = function
-      | f, prev, send when time_now () -. prev > t.connection_retry ->
-          Log.debug (fun m -> m "Forced to retry send...") ;
-          send () ;
-          Some (f, time_now (), send)
-      | v ->
-          Some v
-    in
-    Hashtbl.filter_map_inplace iter t.ongoing_requests ;
-    Lwt.return_unit
-  in
-  loop ()
-
 let send_wrapper t msg =
-  Lwt_result.catch (send t msg)
+  Utils.catch (fun () -> send t msg)
   >|= function
   | Ok res ->
       res
@@ -106,19 +91,33 @@ let op_read t k = send_wrapper t @@ StateMachine.Read (Bytes.to_string k)
 let op_write t k v =
   send_wrapper t @@ StateMachine.Write (Bytes.to_string k, Bytes.to_string v)
 
-let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.) addresses ()
+let resend_iter t (send_fn, promise) =
+  let rec loop () =
+    send_fn ();
+    let timeout = Lwt_unix.timeout t.connection_retry >>= fun () -> Lwt.return_error () in
+    let promise = promise >>= fun _ -> Lwt.return_ok () in
+    Lwt.choose [timeout; promise] >>= function
+    | Error () -> loop ()
+    | Ok () -> Lwt.return_unit
+  in
+  loop ()
+
+let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.) ?(max_concurrency=128) addresses ()
     =
   let clientmgr = ClientConn.create ~id:cid () in
   let ps = List.map (ClientConn.add_connection clientmgr) addresses in
   (* get at least once connection established *)
   Lwt.choose ps
   >>= fun () ->
+  let send_stream, push = Lwt_stream.create () in
   let t =
     { mgr= clientmgr
     ; addrs= addresses
+    ; send_stream
+    ; push
     ; ongoing_requests= Hashtbl.create 1024
     ; connection_retry }
   in
   Lwt.async (fulfiller_loop t) ;
-  Lwt.async (resend_loop t) ;
+  Lwt.async (fun () -> Lwt_stream.iter_n ~max_concurrency (resend_iter t) send_stream) ;
   Lwt.return t

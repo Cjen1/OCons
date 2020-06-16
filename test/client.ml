@@ -131,7 +131,7 @@ let () =
          , [ Alcotest_lwt.test_case "client write" `Quick (test_client_write m1)
            ; Alcotest_lwt.test_case "client read" `Quick (test_client_read m1)
            ; Alcotest_lwt.test_case "client success" `Quick (test_client_success m1)
-           ; Alcotest_lwt.test_case "client resd_success" `Quick (test_client_read_success m1)
+           ; Alcotest_lwt.test_case "client read_success" `Quick (test_client_read_success m1)
            ] ) ]
      >>= fun () ->
      ConnManager.close m1

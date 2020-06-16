@@ -1,6 +1,17 @@
 open Base
 open Lwt.Infix
 
+module DEBUG = struct
+  let ( >>= ) p f =
+    let handler e =
+      Fmt.failwith "Got exn while resolving promise: %a" Fmt.exn e
+    in
+    Lwt.try_bind (fun () -> p) f handler
+end
+
+(* Returns f wrapped if either an exception occurrs in the evaluation of f() or in the promise *)
+let catch f = try Lwt_result.catch (f ()) with exn -> Lwt.return_error exn
+
 module Lookup = struct
   open Base
 
@@ -76,7 +87,7 @@ end
 module Persistant (P : Persistable) : sig
   type t =
     { t: P.t
-    ; mutable unsyncd: P.op list
+    ; mutable write_promise: unit Lwt.t
     ; fd: Lwt_unix.file_descr
     ; channel: Lwt_io.output_channel }
 
@@ -92,40 +103,31 @@ end = struct
 
   type t =
     { t: P.t
-    ; mutable unsyncd: P.op list
+    ; mutable write_promise: unit Lwt.t
     ; fd: Lwt_unix.file_descr
     ; channel: Lwt_io.output_channel }
 
+  let write t v =
+    let p_len, p_blit = P.encode_blit v in
+    let buf = Bytes.create (p_len + 4) in
+    p_blit buf ~offset:4 ;
+    EndianBytes.LittleEndian.set_int32 buf 0 (Int32.of_int_exn p_len) ;
+    t.write_promise <-
+      ( t.write_promise
+      >>= fun () -> Lwt_io.write_from_exactly t.channel buf 0 (Bytes.length buf)
+      )
+
   let sync t =
-    match t.unsyncd with
-    | [] ->
-        Lwt.return t
-    | _ ->
-        Logs.debug (fun m ->
-            m "There are %d ops to sync" (List.length t.unsyncd)) ;
-        let vs = t.unsyncd |> List.rev in
-        t.unsyncd <- [] ;
-        let writev vs =
-          Lwt_list.iter_s
-            (fun v ->
-              Logs.debug (fun m -> m "Syncing op") ;
-              let p_len, p_blit = P.encode_blit v in
-              let buf = Bytes.create (p_len + 4) in
-              p_blit buf ~offset:4 ;
-              EndianBytes.LittleEndian.set_int32 buf 0 (Int32.of_int_exn p_len) ;
-              Lwt_io.write_from_exactly t.channel buf 0 (Bytes.length buf))
-            vs
-        in
-        writev vs
-        >>= fun () ->
-        Logs.debug (fun m -> m "Ops written to channel") ;
-        Lwt_io.flush t.channel
-        >>= fun () ->
-        Logs.debug (fun m -> m "Channel flushed") ;
-        Lwt_unix.fsync t.fd
-        >>= fun () ->
-        Logs.debug (fun m -> m "Ops fsync'd") ;
-        Lwt.return {t with unsyncd= []}
+    let write_promise = t.write_promise in
+    write_promise
+    >>= fun () ->
+    (* All pending writes now complete *)
+    Lwt_io.flush t.channel
+    >>= fun () ->
+    Lwt_unix.fsync t.fd
+    >>= fun () ->
+    Logs.debug (fun m -> m "Finished syncing") ;
+    Lwt.return t
 
   let read_value channel =
     let rd_buf = Bytes.create 4 in
@@ -160,9 +162,11 @@ end = struct
     Lwt_unix.openfile file Lwt_unix.[O_WRONLY; O_APPEND] 0o640
     >>= fun fd ->
     let channel = Lwt_io.of_fd ~mode:Lwt_io.output fd in
-    Lwt.return {t; unsyncd= []; fd; channel}
+    Lwt.return {t; write_promise= Lwt.return_unit; fd; channel}
 
-  let change t op = {t with t= P.apply t.t op; unsyncd= op :: t.unsyncd}
+  let change t op =
+    write t op ;
+    {t with t= P.apply t.t op}
 end
 
 module Quorum = struct

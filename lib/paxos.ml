@@ -4,6 +4,8 @@ open Messaging
 open Utils
 open Lwt.Infix
 
+let ( ><= ) = Result.( >>= )
+
 let paxos = Logs.Src.create "Paxos" ~doc:"Paxos module"
 
 module L = (val Logs.src_log paxos : Logs.LOG)
@@ -17,7 +19,9 @@ module PaxosTypes = struct
     { quorum_gen: election_callback -> req_vote_quorum
     ; majority: int
     ; node_list: node_id list
+    ; other_node_list: node_id list
     ; num_nodes: int
+    ; max_concurrent: int
     ; cmgr: Messaging.ConnManager.t
     ; election_timeout: float
     ; idle_timeout: float
@@ -36,7 +40,9 @@ module PaxosTypes = struct
 
     val get_exn : t -> log_index -> log_entry
 
-    val get_term : t -> log_index -> term
+    val get_term : t -> log_index -> (term, exn) Result.t
+
+    val get_term_exn : t -> log_index -> term
 
     val set : t -> index:log_index -> value:log_entry -> t
 
@@ -105,10 +111,12 @@ module PaxosTypes = struct
     let get_term t index =
       match index with
       | 0 ->
-          0
+          Ok 0
       | _ ->
-          let entry = get_exn t index in
-          entry.term
+          get t index ><= fun entry -> Ok entry.term
+
+    let get_term_exn t index =
+      match get_term t index with Ok v -> v | Error exn -> raise exn
 
     let set t ~index ~value =
       Logs.debug (fun m -> m "Setting %d to %s" index (string_of_entry value)) ;
@@ -211,7 +219,8 @@ module PaxosTypes = struct
         ; mutable heartbeat_last_sent: (node_id, time) Lookup.t
         ; term: term }
 
-  type t = { mutable node_state: node_state
+  type t =
+    { mutable node_state: node_state
     ; mutable currentTerm: Term.t
     ; mutable log: log
     ; mutable state_machine: StateMachine.t
@@ -251,40 +260,55 @@ module PaxosTypes = struct
     L.debug (fun m -> m "Updating lastApplied to %d" v) ;
     t.lastApplied <- v
 
-  let update_next_index t node data =
-    L.debug (fun m -> m "Updating NextIndex for %d to %d" node data) ;
-    ( match t.node_state with
+  let update_next_index t node ni =
+    L.debug (fun m -> m "Updating NextIndex for %d to %d" node ni) ;
+    match t.node_state with
     | Leader s ->
-        s.nextIndex <- Lookup.set s.nextIndex ~key:node ~data
+        s.nextIndex <- Lookup.set s.nextIndex ~key:node ~data:ni
+    (* This will cause many updates to be sent out, otherwise is capped
+       if Log.get_max_index t.log >= ni then
+         Lwt_condition.broadcast t.log_cond ()
+    *)
     | _ ->
-        () ) ;
-    Lwt.return_unit
+        ()
 
   let update_match_index t node data =
     L.debug (fun m -> m "Updating MatchIndex for %d to %d" node data) ;
-    ( match t.node_state with
+    match t.node_state with
     | Leader s ->
         s.matchIndex <- Lookup.set s.matchIndex ~key:node ~data ;
         Lwt_condition.broadcast s.matchIndex_cond ()
     | _ ->
-        () ) ;
-    Lwt.return_unit
+        ()
 
   let send_append_entries t ~leader_term ~host =
     (* Sync log to disk before sending anything *)
-    Log.sync t.log
-    >>= fun log ->
-    t.log <- log ;
     match t.node_state with
     | Leader {nextIndex; term; _} when term = leader_term ->
         let entries_start_index = Lookup.get_exn nextIndex host in
-        let entries = Log.entries_after_inc t.log ~index:entries_start_index in
+        let entries =
+          Log.entries_after_inc t.log ~index:entries_start_index
+          (*|> fun l -> List.take l t.config.max_concurrent*)
+        in
         let prevLogIndex = entries_start_index - 1 in
-        let prevLogTerm = Log.get_term t.log prevLogIndex in
+        let prevLogTerm = Log.get_term_exn t.log prevLogIndex in
         let leaderCommit = t.commitIndex in
         L.debug (fun m ->
             m "append_entries: sending request to %d: (%d %d %d %d)" host term
               prevLogIndex prevLogTerm leaderCommit) ;
+        (*
+        let last_index = 
+          match List.last entries with
+          | Some last ->
+            last.index
+          | None -> 
+            prevLogIndex
+        in 
+        update_next_index t host (last_index + 1);
+           *)
+        Log.sync t.log
+        >>= fun log ->
+        t.log <- log ;
         Send.appendEntries t.config.cmgr host ~term ~prevLogIndex ~prevLogTerm
           ~entries ~leaderCommit
     | _ ->
@@ -301,14 +325,14 @@ module rec Transition : sig
   val leader : t -> term -> log_entry list list -> unit Lwt.t
 end = struct
   let follower t =
-    L.debug (fun m -> m "Becomming a follower") ;
+    L.info (fun m -> m "Becomming a follower") ;
     t.node_state <- Follower {last_recv_from_leader= time_now ()} ;
     Lwt.async (Condition_checks.election_timeout_expired t)
 
   let leader t term entries =
     match t.node_state with
     | Candidate {term= cterm; quorum= _} when Int.(cterm = term) ->
-        L.debug (fun m -> m "Elected leader of term %d" t.currentTerm.t) ;
+        L.info (fun m -> m "Elected leader of term %d" t.currentTerm.t) ;
         (*L.debug (fun m -> m "Entries: %s" (string_of_entries_list entries)) ;*)
         let merge xs ys =
           let rec loop = function
@@ -340,7 +364,7 @@ end = struct
         L.debug (fun m -> m "Adding ops to log") ;
         update_log t log ;
         let nextIndex, matchIndex, heartbeat_last_sent =
-          List.fold t.config.node_list
+          List.fold t.config.other_node_list
             ~init:
               ( Lookup.create (module Int)
               , Lookup.create (module Int)
@@ -370,7 +394,6 @@ end = struct
         Lwt.return_unit
 
   let rec candidate t =
-    L.debug (fun m -> m "Trying to become leader") ;
     let updated_term : term =
       let id_in_current_epoch =
         Int.(
@@ -378,11 +401,11 @@ end = struct
           - (t.currentTerm.t % t.config.num_nodes)
           + t.config.node_id)
       in
-      if id_in_current_epoch < t.currentTerm.t then
+      if id_in_current_epoch <= t.currentTerm.t then
         id_in_current_epoch + t.config.num_nodes
       else id_in_current_epoch
     in
-    L.debug (fun m -> m "New term = %d" updated_term) ;
+    L.info (fun m -> m "Becomming candidate for term %d" updated_term) ;
     update_current_term t updated_term
     >>= fun () ->
     let term = t.currentTerm.t in
@@ -395,7 +418,7 @@ end = struct
     quorum.add (t.config.node_id, []) ;
     t.node_state <- Candidate {term; quorum} ;
     let commitIndex = t.commitIndex in
-    List.iter t.config.node_list ~f:(fun url ->
+    List.iter t.config.other_node_list ~f:(fun url ->
         Lwt.async (fun () ->
             Messaging.Send.requestVote t.config.cmgr url ~term:updated_term
               ~leaderCommit:commitIndex)) ;
@@ -404,7 +427,7 @@ end = struct
       >>= fun () ->
       match t.node_state with
       | Candidate {term= term'; _} when term' = term ->
-          L.debug (fun m -> m "Not elected within timeout, retrying") ;
+          L.err (fun m -> m "Not elected within timeout, retrying") ;
           candidate t
       | _ ->
           Lwt.return_unit
@@ -474,7 +497,7 @@ end = struct
             if max_log_index >= next_index then
               Lwt.async (fun () -> send_append_entries t ~leader_term ~host)
           in
-          List.iter t.config.node_list ~f:send_fn ;
+          List.iter t.config.other_node_list ~f:send_fn ;
           (loop [@tailcall]) ()
       | _ ->
           Lwt.return_unit
@@ -482,10 +505,9 @@ end = struct
     loop ()
 
   let rec leader_heartbeat t () =
-    L.debug (fun m -> m "leader_heartbeat_check: call entry") ;
     match t.node_state with
     | Leader {heartbeat_last_sent; _} ->
-        List.iter t.config.node_list ~f:(fun host ->
+        List.iter t.config.other_node_list ~f:(fun host ->
             match Lookup.get_exn heartbeat_last_sent host with
             | lastSent when Float.(lastSent < t.config.idle_timeout) ->
                 L.debug (fun m -> m "managed lookup, timed out") ;
@@ -512,16 +534,11 @@ end = struct
       L.debug (fun m -> m "election_timeout_expired_check: ended sleep") ;
       match t.node_state with
       | Follower s ->
-          L.debug (fun m ->
-              m
-                "election_timeout_expired_check: time since last recv from \
-                 leader: %f"
-                (time_now () -. s.last_recv_from_leader)) ;
           if
             Float.(
               time_now () -. s.last_recv_from_leader > t.config.election_timeout)
           then (
-            L.debug (fun m ->
+            L.err (fun m ->
                 m "election_timeout_expired_check: becomming candidate") ;
             (* Election timeout expired => leader most likely dead *)
             Transition.candidate t )
@@ -592,6 +609,7 @@ module CoreRpcServer = struct
 
   let handle_request_vote t src msg =
     let term = RequestVote.term_get_int_exn msg in
+    L.info (fun m -> m "RequestVote from %d for %d" src term) ;
     if term < t.currentTerm.t then (
       L.debug (fun m ->
           m "request_vote: vote not granted to %d for term %d" src term) ;
@@ -634,11 +652,11 @@ module CoreRpcServer = struct
     let prevLogIndex = AppendEntries.prev_log_index_get_int_exn msg in
     let prevLogTerm = AppendEntries.prev_log_term_get_int_exn msg in
     let leaderCommit = AppendEntries.leader_commit_get_int_exn msg in
-    L.debug (fun m ->
+    L.info (fun m ->
         m "append_entries: received request from %d: (%d %d %d %d)" src term
           prevLogIndex prevLogTerm leaderCommit) ;
     match (term < t.currentTerm.t, Log.get_term t.log prevLogIndex) with
-    | false, logterm when logterm = prevLogTerm ->
+    | false, Ok logterm when logterm = prevLogTerm ->
         preempted_check t term
         >>= fun () ->
         L.debug (fun m -> m "append_entries: received valid") ;
@@ -662,7 +680,7 @@ module CoreRpcServer = struct
           update_commit_index t v' ) ;
         Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t
           ~success:true ~matchIndex:last_index
-    | false, term ->
+    | false, Ok term ->
         (* Log inconsistency *)
         L.debug (fun m ->
             m "append_entries: log inconsistency (expected term, got): %d %d"
@@ -670,6 +688,13 @@ module CoreRpcServer = struct
         Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t
           ~success:false ~matchIndex:prevLogIndex
     | true, _ ->
+        L.debug (fun m ->
+            m "append_entries: responding negative due to preemption in entry") ;
+        preempted_check t term
+        >>= fun () ->
+        Send.appendEntriesResp t.config.cmgr src ~term:t.currentTerm.t
+          ~success:false ~matchIndex:prevLogIndex
+    | false, Error _ ->
         L.debug (fun m ->
             m "append_entries: responding negative due to preemption") ;
         preempted_check t term
@@ -682,14 +707,18 @@ module CoreRpcServer = struct
     match t.node_state with
     | Leader s when ae_term = s.term && AppendEntriesResp.success_get msg ->
         let matchIndex = AppendEntriesResp.match_index_get_int_exn msg in
-        let mip = update_match_index t src matchIndex in
-        let nip = update_next_index t src (matchIndex + 1) in
-        Lwt.join [mip; nip]
+        let nextIndex = matchIndex + 1 in
+        update_match_index t src matchIndex ;
+        update_next_index t src nextIndex ;
+        (*if Log.get_max_index t.log >= nextIndex
+          then send_append_entries t ~leader_term:s.term ~host:src
+          else*)
+        Lwt.return_unit
     | Leader s when ae_term = s.term && not (AppendEntriesResp.success_get msg)
       ->
         let ni = Lookup.get_exn s.nextIndex src in
-        update_next_index t src (ni - 1)
-        >>= fun () -> send_append_entries t ~leader_term:s.term ~host:src
+        update_next_index t src (ni - 1) ;
+        send_append_entries t ~leader_term:s.term ~host:src
     | _ ->
         preempted_check t ae_term
 
@@ -697,7 +726,7 @@ module CoreRpcServer = struct
   let handle_client_request t host msg =
     L.debug (fun m -> m "got client request from %d" host) ;
     let command = Messaging.command_from_capnp msg in
-    let debug = true in
+    let debug = false in
     match debug with
     | true ->
         Send.clientResponse ~sym:`AtLeastOnce t.config.cmgr host ~id:command.id
@@ -705,19 +734,28 @@ module CoreRpcServer = struct
         >>= fun () ->
         L.debug (fun m -> m "replied to %d" host) ;
         Lwt.return_unit
-    | false -> (
-      match (t.node_state, Hash_set.mem t.client_requests_seen command.id) with
-      | Leader s, false ->
-          t.client_result_forwarders <-
-            Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
-          Hash_set.add t.client_requests_seen command.id ;
-          let log' = Log.append t.log command s.term in
-          update_log t log' ;
-          L.debug (fun m -> m "Added request to log, finishing") ;
-          Lwt.return_unit
-      | _ ->
-          L.debug (fun m -> m "Not leader, or already submitted so ignoring") ;
-          Lwt.return_unit )
+    | false ->
+        let () =
+          match
+            (t.node_state, Hash_set.mem t.client_requests_seen command.id)
+          with
+          | Leader s, false
+            when Log.get_max_index t.log - t.commitIndex
+                 < t.config.max_concurrent ->
+              t.client_result_forwarders <-
+                Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
+              Hash_set.add t.client_requests_seen command.id ;
+              let log' = Log.append t.log command s.term in
+              update_log t log' ;
+              L.debug (fun m -> m "Added request to log, finishing")
+          | Leader _, false ->
+              L.debug (fun m -> m "Log full currently")
+          | _, false ->
+              L.debug (fun m -> m "Not leader")
+          | _, true ->
+              L.debug (fun m -> m "Entry already in log")
+        in
+        Lwt.return_unit
 
   let handle_client_response _t _host _msg =
     L.err (fun m -> m "Got client_response...") ;
@@ -751,7 +789,7 @@ end
 let create ~listen_address ~client_listen_address ~node_list
     ?(election_timeout = 0.5) ?(idle_timeout = 0.1)
     ?(retry_connect_timeout = 0.1) ?(log_path = "./log") ?(term_path = "./term")
-    node_id =
+    ?(max_concurrent = 512) node_id =
   let cmgr =
     ConnManager.create ~retry_connect_timeout listen_address
       client_listen_address node_list node_id
@@ -764,7 +802,11 @@ let create ~listen_address ~client_listen_address ~node_list
     { quorum_gen
     ; majority
     ; node_list= List.map node_list ~f:(fun (x, _) -> x)
+    ; other_node_list=
+        List.filter_map node_list ~f:(fun (x, _) ->
+            if x <> node_id then Some x else None)
     ; num_nodes= List.length node_list
+    ; max_concurrent
     ; cmgr
     ; election_timeout
     ; idle_timeout

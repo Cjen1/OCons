@@ -1,5 +1,6 @@
-open Lwt.Infix
 
+
+open Lwt.Infix
 let ( >>>= ) = Lwt_result.bind
 
 let src = Logs.Src.create "Msg_layer" ~doc:"messaging layer"
@@ -19,20 +20,21 @@ module Outgoing_socket = struct
 
   let send_thread t =
     let rec send buf offset len () =
-      Lwt_result.catch (Lwt_bytes.write t.fd buf offset len)
+      Utils.catch (fun () -> Lwt_bytes.write t.fd buf offset len)
       >>= function
       | Ok len' ->
           Log.debug (fun m -> m "Wrote %d to fd" len') ;
           if len' < len then send buf (offset + len') (len - len') ()
           else Lwt.return_unit
       | Error e ->
-          Log.debug (fun m -> m "Failed to send %a" Fmt.exn e) ;
+          Log.err (fun m -> m "Failed to send %a" Fmt.exn e) ;
           Lwt.return_unit
     in
     let rec loop () =
       let rec get_msg_loop () =
         match Queue.take_opt t.xmit_queue with
         | _ when not (Lwt_switch.is_on t.switch) ->
+            Log.warn (fun m -> m "Switch closed exiting send loop");
             Lwt.return_error `Closed
         | Some v ->
             Lwt.return_ok v
@@ -62,6 +64,7 @@ module Outgoing_socket = struct
         send_thread t
         >>= function
         | Ok () ->
+            Log.err (fun m -> m "thread failed") ;
             failwith "Thread closed unexpectedly"
         | Error _ ->
             Lwt.return_unit) ;
@@ -69,13 +72,16 @@ module Outgoing_socket = struct
 
   let send t msg =
     if Lwt_switch.is_on t.switch then (
+      Log.debug (fun m -> m "Trying to send") ;
       let blit dst src ~offset ~len =
         Lwt_bytes.blit_from_bytes src 0 dst offset len
       in
-      let size, cont = Capnp.Codecs.serialize_generator msg blit in
-      Queue.add (size, cont) t.xmit_queue ;
-      Lwt_condition.broadcast t.xmit_cond ();
-      Ok () )
+      try
+        let size, cont = Capnp.Codecs.serialize_generator msg blit in
+        Queue.add (size, cont) t.xmit_queue ;
+        Lwt_condition.broadcast t.xmit_cond () ;
+        Ok ()
+      with e -> Fmt.failwith "Failed while sending with: %a" Fmt.exn e )
     else Error `Closed
 end
 
@@ -111,13 +117,17 @@ module Incomming_socket = struct
     in
     let recv_buffer = Bytes.create buf_size in
     let rec loop () =
-      Lwt_unix.read t.fd recv_buffer 0 buf_size
-      >>= fun len ->
-      match handler recv_buffer len with
-      | Ok () ->
-          loop ()
-      | Error `EOF ->
-          Lwt.return_unit
+      Utils.catch (fun () -> Lwt_unix.read t.fd recv_buffer 0 buf_size)
+      >>= function
+      | Error e ->
+          Fmt.failwith "Failed to recv with %a" Fmt.exn e
+      | Ok len -> (
+          Log.debug (fun m -> m "Recieved data from socket") ;
+          match handler recv_buffer len with
+          | Ok () ->
+              loop ()
+          | Error `EOF ->
+              Lwt.return_unit )
     in
     loop ()
 
