@@ -177,7 +177,7 @@ module Quorum = struct
     let rec add ((k, _) as x) =
       if not (List.Assoc.mem !xs ~equal k) then (
         xs := x :: !xs ;
-        if List.length !xs > threshold then (
+        if List.length !xs >= threshold then (
           t.fulfilled <- true ;
           f !xs ) )
     and t = {add; fulfilled= false} in

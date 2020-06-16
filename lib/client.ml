@@ -94,7 +94,7 @@ let op_write t k v =
 let resend_iter t (send_fn, promise) =
   let rec loop () =
     send_fn ();
-    let timeout = Lwt_unix.timeout t.connection_retry >>= fun () -> Lwt.return_error () in
+    let timeout = Lwt_unix.sleep t.connection_retry >>= fun () -> Lwt.return_error () in
     let promise = promise >>= fun _ -> Lwt.return_ok () in
     Lwt.choose [timeout; promise] >>= function
     | Error () -> loop ()
@@ -102,7 +102,7 @@ let resend_iter t (send_fn, promise) =
   in
   loop ()
 
-let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.) ?(max_concurrency=128) addresses ()
+let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.) ?(max_concurrency=1024) addresses ()
     =
   let clientmgr = ClientConn.create ~id:cid () in
   let ps = List.map (ClientConn.add_connection clientmgr) addresses in

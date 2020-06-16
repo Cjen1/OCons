@@ -21,7 +21,6 @@ module PaxosTypes = struct
     ; node_list: node_id list
     ; other_node_list: node_id list
     ; num_nodes: int
-    ; max_concurrent: int
     ; cmgr: Messaging.ConnManager.t
     ; election_timeout: float
     ; idle_timeout: float
@@ -277,6 +276,7 @@ module PaxosTypes = struct
     match t.node_state with
     | Leader s ->
         s.matchIndex <- Lookup.set s.matchIndex ~key:node ~data ;
+        update_next_index t node (data + 1);
         Lwt_condition.broadcast s.matchIndex_cond ()
     | _ ->
         ()
@@ -288,7 +288,6 @@ module PaxosTypes = struct
         let entries_start_index = Lookup.get_exn nextIndex host in
         let entries =
           Log.entries_after_inc t.log ~index:entries_start_index
-          (*|> fun l -> List.take l t.config.max_concurrent*)
         in
         let prevLogIndex = entries_start_index - 1 in
         let prevLogTerm = Log.get_term_exn t.log prevLogIndex in
@@ -296,16 +295,6 @@ module PaxosTypes = struct
         L.debug (fun m ->
             m "append_entries: sending request to %d: (%d %d %d %d)" host term
               prevLogIndex prevLogTerm leaderCommit) ;
-        (*
-        let last_index = 
-          match List.last entries with
-          | Some last ->
-            last.index
-          | None -> 
-            prevLogIndex
-        in 
-        update_next_index t host (last_index + 1);
-           *)
         Log.sync t.log
         >>= fun log ->
         t.log <- log ;
@@ -364,7 +353,7 @@ end = struct
         L.debug (fun m -> m "Adding ops to log") ;
         update_log t log ;
         let nextIndex, matchIndex, heartbeat_last_sent =
-          List.fold t.config.other_node_list
+          List.fold t.config.node_list
             ~init:
               ( Lookup.create (module Int)
               , Lookup.create (module Int)
@@ -415,7 +404,6 @@ end = struct
       Lwt.async (fun () -> leader t updated_term res)
     in
     let quorum = t.config.quorum_gen election_callback in
-    quorum.add (t.config.node_id, []) ;
     t.node_state <- Candidate {term; quorum} ;
     let commitIndex = t.commitIndex in
     List.iter t.config.other_node_list ~f:(fun url ->
@@ -433,6 +421,7 @@ end = struct
           Lwt.return_unit
     in
     Lwt.async redo_election_if_unelected ;
+    quorum.add (t.config.node_id, []) ;
     Lwt.return_unit
 end
 
@@ -491,6 +480,7 @@ end = struct
           Lwt_condition.wait t.log_cond
           >>= fun () ->
           let max_log_index = Log.get_max_index t.log in
+          update_match_index t t.config.node_id max_log_index;
           let send_fn host =
             let id = host in
             let next_index = Lookup.get_exn nextIndex id in
@@ -707,9 +697,7 @@ module CoreRpcServer = struct
     match t.node_state with
     | Leader s when ae_term = s.term && AppendEntriesResp.success_get msg ->
         let matchIndex = AppendEntriesResp.match_index_get_int_exn msg in
-        let nextIndex = matchIndex + 1 in
         update_match_index t src matchIndex ;
-        update_next_index t src nextIndex ;
         (*if Log.get_max_index t.log >= nextIndex
           then send_append_entries t ~leader_term:s.term ~host:src
           else*)
@@ -739,17 +727,13 @@ module CoreRpcServer = struct
           match
             (t.node_state, Hash_set.mem t.client_requests_seen command.id)
           with
-          | Leader s, false
-            when Log.get_max_index t.log - t.commitIndex
-                 < t.config.max_concurrent ->
+          | Leader s, false ->
               t.client_result_forwarders <-
                 Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
               Hash_set.add t.client_requests_seen command.id ;
               let log' = Log.append t.log command s.term in
               update_log t log' ;
               L.debug (fun m -> m "Added request to log, finishing")
-          | Leader _, false ->
-              L.debug (fun m -> m "Log full currently")
           | _, false ->
               L.debug (fun m -> m "Not leader")
           | _, true ->
@@ -789,12 +773,12 @@ end
 let create ~listen_address ~client_listen_address ~node_list
     ?(election_timeout = 0.5) ?(idle_timeout = 0.1)
     ?(retry_connect_timeout = 0.1) ?(log_path = "./log") ?(term_path = "./term")
-    ?(max_concurrent = 512) node_id =
+    node_id =
   let cmgr =
     ConnManager.create ~retry_connect_timeout listen_address
       client_listen_address node_list node_id
   in
-  let majority = List.length node_list / 2 in
+  let majority = List.length node_list / 2 + 1 in
   let quorum_gen callback =
     Quorum.make_quorum ~threshold:majority ~equal:Int.equal ~f:callback
   in
@@ -806,7 +790,6 @@ let create ~listen_address ~client_listen_address ~node_list
         List.filter_map node_list ~f:(fun (x, _) ->
             if x <> node_id then Some x else None)
     ; num_nodes= List.length node_list
-    ; max_concurrent
     ; cmgr
     ; election_timeout
     ; idle_timeout
