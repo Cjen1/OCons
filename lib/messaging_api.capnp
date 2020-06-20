@@ -60,10 +60,6 @@ struct ClientResponse {
   result @1 : CommandResult;
 }
 
-struct Register {
-  id @0 : Int64;
-}
-
 struct ServerMessage {
   union {
     requestVote @0: RequestVote;
@@ -72,6 +68,5 @@ struct ServerMessage {
     appendEntriesResp @3: AppendEntriesResp;
     clientRequest @4: Command;
     clientResponse @5: ClientResponse;
-    register @6: Register;
   }
 }

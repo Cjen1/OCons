@@ -1,9 +1,10 @@
 open Ocamlpaxos
 open Core
+open Unix_capnp_messaging
 
 let network_address =
   let parse s =
-    match Messaging.ConnUtils.addr_of_string s with
+    match Conn_manager.addr_of_string s with
     | Ok addr ->
         addr
     | Error (`Msg e) ->
@@ -18,9 +19,9 @@ let node_list =
       |> List.map ~f:(function
            | id :: xs -> (
                let rest = String.concat ~sep:":" xs in
-               match Messaging.ConnUtils.addr_of_string rest with
+               match Conn_manager.addr_of_string rest with
                | Ok addr ->
-                   (Int.of_string id, addr)
+                   (Int64.of_string id, addr)
                | Error (`Msg e) ->
                    Fmt.failwith "Expected id:(ip:port|path) not %s" e )
            | _ ->
@@ -30,16 +31,16 @@ let command =
   Core.Command.basic ~summary:"Ocaml_paxos"
     Core.Command.Let_syntax.(
       let%map_open listen_address = anon ("listen_address" %: network_address)
-      and client_listen_address = anon ("client_address" %: network_address)
       and data_path = anon ("data_path" %: string)
       and node_id = anon ("node_id" %: int)
       and node_list = anon ("node_list" %: node_list)
       and election_timeout = anon ("election_timeout" %: float)
       and idle_timeout = anon ("idle_timeout" %: float) in
       fun () ->
+        let node_id = Int64.of_int node_id in
         let log_path = data_path ^ ".log" in
         let term_path = data_path ^ ".term" in
-        Paxos.create ~listen_address ~client_listen_address ~node_list ~election_timeout ~idle_timeout ~log_path ~term_path node_id
+        Paxos.create ~listen_address ~node_list ~election_timeout ~idle_timeout ~log_path ~term_path node_id
         |> Lwt_main.run)
 
 let reporter =
@@ -61,5 +62,5 @@ let () =
   Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.Src.list () |> List.iter ~f:(fun e -> Format.printf "%a\n" Logs.Src.pp e) ;
-  Logs.(set_level (Some Debug)) ;
+  Logs.(set_level (Some Info)) ;
   Logs.set_reporter reporter ; Core.Command.run command

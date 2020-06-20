@@ -3,19 +3,22 @@ open Core
 open Lwt.Infix
 open Ocamlpaxos
 open Client
+open Unix_capnp_messaging
 
-let node_list = 
-  let parse_individual s =
-    match Messaging.ConnUtils.addr_of_string s with
-    | Ok addr -> addr
-    | Error (`Msg e) -> 
-        Fmt.failwith "Expected ip:port | path rather than %s " e
-  in 
-  let parse s = 
-    String.split ~on:',' s 
-    |> List.map ~f:parse_individual
-  in 
-  Command.Arg_type.create parse
+let node_list =
+  Command.Arg_type.create (fun ls ->
+      String.split ls ~on:','
+      |> List.map ~f:(String.split ~on:':')
+      |> List.map ~f:(function
+           | id :: xs -> (
+               let rest = String.concat ~sep:":" xs in
+               match Conn_manager.addr_of_string rest with
+               | Ok addr ->
+                   (Int64.of_string id, addr)
+               | Error (`Msg e) ->
+                   Fmt.failwith "Expected id:(ip:port|path) not %s" e )
+           | _ ->
+               assert false))
 
 let bytes = Command.Arg_type.create @@ Bytes.of_string
 
@@ -30,7 +33,7 @@ let print_res = function
 let put =
   Command.basic ~summary:"Put operation"
     Command.Let_syntax.(
-      let%map_open addresses = anon ("capacity_files" %: node_list)
+      let%map_open addresses = anon ("addresses" %: node_list)
       and key = anon ("key" %: bytes)
       and value = anon ("value" %: bytes) in
       fun () ->
@@ -45,7 +48,7 @@ let put =
 let get =
   Command.basic ~summary:"Get operation"
     Command.Let_syntax.(
-      let%map_open addresses = anon ("capacity_files" %: node_list)
+      let%map_open addresses = anon ("addresses" %: node_list)
       and key = anon ("key" %: bytes) in
       fun () ->
         Random.self_init ();

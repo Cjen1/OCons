@@ -6,17 +6,15 @@ type time = float
 
 let time_now : unit -> time = fun () -> Unix.gettimeofday ()
 
-type unique_id = int [@@deriving protobuf]
-
 let create_id () =
   Random.self_init () ;
-  Random.int32 Int32.max_value |> Int32.to_int_exn
+  Random.int64 Int64.max_value
 
-type node_id = unique_id [@@deriving protobuf]
+type node_id = int64 [@@deriving protobuf]
 
 type node_addr = string
 
-type client_id = int
+type client_id = node_id
 
 type command_id = int [@@deriving protobuf]
 

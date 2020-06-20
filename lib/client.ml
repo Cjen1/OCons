@@ -1,6 +1,7 @@
 open Types
 open Messaging
 open Lwt.Infix
+open Unix_capnp_messaging
 
 let ( >>>= ) = Lwt_result.bind
 
@@ -11,8 +12,8 @@ module Log = (val Logs.src_log client : Logs.LOG)
 type send_fn = unit -> unit
 
 type t =
-  { mgr: ClientConn.t
-  ; addrs: address list
+  { mgr: Conn_manager.t
+  ; addrs: int64 list
   ; send_stream: (send_fn * StateMachine.op_result Lwt.t) Lwt_stream.t
   ; push: (send_fn * StateMachine.op_result Lwt.t) option -> unit
   ; ongoing_requests: (int, StateMachine.op_result Lwt.u) Hashtbl.t
@@ -26,9 +27,16 @@ let send t op =
   let send () =
     List.iter
       (fun addr ->
-        Lwt.async (fun () ->
-            Log.debug (fun m -> m "Sending to %a" ConnUtils.pp_addr addr) ;
-            ClientConn.send t.mgr addr msg))
+        let async () =
+          Log.debug (fun m -> m "Sending to %a" Fmt.int64 addr) ;
+          Conn_manager.send t.mgr addr msg
+          >|= function
+          | Ok () ->
+              ()
+          | Error exn ->
+              Log.err (fun m -> m "Failed to send %a" Fmt.exn exn)
+        in
+        Lwt.async async)
       t.addrs
   in
   Hashtbl.add t.ongoing_requests id fulfiller ;
@@ -42,10 +50,15 @@ let send t op =
   | StateMachine.Failure ->
       Lwt.return_error (`Msg "Application failed on cluster")
 
-let fulfiller_loop t () =
-  let resp msg =
+let fulfiller t _mgr src msg =
+  t
+  >>= fun t ->
+  let handle msg =
     let open API.Reader in
-    match API.Reader.ServerMessage.get msg with
+    match
+      msg |> Capnp.BytesMessage.Message.readonly |> ServerMessage.of_message
+      |> ServerMessage.get
+    with
     | ServerMessage.ClientResponse resp -> (
         let id = ClientResponse.id_get_int_exn resp in
         match Hashtbl.find_opt t.ongoing_requests id with
@@ -68,15 +81,8 @@ let fulfiller_loop t () =
     | _ ->
         ()
   in
-  let rec loop () =
-    ClientConn.recv t.mgr
-    >>= fun msg ->
-    Log.debug (fun m -> m "waiting to recieve") ;
-    resp msg ;
-    Log.debug (fun m -> m "received") ;
-    loop ()
-  in
-  loop ()
+  Log.debug (fun m -> m "Received response from %a" Fmt.int64 src) ;
+  handle msg |> Lwt.return_ok
 
 let send_wrapper t msg =
   Utils.catch (fun () -> send t msg)
@@ -93,31 +99,43 @@ let op_write t k v =
 
 let resend_iter t (send_fn, promise) =
   let rec loop () =
-    send_fn ();
-    let timeout = Lwt_unix.sleep t.connection_retry >>= fun () -> Lwt.return_error () in
+    send_fn () ;
+    let timeout =
+      Lwt_unix.sleep t.connection_retry >>= fun () -> Lwt.return_error ()
+    in
     let promise = promise >>= fun _ -> Lwt.return_ok () in
-    Lwt.choose [timeout; promise] >>= function
-    | Error () -> loop ()
-    | Ok () -> Lwt.return_unit
+    Lwt.choose [timeout; promise]
+    >>= function Error () -> loop () | Ok () -> Lwt.return_unit
   in
   loop ()
 
-let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.) ?(max_concurrency=1024) addresses ()
-    =
-  let clientmgr = ClientConn.create ~id:cid () in
-  let ps = List.map (ClientConn.add_connection clientmgr) addresses in
+let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.)
+    ?(max_concurrency = 1024) ?(client_port = 8080) addresses () =
+  let t_p, t_f = Lwt.task () in
+  let cmgr =
+    Conn_manager.create
+      ~listen_address:(TCP ("0.0.0.0", client_port))
+      ~node_id:cid (fulfiller t_p)
+  in
+  let ps =
+    List.map
+      (fun (id, addr) ->
+        Conn_manager.add_outgoing cmgr id addr (`Persistant addr))
+      addresses
+  in
   (* get at least once connection established *)
   Lwt.choose ps
   >>= fun () ->
   let send_stream, push = Lwt_stream.create () in
   let t =
-    { mgr= clientmgr
-    ; addrs= addresses
+    { mgr= cmgr
+    ; addrs= List.map fst addresses
     ; send_stream
     ; push
     ; ongoing_requests= Hashtbl.create 1024
     ; connection_retry }
   in
-  Lwt.async (fulfiller_loop t) ;
-  Lwt.async (fun () -> Lwt_stream.iter_n ~max_concurrency (resend_iter t) send_stream) ;
+  Lwt.wakeup t_f t;
+  Lwt.async (fun () ->
+      Lwt_stream.iter_n ~max_concurrency (resend_iter t) send_stream) ;
   Lwt.return t
