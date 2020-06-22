@@ -79,6 +79,8 @@ let cmd =
     [("put", put); ("get", get)]
 
 let () =
+  Stdlib.Random.self_init ();
+  Random.self_init ();
   Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.(set_level (Some Debug)) ;

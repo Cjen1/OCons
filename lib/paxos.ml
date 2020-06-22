@@ -277,7 +277,7 @@ module PaxosTypes = struct
     match t.node_state with
     | Leader s ->
         s.matchIndex <- Lookup.set s.matchIndex ~key:node ~data ;
-        update_next_index t node (data + 1);
+        update_next_index t node (data + 1) ;
         Lwt_condition.broadcast s.matchIndex_cond ()
     | _ ->
         ()
@@ -285,27 +285,29 @@ module PaxosTypes = struct
   let send_append_entries t ~leader_term ~host =
     (* Sync log to disk before sending anything *)
     match t.node_state with
-    | Leader {nextIndex; term; _} when term = leader_term ->
+    | Leader {nextIndex; term; _} when term = leader_term -> (
         let entries_start_index = Lookup.get_exn nextIndex host in
-        let entries =
-          Log.entries_after_inc t.log ~index:entries_start_index
-        in
+        let entries = Log.entries_after_inc t.log ~index:entries_start_index in
         let prevLogIndex = entries_start_index - 1 in
         let prevLogTerm = Log.get_term_exn t.log prevLogIndex in
         let leaderCommit = t.commitIndex in
         L.debug (fun m ->
-            m "append_entries: sending request to %a: (%d %d %d %d)" Fmt.int64 host term
-              prevLogIndex prevLogTerm leaderCommit) ;
+            m "append_entries: sending request to %a: (%d %d %d %d)" Fmt.int64
+              host term prevLogIndex prevLogTerm leaderCommit) ;
         Log.sync t.log
         >>= fun log ->
         t.log <- log ;
         Send.appendEntries t.config.cmgr host ~term ~prevLogIndex ~prevLogTerm
-          ~entries ~leaderCommit >|= ( function
-              | Ok () -> ()
-              | Error exn -> L.err (fun m -> m "Failed to send append_entries with %a" Fmt.exn exn)
-        )
+          ~entries ~leaderCommit
+        >|= function
+        | Ok () ->
+            ()
+        | Error exn ->
+            L.err (fun m ->
+                m "Failed to send append_entries with %a" Fmt.exn exn) )
     | _ ->
-      L.err (fun m -> m "Failed to send append entries because not the leader");
+        L.err (fun m ->
+            m "Failed to send append entries because not the leader") ;
         Lwt.return_unit
 end
 
@@ -414,7 +416,8 @@ end = struct
     List.iter t.config.other_node_list ~f:(fun url ->
         Lwt.async (fun () ->
             Messaging.Send.requestVote t.config.cmgr url ~term:updated_term
-              ~leaderCommit:commitIndex |> Lwt_result.get_exn)) ;
+              ~leaderCommit:commitIndex
+            |> Lwt_result.get_exn)) ;
     let redo_election_if_unelected () =
       Lwt_unix.sleep t.config.election_timeout
       >>= fun () ->
@@ -451,17 +454,21 @@ end = struct
       let result = StateMachine.update t.state_machine command in
       let result_handler () =
         match Lookup.get t.client_result_forwarders command.id with
-        | Ok src ->
+        | Ok src -> (
             t.client_result_forwarders <-
               Lookup.remove t.client_result_forwarders command.id ;
             L.debug (fun m ->
                 m "Got answer for %d at index %d sending to %a" command.id
                   entry.index Fmt.int64 src) ;
             Send.clientResponse ~sem:`AtLeastOnce t.config.cmgr src
-              ~id:command.id ~result >>= (function
-            | Ok () -> Lwt.return_unit
-            | Error exn -> L.err (fun m -> m "Failed to reply to client with %a" Fmt.exn exn); Lwt.return_unit
-          )
+              ~id:command.id ~result
+            >>= function
+            | Ok () ->
+                Lwt.return_unit
+            | Error exn ->
+                L.err (fun m ->
+                    m "Failed to reply to client with %a" Fmt.exn exn) ;
+                Lwt.return_unit )
         | Error _ ->
             L.debug (fun m ->
                 m "No forwarder for %d at index %d" command.id entry.index) ;
@@ -488,7 +495,7 @@ end = struct
           Lwt_condition.wait t.log_cond
           >>= fun () ->
           let max_log_index = Log.get_max_index t.log in
-          update_match_index t t.config.node_id max_log_index;
+          update_match_index t t.config.node_id max_log_index ;
           let send_fn host =
             let id = host in
             let next_index = Lookup.get_exn nextIndex id in
@@ -610,7 +617,8 @@ module CoreRpcServer = struct
     L.info (fun m -> m "RequestVote from %a for %d" Fmt.int64 src term) ;
     if term < t.currentTerm.t then (
       L.debug (fun m ->
-          m "request_vote: vote not granted to %a for term %d" Fmt.int64 src term) ;
+          m "request_vote: vote not granted to %a for term %d" Fmt.int64 src
+            term) ;
       sync_term_log t
       >>= fun () ->
       Send.requestVoteResp t.config.cmgr src ~term:t.currentTerm.t
@@ -651,8 +659,8 @@ module CoreRpcServer = struct
     let prevLogTerm = AppendEntries.prev_log_term_get_int_exn msg in
     let leaderCommit = AppendEntries.leader_commit_get_int_exn msg in
     L.info (fun m ->
-        m "append_entries: received request from %a: (%d %d %d %d)" Fmt.int64 src term
-          prevLogIndex prevLogTerm leaderCommit) ;
+        m "append_entries: received request from %a: (%d %d %d %d)" Fmt.int64
+          src term prevLogIndex prevLogTerm leaderCommit) ;
     match (term < t.currentTerm.t, Log.get_term t.log prevLogIndex) with
     | false, Ok logterm when logterm = prevLogTerm ->
         preempted_check t term
@@ -728,7 +736,7 @@ module CoreRpcServer = struct
         Send.clientResponse ~sem:`AtLeastOnce t.config.cmgr host ~id:command.id
           ~result:StateMachine.Failure
         >>>= fun () ->
-              L.debug (fun m -> m "replied to %a" Fmt.int64 host) |> Lwt.return_ok
+        L.debug (fun m -> m "replied to %a" Fmt.int64 host) |> Lwt.return_ok
     | false ->
         let () =
           match
@@ -744,7 +752,7 @@ module CoreRpcServer = struct
           | _, false ->
               L.debug (fun m -> m "Not leader")
           | _, true ->
-              L.debug (fun m -> m "Entry already in log")
+              L.debug (fun m -> m "Entry %a already in log" Fmt.int command.id)
         in
         Lwt.return_ok ()
 
@@ -753,7 +761,8 @@ module CoreRpcServer = struct
     Lwt.return_error (Invalid_argument "Should not have got a client_response")
 
   let handle_message t_p _cmgr src msg =
-    t_p >>= fun t ->
+    t_p
+    >>= fun t ->
     let open ServerMessage in
     match msg |> Capnp.BytesMessage.Message.readonly |> of_message |> get with
     | RequestVote msg ->
@@ -769,21 +778,34 @@ module CoreRpcServer = struct
     | ClientResponse _msg ->
         Lwt.return_error (Invalid_argument "ClientResponse message")
     | Undefined i ->
-        Lwt.return_error (Invalid_argument (Fmt.str "Undefined message of %d" i))
+        Lwt.return_error
+          (Invalid_argument (Fmt.str "Undefined message of %d" i))
 end
 
-let create ~listen_address ~node_list
-    ?(election_timeout = 0.5) ?(idle_timeout = 0.1)
-    ?(retry_connection_timeout = 0.1) ?(log_path = "./log") ?(term_path = "./term")
-    node_id =
-  let t_p, t_f = Lwt.task() in
-  let cmgr =
-    Conn_manager.create ~retry_connection_timeout ~listen_address
-      ~node_id CoreRpcServer.(handle_message t_p)
+let create ~listen_address ~node_list ?(election_timeout = 0.5)
+    ?(idle_timeout = 0.1) ?(retry_connection_timeout = 0.1)
+    ?(log_path = "./log") ?(term_path = "./term") node_id =
+  let other_node_list =
+    List.filter_map node_list ~f:(fun ((i, _) as x) ->
+        if Int64.(i <> node_id) then Some x else None)
   in
-  let ps = List.map node_list ~f:(fun (id, addr) -> Conn_manager.add_outgoing cmgr id addr (`Persistant addr)) in
-  Lwt.choose ps >>= fun () -> (* Wait for at least one connection to be made *)
-  let majority = List.length node_list / 2 + 1 in
+  let t_p, t_f = Lwt.task () in
+  let cmgr =
+    Conn_manager.create ~retry_connection_timeout ~listen_address ~node_id
+      CoreRpcServer.(handle_message t_p)
+  in
+  let ps =
+    match other_node_list with
+    | [] ->
+      [Lwt.return_unit]
+    | _ ->
+        List.map other_node_list ~f:(fun (id, addr) ->
+            Conn_manager.add_outgoing cmgr id addr (`Persistant addr))
+  in
+  Lwt.choose ps
+  >>= fun () ->
+  (* Wait for at least one connection to be made *)
+  let majority = (List.length node_list / 2) + 1 in
   let quorum_gen callback =
     Quorum.make_quorum ~threshold:majority ~equal:Int64.equal ~f:callback
   in
@@ -791,9 +813,7 @@ let create ~listen_address ~node_list
     { quorum_gen
     ; majority
     ; node_list= List.map node_list ~f:(fun (x, _) -> x)
-    ; other_node_list=
-        List.filter_map node_list ~f:(fun (x, _) ->
-            if Int64.(x <> node_id) then Some x else None)
+    ; other_node_list= List.map ~f:fst other_node_list
     ; num_nodes= List.length node_list
     ; cmgr
     ; election_timeout
@@ -818,7 +838,7 @@ let create ~listen_address ~node_list
     ; client_requests_seen= Hash_set.create (module Int)
     ; is_leader= Lwt_condition.create () }
   in
-  Lwt.wakeup t_f t;
+  Lwt.wakeup t_f t ;
   Lwt.async (Condition_checks.commitIndex t) ;
   Lwt.async (fun () -> Transition.candidate t) ;
   Lwt.wait () |> fst

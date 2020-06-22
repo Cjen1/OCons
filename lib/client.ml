@@ -21,6 +21,7 @@ type t =
 
 let send t op =
   let id = Random.int32 Int32.max_int |> Int32.to_int in
+  Log.debug (fun m -> m "Sending %d" id);
   let command : command = {op; id} in
   let msg = Send.Serialise.clientRequest ~command in
   let prom, fulfiller = Lwt.wait () in
