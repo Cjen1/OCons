@@ -1,6 +1,8 @@
 open Ocamlpaxos
 open Lwt.Infix
 open Messaging
+open Unix_capnp_messaging
+open Conn_manager
 
 let addresses = [(1, TCP ("127.0.0.1", 7000))]
 

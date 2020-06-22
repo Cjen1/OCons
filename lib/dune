@@ -1,7 +1,7 @@
 (library
  (name ocamlpaxos)
  (public_name ocamlpaxos)
- (libraries base lwt lwt.unix logs.lwt logs.fmt fmt.tty capnp hex unix_capnp_messaging)
+ (libraries base lwt lwt.unix logs.lwt logs.fmt fmt.tty capnp hex unix_capnp_messaging owal)
  (preprocess
   (pps ppx_deriving_protobuf)))
 
