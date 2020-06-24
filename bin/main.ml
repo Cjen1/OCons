@@ -62,5 +62,5 @@ let () =
   Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.Src.list () |> List.iter ~f:(fun e -> Format.printf "%a\n" Logs.Src.pp e) ;
-  Logs.(set_level (Some Debug)) ;
+  Logs.(set_level (Some Info)) ;
   Logs.set_reporter reporter ; Core.Command.run command

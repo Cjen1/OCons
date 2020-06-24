@@ -16,7 +16,7 @@ type node_addr = string
 
 type client_id = node_id
 
-type command_id = int [@@deriving protobuf]
+type command_id = int64 [@@deriving protobuf]
 
 module StateMachine : sig
   type t
@@ -75,7 +75,7 @@ end = struct
   let create () = Hashtbl.create (module String)
 
   let command_equal a b =
-    Int.(a.id = b.id)
+    Int64.(a.id = b.id)
     &&
     match (a.op, b.op) with
     | Read k, Read k' ->

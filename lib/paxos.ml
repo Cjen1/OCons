@@ -4,8 +4,17 @@ open Messaging
 open Utils
 open Lwt.Infix
 open Unix_capnp_messaging
+open Owal
 
-let ( ><= ) = Result.( >>= )
+let ( >><= ) = Result.( >>= )
+let ( >>>= ) = Lwt_result.bind
+
+let failif s x =
+  match x with
+  | Ok v ->
+      Lwt.return v
+  | Error exn ->
+      Fmt.failwith "Failed during %s with %a" s Fmt.exn exn
 
 let paxos = Logs.Src.create "Paxos" ~doc:"Paxos module"
 
@@ -30,7 +39,7 @@ module PaxosTypes = struct
   module Log : sig
     type t
 
-    val sync : t -> t Lwt.t
+    val sync : t -> (unit, exn) Lwt_result.t
 
     type entry_list = log_entry list
 
@@ -113,16 +122,17 @@ module PaxosTypes = struct
       | 0 ->
           Ok 0
       | _ ->
-          get t index ><= fun entry -> Ok entry.term
+          get t index >><= fun entry -> Ok entry.term
 
     let get_term_exn t index =
       match get_term t index with Ok v -> v | Error exn -> raise exn
 
     let set t ~index ~value =
       Logs.debug (fun m -> m "Setting %d to %s" index (string_of_entry value)) ;
-      change t (Set (index, value))
+      change t (Set (index, value)) ;
+      t
 
-    let remove t i = change t (Remove i)
+    let remove t i = change t (Remove i) ; t
 
     let get_max_index (t : t) =
       Lookup.fold t.t ~init:0 ~f:(fun v acc -> Int.max v.index acc)
@@ -157,7 +167,7 @@ module PaxosTypes = struct
         match get t i with
         | Ok v ->
             assert (Int.(v.index = i)) ;
-            let t = change t (Remove i) in
+            change t (Remove i) ;
             (delete_geq [@tailcall]) t (i + 1)
         | Error _ ->
             t
@@ -171,17 +181,20 @@ module PaxosTypes = struct
               t
           | Error _ ->
               (* No entry at index *)
-              change t (Set (e.index, e))
+              change t (Set (e.index, e)) ;
+              t
           | Ok _ ->
-              (* inconsitent log *)
-              let t = delete_geq t e.index in
-              change t (Set (e.index, e)))
+              ((* inconsitent log *)
+               let t = delete_geq t e.index in
+               change t (Set (e.index, e))) ;
+              t)
 
     let append t command term =
       let max_index = get_max_index t in
       let index = max_index + 1 in
       let entry = {command; term; index} in
-      change t (Set (index, entry))
+      change t (Set (index, entry)) ;
+      t
   end
 
   type log = Log.t
@@ -230,7 +243,7 @@ module PaxosTypes = struct
     ; commitIndex_cond: unit Lwt_condition.t
     ; log_cond: unit Lwt_condition.t
     ; mutable client_result_forwarders: (command_id, host) Lookup.t
-    ; mutable client_requests_seen: command_id Hash_set.t
+    ; mutable client_resolvers: (command_id, StateMachine.op_result option) Hashtbl.t
     ; mutable is_leader: unit Lwt_condition.t }
 
   let update_current_term t = function
@@ -239,12 +252,11 @@ module PaxosTypes = struct
     | v ->
         L.debug (fun m -> m "Updating currentTerm to %d" v) ;
         (* This ordering should preserve correctness of execution *)
-        t.currentTerm <- Term.change t.currentTerm v ;
+        Term.change t.currentTerm v ;
         L.debug (fun m -> m "Syncing term") ;
-        Term.sync t.currentTerm
-        >>= fun term ->
+        Term.sync t.currentTerm >>= failif "Sync"
+        >>= fun () ->
         L.debug (fun m -> m "Sync'd term") ;
-        t.currentTerm <- term ;
         Lwt.return_unit
 
   let update_log t log =
@@ -282,6 +294,11 @@ module PaxosTypes = struct
     | _ ->
         ()
 
+  let sync_term_log t =
+    let pl = Log.sync t.log >>= failif "sync log" in
+    let pt = Term.sync t.currentTerm >>= failif "sync term" in
+    Lwt.join [pl; pt]
+
   let send_append_entries t ~leader_term ~host =
     (* Sync log to disk before sending anything *)
     match t.node_state with
@@ -294,9 +311,8 @@ module PaxosTypes = struct
         L.debug (fun m ->
             m "append_entries: sending request to %a: (%d %d %d %d)" Fmt.int64
               host term prevLogIndex prevLogTerm leaderCommit) ;
-        Log.sync t.log
-        >>= fun log ->
-        t.log <- log ;
+        sync_term_log t
+        >>= fun () ->
         Send.appendEntries t.config.cmgr host ~term ~prevLogIndex ~prevLogTerm
           ~entries ~leaderCommit
         >|= function
@@ -458,7 +474,7 @@ end = struct
             t.client_result_forwarders <-
               Lookup.remove t.client_result_forwarders command.id ;
             L.debug (fun m ->
-                m "Got answer for %d at index %d sending to %a" command.id
+                m "Got answer for %a at index %d sending to %a" Fmt.int64 command.id
                   entry.index Fmt.int64 src) ;
             Send.clientResponse ~sem:`AtLeastOnce t.config.cmgr src
               ~id:command.id ~result
@@ -471,7 +487,7 @@ end = struct
                 Lwt.return_unit )
         | Error _ ->
             L.debug (fun m ->
-                m "No forwarder for %d at index %d" command.id entry.index) ;
+                m "No forwarder for %a at index %d" Fmt.int64 command.id entry.index) ;
             Lwt.return_unit
       in
       Lwt.async result_handler ;
@@ -594,15 +610,6 @@ module CoreRpcServer = struct
       update_current_term t term
       >>= fun () -> Transition.follower t ; Lwt.return_unit )
     else Lwt.return_unit
-
-  let sync_term_log t =
-    let pl = Log.sync t.log in
-    let pt = Term.sync t.currentTerm in
-    Lwt.both pl pt
-    >>= fun (log, currentTerm) ->
-    t.log <- log ;
-    t.currentTerm <- currentTerm ;
-    Lwt.return_unit
 
   let with_msg f msg =
     f msg
@@ -728,33 +735,36 @@ module CoreRpcServer = struct
 
   (* If leader add to log, otherwise do nothing. *)
   let handle_client_request t host msg : (unit, exn) Lwt_result.t =
-    L.debug (fun m -> m "got client request from %a" Fmt.int64 host) ;
     let command = Messaging.command_from_capnp msg in
+    L.debug (fun m -> m "got client request %a from %a" Fmt.int64 (Command.id_get msg) Fmt.int64 host) ;
     let debug = false in
     match debug with
-    | true ->
+    | true -> (
         Send.clientResponse ~sem:`AtLeastOnce t.config.cmgr host ~id:command.id
           ~result:StateMachine.Failure
         >>>= fun () ->
         L.debug (fun m -> m "replied to %a" Fmt.int64 host) |> Lwt.return_ok
+      )
     | false ->
-        let () =
-          match
-            (t.node_state, Hash_set.mem t.client_requests_seen command.id)
-          with
-          | Leader s, false ->
-              t.client_result_forwarders <-
-                Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
-              Hash_set.add t.client_requests_seen command.id ;
-              let log' = Log.append t.log command s.term in
-              update_log t log' ;
-              L.debug (fun m -> m "Added request to log, finishing")
-          | _, false ->
-              L.debug (fun m -> m "Not leader")
-          | _, true ->
-              L.debug (fun m -> m "Entry %a already in log" Fmt.int command.id)
-        in
-        Lwt.return_ok ()
+      match
+        (t.node_state, Hashtbl.find t.client_resolvers command.id)
+      with
+      | Leader s, None ->
+        t.client_result_forwarders <-
+          Lookup.set t.client_result_forwarders ~key:command.id ~data:host ;
+        Hashtbl.set t.client_resolvers ~key:command.id ~data:None;
+        let log' = Log.append t.log command s.term in
+        update_log t log' ;
+        L.debug (fun m -> m "Added request to log, finishing") |> Lwt.return_ok
+                                                                    (*
+      | _, Some (Some res) -> 
+        L.debug (fun m -> m "Entry %a already resolved sending resp" Fmt.int64 command.id);
+        Send.clientResponse t.config.cmgr host ~id:command.id ~result:res
+                                                                       *)
+      | _, None ->
+        L.debug (fun m -> m "Not leader") |> Lwt.return_ok
+      | _, Some (_) ->
+        L.debug (fun m -> m "Entry %a already in log" Fmt.int64 command.id) |> Lwt.return_ok
 
   let handle_client_response _t _host _msg =
     L.err (fun m -> m "Got client_response...") ;
@@ -797,7 +807,7 @@ let create ~listen_address ~node_list ?(election_timeout = 0.5)
   let ps =
     match other_node_list with
     | [] ->
-      [Lwt.return_unit]
+        [Lwt.return_unit]
     | _ ->
         List.map other_node_list ~f:(fun (id, addr) ->
             Conn_manager.add_outgoing cmgr id addr (`Persistant addr))
@@ -834,8 +844,8 @@ let create ~listen_address ~node_list ?(election_timeout = 0.5)
     ; config
     ; commitIndex_cond= Lwt_condition.create ()
     ; log_cond= Lwt_condition.create ()
-    ; client_result_forwarders= Lookup.create (module Int)
-    ; client_requests_seen= Hash_set.create (module Int)
+    ; client_result_forwarders= Lookup.create (module Int64)
+    ; client_resolvers = Hashtbl.create (module Int64)
     ; is_leader= Lwt_condition.create () }
   in
   Lwt.wakeup t_f t ;

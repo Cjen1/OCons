@@ -1,112 +1,114 @@
 open Ocamlpaxos
+open Types
 open Lwt.Infix
 open Messaging
 open Unix_capnp_messaging
 open Conn_manager
 
-let addresses = [(1, TCP ("127.0.0.1", 7000))]
-
-let client_addresses =
-  [(1, TCP ("127.0.0.1", 7001))]
-
 let src = Logs.Src.create "test"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-let mgr id =
-  ConnManager.create (List.assoc id addresses)
-    (List.assoc id client_addresses)
-    addresses id
+let addr i = TCP ("127.0.0.1", 5000 + i)
 
-let test_client send result cmd_eq res_eq m1 =
-  let open API.Reader in
-  let test () =
-    Client.new_client ~cid:1234 [List.assoc 1 client_addresses] ()
-    >>= fun client ->
-    let client_p = send client in
-    ConnManager.recv m1
-    >>= fun (msg, cid) ->
-    Alcotest.(check int) "client id" cid 1234 ;
-    match ServerMessage.get msg with
-    | ServerMessage.ClientRequest msg ->
-        let command = Messaging.command_from_capnp msg in
-        Alcotest.(check bool) "operation equal" (cmd_eq command) true ;
-        Send.clientResponse ~sym:`AtLeastOnce m1 cid ~id:command.id ~result
-        >>= fun () ->
-        client_p
-        >>= fun result ->
-        Alcotest.(check bool) "result equal" (res_eq result) true ;
-        Lwt.return_unit
-    | _ ->
-        Alcotest.fail "Unrecognised message received"
-  in
-  test ()
+let mgr i handler =
+  create ~listen_address:(addr i) ~node_id:(Int64.of_int i) handler
 
-let test_client_write m1 _ () =
-  let send client =
-    Client.op_write client (Bytes.of_string "asdf") (Bytes.of_string "fsda")
-  in
-  let result = Types.StateMachine.Failure in
-  let msg_eq command =
-    command.Types.StateMachine.op = Types.StateMachine.Write ("asdf", "fsda")
-  in
-  let res_eq result' =
-    match result' with
-    | Error (`Msg "Application failed on cluster") ->
-        true
-    | _ ->
-        false
-  in
-  test_client send result msg_eq res_eq m1
+let stream_mgr i =
+  let stream, push = Lwt_stream.create () in
+  (mgr i (fun _ src msg -> push (Some (src, msg)) |> Lwt.return_ok), stream)
 
-let test_client_read m1 _ () =
-  let send client =
-    Client.op_read client (Bytes.of_string "asdf")
-  in
-  let result = Types.StateMachine.Failure in
-  let msg_eq command =
-    command.Types.StateMachine.op = Types.StateMachine.Read "asdf"
-  in
-  let res_eq result' =
-    match result' with
-    | Error (`Msg "Application failed on cluster") ->
-        true
-    | _ ->
-        false
-  in
-  test_client send result msg_eq res_eq m1
+let timeout t f s =
+  let p = f () >>= Lwt.return_ok in
+  let t = Lwt_unix.sleep t >>= Lwt.return_error in
+  Lwt.choose [ p; t ] >>= function
+  | Ok v -> Lwt.return v
+  | Error () -> Alcotest.fail s
 
-let test_client_success m1 _ () =
-  let send client =
-    Client.op_read client (Bytes.of_string "asdf")
-  in
-  let result = Types.StateMachine.Success in
-  let msg_eq command =
-    command.Types.StateMachine.op = Types.StateMachine.Read "asdf"
-  in
-  let res_eq result' =
-    match result' with
-    | Ok `Success -> true
-    | _ ->
-        false
-  in
-  test_client send result msg_eq res_eq m1
+let test_bytes = Bytes.of_string "asdf"
 
-let test_client_read_success m1 _ () =
-  let send client =
-    Client.op_read client (Bytes.of_string "asdf")
-  in
-  let result = Types.StateMachine.ReadSuccess "fdsa" in
-  let msg_eq command =
-    command.Types.StateMachine.op = Types.StateMachine.Read "asdf"
-  in
-  let res_eq result' =
-    match result' with
-    | Ok (`ReadSuccess "fdsa")-> true
-    | _ ->
-        false
-  in
-  test_client send result msg_eq res_eq m1
+let send_read_req client = Client.op_read client test_bytes
+
+let send_res res server cid cmdid = 
+  Send.clientResponse ~sem:`AtLeastOnce ~id:cmdid ~result:res server cid
+
+let res_eq_failure msg = 
+  let test = function
+    | Error (`Msg "Application failed on cluster") -> true
+    | _ -> false
+  in Alcotest.(check bool) "Result_string" true (test msg)
+
+let failif t = match t with 
+  | Ok v -> Lwt.return v
+  | Error exn -> raise exn
+
+open API.Reader
+
+let test_client_loop ?(send=send_read_req) ?(send_res=send_res StateMachine.Failure) ?(res_eq=res_eq_failure) () = 
+  let main = 
+    let server, str1 = stream_mgr 1 in
+    let cid = Random.int64 Int64.(Int64.add (of_int 1000) (of_int 1000)) in
+    Client.new_client ~cid:cid [Int64.of_int 1,addr 1] () >>= fun client ->
+    let p_c = send client in
+    Lwt_stream.next str1 >>= fun (src,msg) -> 
+    Alcotest.(check int64) "Client id reporting" src cid;
+    match ServerMessage.(msg |> Capnp.BytesMessage.Message.readonly |> of_message |> get) with
+    | ServerMessage.ClientRequest cmd ->
+      send_res server cid (Command.id_get cmd) >>>= fun () ->
+      p_c >|= res_eq >>= fun () ->
+      Conn_manager.close server >>= fun () ->
+      Client.close client >>=
+      Lwt.return_ok
+    | _ -> Alcotest.fail "Did not receive a client_request"
+  in main >>= failif
+
+let test_client_read () = 
+  test_client_loop ()
+
+let test_client_write () =
+  let send client = Client.op_write client test_bytes test_bytes in
+  test_client_loop ~send ()
+
+let test_client_success () = 
+  let res = StateMachine.Success in
+  let res_eq a = 
+    let res = match a with
+      | Ok `Success -> true
+      | _ -> false
+    in Alcotest.(check bool) "Result success" true res
+  in test_client_loop ~send_res:(send_res res) ~res_eq ()
+
+let test_client_read_success () = 
+  let res = StateMachine.ReadSuccess "asdf" in
+  let res_eq a = 
+    let res = match a with
+      | Ok (`ReadSuccess "asdf") -> true
+      | _ -> false
+    in Alcotest.(check bool) "Result success" true res
+  in test_client_loop ~send_res:(send_res res) ~res_eq ()
+
+let test_internal () =
+  let main = 
+    let server, str1 = stream_mgr 1 in
+    let cid = Random.int64 Int64.(Int64.add (of_int 1000) (of_int 1000)) in
+    Client.new_client ~cid:cid [Int64.of_int 1,addr 1] () >>= fun client ->
+    let p_c = Client.op_read client test_bytes in
+    Lwt_stream.next str1 >>= fun (_src, msg) ->
+    match ServerMessage.(msg |> Capnp.BytesMessage.Message.readonly |> of_message |> get) with
+    | ServerMessage.ClientRequest cmd ->
+      let test = Hashtbl.mem client.Client.ongoing_requests (Command.id_get cmd) in 
+      Alcotest.(check bool) "Client request in resolvers" true test;
+      Send.clientResponse ~sem:`AtLeastOnce ~id:(Command.id_get cmd) ~result:StateMachine.Failure server cid >>>= fun () ->
+      p_c >>= fun _ ->
+      let test = Hashtbl.mem client.Client.ongoing_requests (Command.id_get cmd) in
+      Alcotest.(check bool) "Client response removed request from resolvers" false test;
+      Conn_manager.close server >>= fun () ->
+      Client.close client >>=
+      Lwt.return_ok
+    | _ -> Alcotest.fail "Did not receive a client_request"
+  in main >>= failif
+
+let test_wrapper f _ () = timeout 5. f "Timed out"
 
 let reporter =
   let report src level ~over k msgf =
@@ -127,14 +129,13 @@ let () =
   Logs.(set_level(Some Debug));
   Logs.set_reporter reporter;
   Lwt_main.run 
-    (let m1 = mgr 1 in
-     Alcotest_lwt.run "client_server"
+    (Alcotest_lwt.run "client library"
        [ ( "all"
-         , [ Alcotest_lwt.test_case "client write" `Quick (test_client_write m1)
-           ; Alcotest_lwt.test_case "client read" `Quick (test_client_read m1)
-           ; Alcotest_lwt.test_case "client success" `Quick (test_client_success m1)
-           ; Alcotest_lwt.test_case "client read_success" `Quick (test_client_read_success m1)
+         , [ 
+             Alcotest_lwt.test_case "read" `Quick (test_wrapper test_client_read)
+           ; Alcotest_lwt.test_case "write" `Quick (test_wrapper test_client_write)
+           ; Alcotest_lwt.test_case "success" `Quick (test_wrapper test_client_success)
+           ; Alcotest_lwt.test_case "read_success" `Quick (test_wrapper test_client_read_success)
+           ; Alcotest_lwt.test_case "internals" `Quick (test_wrapper test_internal)
            ] ) ]
-     >>= fun () ->
-     ConnManager.close m1
     )

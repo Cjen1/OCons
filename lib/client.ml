@@ -16,12 +16,12 @@ type t =
   ; addrs: int64 list
   ; send_stream: (send_fn * StateMachine.op_result Lwt.t) Lwt_stream.t
   ; push: (send_fn * StateMachine.op_result Lwt.t) option -> unit
-  ; ongoing_requests: (int, StateMachine.op_result Lwt.u) Hashtbl.t
+  ; ongoing_requests: (int64, StateMachine.op_result Lwt.u) Hashtbl.t
   ; connection_retry: float }
 
 let send t op =
-  let id = Random.int32 Int32.max_int |> Int32.to_int in
-  Log.debug (fun m -> m "Sending %d" id);
+  let id = Random.int32 Int32.max_int |> Int64.of_int32 in
+  Log.debug (fun m -> m "Sending %a" Fmt.int64 id) ;
   let command : command = {op; id} in
   let msg = Send.Serialise.clientRequest ~command in
   let prom, fulfiller = Lwt.wait () in
@@ -61,7 +61,7 @@ let fulfiller t _mgr src msg =
       |> ServerMessage.get
     with
     | ServerMessage.ClientResponse resp -> (
-        let id = ClientResponse.id_get_int_exn resp in
+        let id = ClientResponse.id_get resp in
         match Hashtbl.find_opt t.ongoing_requests id with
         | Some fulfiller ->
             let res =
@@ -102,17 +102,28 @@ let resend_iter t (send_fn, promise) =
   let rec loop () =
     send_fn () ;
     let timeout =
-      Lwt_unix.sleep t.connection_retry >>= fun () -> Lwt.return_error ()
+      let p_t () = Lwt_unix.sleep t.connection_retry in
+      let catch exn =
+        Log.debug (fun m -> m "Failed %a while sleeping" Fmt.exn exn) ;
+        Lwt.return_unit
+      in
+      Lwt.catch p_t catch >>= Lwt.return_error
     in
     let promise = promise >>= fun _ -> Lwt.return_ok () in
     Lwt.choose [timeout; promise]
-    >>= function Error () -> loop () | Ok () -> Lwt.return_unit
+    >>= function
+    | Error () ->
+        Log.err (fun m -> m "Timed out while waiting for response") ;
+        loop ()
+    | Ok () ->
+        Lwt.return_unit
   in
   loop ()
 
 let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.)
-    ?(max_concurrency = 1024) ?(client_port = 8080) addresses () =
-  let t_p, t_f = Lwt.task () in
+    ?(max_concurrency = 1024) ?(client_port = Random.int 30768 + 10000) addresses
+    () =
+  let t_p, t_f = Lwt.wait () in
   let cmgr =
     Conn_manager.create
       ~listen_address:(TCP ("0.0.0.0", client_port))
@@ -136,7 +147,16 @@ let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.)
     ; ongoing_requests= Hashtbl.create 1024
     ; connection_retry }
   in
-  Lwt.wakeup t_f t;
+  Lwt.wakeup t_f t ;
   Lwt.async (fun () ->
       Lwt_stream.iter_n ~max_concurrency (resend_iter t) send_stream) ;
   Lwt.return t
+
+exception Closed
+
+let close t =
+  Conn_manager.close t.mgr
+  >>= fun () ->
+  t.push None ;
+  Hashtbl.iter (fun _ f -> Lwt.wakeup_exn f Closed) t.ongoing_requests ;
+  Lwt.return_unit

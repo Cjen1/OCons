@@ -26,12 +26,12 @@ let command_from_capnp command =
         let value = API.Reader.Op.Write.value_get v in
         StateMachine.Write (key, value)
   in
-  let id = id_get_int_exn command in
+  let id = id_get command in
   StateMachine.{op; id}
 
 let command_to_capnp cmd_root (command : command) =
   let op_root = API.Builder.Command.op_init cmd_root in
-  API.Builder.Command.id_set_int cmd_root command.id ;
+  API.Builder.Command.id_set cmd_root command.id ;
   match command.op with
   | Read key ->
       API.Builder.Op.key_set op_root key ;
@@ -135,7 +135,7 @@ module Send = struct
     let clientResponse ~id ~result =
       let root = ServerMessage.init_root ~message_size () in
       let crp = ServerMessage.client_response_init root in
-      ClientResponse.id_set_int crp id ;
+      ClientResponse.id_set crp id ;
       let cr = ClientResponse.result_init crp in
       let () =
         match result with
