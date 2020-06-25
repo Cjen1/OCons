@@ -1,12 +1,12 @@
 @0xd66c44db48f005fe;
 
 struct Op {
-  key @0 :Text;
+  key @0 :Data;
   union {
     read @1 :Void;
 
     write :group {
-      value @2 :Text;
+      value @2 :Data;
     }
   }
 }
@@ -19,7 +19,7 @@ struct Command {
 struct CommandResult {
   union {
     success @0 : Void;
-    readSuccess @1 : Text;
+    readSuccess @1 : Data;
     failure @2 : Void;
   }
 }
