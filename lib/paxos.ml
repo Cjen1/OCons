@@ -137,26 +137,17 @@ module PaxosTypes = struct
     let get_max_index (t : t) =
       Lookup.fold t.t ~init:0 ~f:(fun v acc -> Int.max v.index acc)
 
-    (*
     (* Entries after i inclusive *)
     let entries_after_inc log ~index : entry_list =
       let index = if index = 0 then 1 else 0 in
       let rec loop i acc =
-        match get log index with
+        match get log i with
         | Ok v ->
             loop (i + 1) (v :: acc)
         | Error _ ->
             acc
       in
       List.rev @@ loop index []
-        *)
-
-    let entries_after_inc t ~index : entry_list =
-      let res =
-        Hashtbl.fold t.t ~init:[] ~f:(fun ~key ~data acc ->
-            if key >= index then data :: acc else acc)
-      in
-      List.sort res ~compare:(fun a b -> Int.compare a.index b.index)
 
     let to_string t =
       let entries = entries_after_inc t ~index:1 in
@@ -756,14 +747,12 @@ module CoreRpcServer = struct
         let log' = Log.append t.log command s.term in
         update_log t log' ;
         L.debug (fun m -> m "Added request to log, finishing") |> Lwt.return_ok
-                                                                    (*
       | _, Some (Some res) -> 
         L.debug (fun m -> m "Entry %a already resolved sending resp" Fmt.int64 command.id);
         Send.clientResponse t.config.cmgr host ~id:command.id ~result:res
-                                                                       *)
       | _, None ->
         L.debug (fun m -> m "Not leader") |> Lwt.return_ok
-      | _, Some (_) ->
+      | _, Some (None) ->
         L.debug (fun m -> m "Entry %a already in log" Fmt.int64 command.id) |> Lwt.return_ok
 
   let handle_client_response _t _host _msg =
