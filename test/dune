@@ -1,0 +1,3 @@
+(tests
+ (names client)
+ (libraries core unix_capnp_messaging ocamlpaxos alcotest alcotest-lwt))

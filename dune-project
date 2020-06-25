@@ -15,9 +15,11 @@
     (ocaml (>= 4.08.0))
     base
     core
+    dune
     ppx_jane
     lwt
     lwt_ppx
+    ppx_deriving_protobuf
     conf-libev
     logs
     fmt

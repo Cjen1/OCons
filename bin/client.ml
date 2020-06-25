@@ -1,38 +1,62 @@
 (* main.ml *)
 open Core
-open Ocamlpaxos.Client
+open Lwt.Infix
+open Ocamlpaxos
+open Client
+open Unix_capnp_messaging
 
-let node_list = Command.Arg_type.create @@ String.split ~on:','
+let node_list =
+  Command.Arg_type.create (fun ls ->
+      String.split ls ~on:','
+      |> List.map ~f:(String.split ~on:':')
+      |> List.map ~f:(function
+           | id :: xs -> (
+               let rest = String.concat ~sep:":" xs in
+               match Conn_manager.addr_of_string rest with
+               | Ok addr ->
+                   (Int64.of_string id, addr)
+               | Error (`Msg e) ->
+                   Fmt.failwith "Expected id:(ip:port|path) not %s" e )
+           | _ ->
+               assert false))
 
-let print_res res =
-  match%lwt res with
+let bytes = Command.Arg_type.create @@ Bytes.of_string
+
+let print_res = function
   | Ok `Success ->
       Printf.printf "Success\n" |> Lwt.return
-  | Ok `ReadSuccess s ->
+  | Ok (`ReadSuccess s) ->
       Printf.printf "Read Success: %s\n" s |> Lwt.return
-  | Error `Msg s ->
+  | Error (`Msg s) ->
       Printf.printf "Failure of %s\n" s |> Lwt.return
 
 let put =
   Command.basic ~summary:"Put operation"
     Command.Let_syntax.(
-      let%map_open client_files = anon ("capacity_files" %: node_list)
-      and key = anon ("key" %: string)
-      and value = anon ("value" %: string) in
+      let%map_open addresses = anon ("addresses" %: node_list)
+      and key = anon ("key" %: bytes)
+      and value = anon ("value" %: bytes) in
       fun () ->
-        Lwt_main.run
-        @@ let%lwt c = new_client ~client_files () in
-           op_write c key value |> print_res)
+        Random.self_init ();
+        Lwt_main.run begin
+          new_client addresses () >>= fun client ->
+          op_write 
+            client key value >>= print_res
+        end 
+    )
 
 let get =
   Command.basic ~summary:"Get operation"
     Command.Let_syntax.(
-      let%map_open client_files = anon ("capacity_files" %: node_list)
-      and key = anon ("key" %: string) in
+      let%map_open addresses = anon ("addresses" %: node_list)
+      and key = anon ("key" %: bytes) in
       fun () ->
-        Lwt_main.run
-        @@ let%lwt c = new_client ~client_files () in
-           op_read c key |> print_res)
+        Random.self_init ();
+        Lwt_main.run begin
+          new_client addresses () >>= fun client ->
+          op_read client key >>= print_res
+        end 
+    )
 
 let reporter =
   let report src level ~over k msgf =
@@ -55,7 +79,9 @@ let cmd =
     [("put", put); ("get", get)]
 
 let () =
+  Stdlib.Random.self_init ();
+  Random.self_init ();
   Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
-  Logs.(set_level (Some Info)) ;
+  Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run cmd

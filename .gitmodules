@@ -1,0 +1,6 @@
+[submodule "unix_capnp_messaging"]
+	path = unix_capnp_messaging
+	url = https://github.com/cjen1/unix_capnp_messaging
+[submodule "owal"]
+	path = owal
+	url = git@github.com:cjen1/owal

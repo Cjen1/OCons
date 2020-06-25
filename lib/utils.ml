@@ -1,46 +1,86 @@
 open Base
+open Lwt.Infix
 
-let critical_section mutex ~f =
-  try%lwt
-    let%lwt () = Logs_lwt.debug (fun m -> m "Entering cs") in
-    let%lwt () = Lwt_mutex.lock mutex in
-    let%lwt res = f () in
-    let () = Lwt_mutex.unlock mutex in
-    Lwt.return @@ res
-  with e ->
-    let () = Lwt_mutex.unlock mutex in
-    let%lwt () = Logs_lwt.debug (fun m -> m "Entering cs") in
-    raise e
+module DEBUG = struct
+  let ( >>= ) p f =
+    let handler e =
+      Fmt.failwith "Got exn while resolving promise: %a" Fmt.exn e
+    in
+    Lwt.try_bind (fun () -> p) f handler
+end
 
-let write_to_wal fd line =
-  let written = Unix.write_substring fd line 0 (String.length line) in
-  assert (written = String.length line) ;
-  Unix.fsync fd
+(* Returns f wrapped if either an exception occurrs in the evaluation of f() or in the promise *)
+let catch f = try Lwt_result.catch (f ()) with exn -> Lwt.return_error exn
 
-module Queue : sig
-  type 'a t
+module Lookup = struct
+  open Base
 
-  val create : unit -> 'a t
+  type ('a, 'b) t = ('a, 'b) Base.Hashtbl.t
 
-  val add : 'a -> 'a t -> unit
+  let pp ppf _v = Stdlib.Format.fprintf ppf "Hashtbl"
 
-  val take : 'a t -> 'a Lwt.t
-end = struct
-  type 'a t = {m: Lwt_mutex.t; c: unit Lwt_condition.t; q: 'a Queue.t}
+  let get t key =
+    Hashtbl.find t key
+    |> Result.of_option ~error:(Invalid_argument "No such key")
 
-  let create () =
-    {m= Lwt_mutex.create (); c= Lwt_condition.create (); q= Queue.create ()}
+  let get_exn t key = Result.ok_exn (get t key)
 
-  let add e t =
-    Queue.enqueue t.q e ;
-    Lwt_condition.signal t.c ()
+  let remove t key = Hashtbl.remove t key ; t
+
+  let set t ~key ~data = Hashtbl.set t ~key ~data ; t
+
+  let removep t p =
+    Hashtbl.iteri t ~f:(fun ~key ~data -> if p data then remove t key |> ignore) ;
+    t
+
+  let create key_module = Base.Hashtbl.create key_module
+
+  let fold t ~f ~init =
+    Base.Hashtbl.fold t ~f:(fun ~key:_ ~data acc -> f data acc) ~init
+
+  let find_or_add = Base.Hashtbl.find_or_add
+end
+
+module Lwt_queue = struct
+  type 'a t =
+    { q: 'a Stdlib.Queue.t
+    ; cond: unit Lwt_condition.t
+    ; switch: Lwt_switch.t option }
+
+  let add t v =
+    Stdlib.Queue.add v t.q ;
+    Lwt_condition.signal t.cond ()
 
   let take t =
-    let%lwt () = Lwt_mutex.lock t.m in
-    let%lwt () =
-      if Queue.is_empty t.q then Lwt_condition.wait ~mutex:t.m t.c
-      else Lwt.return_unit
+    let rec loop () =
+      match (Stdlib.Queue.take_opt t.q, t.switch) with
+      | _, Some switch when not (Lwt_switch.is_on switch) ->
+          Lwt.return_error `Closed
+      | Some v, _ ->
+          Lwt.return_ok v
+      | None, _ ->
+          Lwt_condition.wait t.cond >>= fun () -> loop ()
     in
-    let e = Lwt.return (Queue.dequeue_exn t.q) in
-    Lwt_mutex.unlock t.m ; e
+    loop ()
+
+  let create ?switch () =
+    let cond = Lwt_condition.create () in
+    Lwt_switch.add_hook switch (fun () ->
+        Lwt_condition.broadcast cond () |> Lwt.return) ;
+    {q= Stdlib.Queue.create (); cond; switch}
+end
+
+module Quorum = struct
+  type ('k, 'v) t = {add: 'k * 'v -> unit; mutable fulfilled: bool}
+
+  let make_quorum ~threshold ~equal ~(f : ('a * 'b) list -> unit) : ('a, 'b) t =
+    let xs = ref [] in
+    let rec add ((k, _) as x) =
+      if not (List.Assoc.mem !xs ~equal k) then (
+        xs := x :: !xs ;
+        if List.length !xs >= threshold then (
+          t.fulfilled <- true ;
+          f !xs ) )
+    and t = {add; fulfilled= false} in
+    t
 end

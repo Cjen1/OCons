@@ -1,7 +1,7 @@
 (executable
  (name main)
  (public_name ocamlpaxos)
- (libraries ocamlpaxos core lwt lwt_ppx)
+ (libraries ocamlpaxos lwt lwt_ppx core)
  (preprocess
   (pps lwt_ppx ppx_jane))
  (modules main))
@@ -13,3 +13,15 @@
  (preprocess
   (pps lwt_ppx ppx_jane))
  (modules client))
+
+(executables
+ (names log_test )
+ (libraries ocamlpaxos core lwt lwt_ppx fmt)
+ (preprocess
+  (pps lwt_ppx ppx_deriving_protobuf))
+ (modules log_test))
+
+(env
+ (dev
+  (flags
+   (:standard -w -39-53-55))))
