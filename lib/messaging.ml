@@ -151,7 +151,8 @@ module Send = struct
 
   let requestVote ?(sem = `AtMostOnce) conn_mgr (t : service) ~term
       ~leaderCommit =
-    Conn_manager.send ~semantics:sem conn_mgr t (Serialise.requestVote ~term ~leaderCommit)
+    Conn_manager.send ~semantics:sem conn_mgr t
+      (Serialise.requestVote ~term ~leaderCommit)
 
   let requestVoteResp ?(sem = `AtMostOnce) conn_mgr (t : service) ~term
       ~voteGranted ~entries =
@@ -170,8 +171,10 @@ module Send = struct
       (Serialise.appendEntriesResp ~term ~success ~matchIndex)
 
   let clientRequest ?(sem = `AtMostOnce) conn_mgr (t : service) ~command =
-    Conn_manager.send ~semantics:sem conn_mgr t (Serialise.clientRequest ~command)
+    Conn_manager.send ~semantics:sem conn_mgr t
+      (Serialise.clientRequest ~command)
 
   let clientResponse ?(sem = `AtMostOnce) conn_mgr (t : service) ~id ~result =
-    Conn_manager.send ~semantics:sem conn_mgr t (Serialise.clientResponse ~id ~result)
+    Conn_manager.send ~semantics:sem conn_mgr t
+      (Serialise.clientResponse ~id ~result)
 end

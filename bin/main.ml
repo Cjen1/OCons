@@ -40,7 +40,8 @@ let command =
         let node_id = Int64.of_int node_id in
         let log_path = data_path ^ ".log" in
         let term_path = data_path ^ ".term" in
-        Paxos.create ~listen_address ~node_list ~election_timeout ~idle_timeout ~log_path ~term_path node_id
+        Paxos.create ~listen_address ~node_list ~election_timeout ~idle_timeout
+          ~log_path ~term_path node_id
         |> Lwt_main.run)
 
 let reporter =
@@ -62,6 +63,6 @@ let () =
   Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.Src.list () |> List.iter ~f:(fun e -> Format.printf "%a\n" Logs.Src.pp e) ;
-  Fmt.pr "V%d\n" 1;
+  Fmt.pr "V%d\n" 1 ;
   Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run command

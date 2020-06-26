@@ -90,33 +90,26 @@ type command = StateMachine.command
 
 type op_result = StateMachine.op_result
 
-type term = int [@@deriving protobuf]
+type term = int64 [@@deriving protobuf]
 
-type log_index = int [@@deriving protobuf]
+type log_index = int64 [@@deriving protobuf]
 
 let log_index_mod : int Base__.Hashtbl_intf.Key.t = (module Int)
 
-type log_entry =
-  { command: StateMachine.command [@key 1]
-  ; term: term [@key 2]
-  ; index: log_index [@key 3] }
+type log_entry = {
+  command_id: command_id [@key 1];
+  term: term [@key 2]
+}
 [@@deriving protobuf]
 
+let pp_entry f entry = 
+  Fmt.pf f "(id:%a term:%a)" Fmt.int64 entry.command_id Fmt.int64 entry.term
+
 let string_of_entry entry =
-  let open StateMachine in
-  let cmd =
-    match entry.command with
-    | {op= Read _; _} ->
-        Printf.sprintf "(Read)"
-    | {op= Write _; _} ->
-        Printf.sprintf "(Write)"
-  in
-  let term, index = (Int.to_string entry.term, Int.to_string entry.index) in
-  Printf.sprintf "(%s %s %s)" index term cmd
+  Fmt.str "%a" pp_entry entry
 
 let string_of_entries entries =
-  let res = entries |> List.map ~f:string_of_entry |> String.concat ~sep:" " in
-  Printf.sprintf "(%s)" res
+  Fmt.str "(%a)" (Fmt.list pp_entry) entries
 
 type partial_log = log_entry list
 

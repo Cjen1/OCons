@@ -15,7 +15,7 @@
  (modules client))
 
 (executables
- (names log_test )
+ (names log_test)
  (libraries ocamlpaxos core lwt lwt_ppx fmt)
  (preprocess
   (pps lwt_ppx ppx_deriving_protobuf))
