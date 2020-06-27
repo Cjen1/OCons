@@ -1,4 +1,4 @@
-open Base
+(*open Base
 open Types
 open Messaging
 open Utils
@@ -633,3 +633,4 @@ let create ~listen_address ~node_list ?(election_timeout = 0.5)
   Lwt.async (Condition_checks.commitIndex t) ;
   Lwt.async (fun () -> Transition.candidate t) ;
   Lwt.wait () |> fst
+  *)

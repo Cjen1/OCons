@@ -1,6 +1,5 @@
 open Owal
 open Types
-open Utils
 open Base
 
 (* Common operations:
@@ -12,9 +11,9 @@ open Base
 module L_t = struct
   type t = {store: log_entry list; length: int64}
 
-  let nth_of_index t i = Int64.(t.length - i - one)
+  let nth_of_index t i = Int64.(t.length - i) 
 
-  let drop_of_index t i = nth_of_index t i |> Int64.succ
+  let drop_of_index t i = Int64.(nth_of_index t i + one)
 
   let init () = {store= []; length= Int64.zero}
 
@@ -39,7 +38,7 @@ module L_t = struct
     | Add entry ->
         {store= entry :: t.store; length= Int64.(t.length + of_int 1)}
     | RemoveGEQ i ->
-        let drop = drop_of_index t i in
+        let drop = drop_of_index t i |> Int64.(max zero) in
         let store = List.drop t.store (Int64.to_int_exn drop) in
         let length = Int64.(max zero (t.length - drop)) in
         {store; length}
@@ -53,14 +52,14 @@ type t = P.t
 
 let get (t : t) index =
   let nth = nth_of_index t.t index |> Int64.to_int_exn in
-  List.nth t.t.store nth |> Result.of_option ~error:Stdlib.Not_found
+  List.nth t.t.store nth |> Result.of_option ~error:(Not_found_s (Sexp.Atom (Fmt.str "%a" Fmt.int64 index)))
 
 let get_exn t i = get t i |> Result.ok_exn
 
 let get_term t index =
   match index with
-  | i when Int64.(i = of_int 0) ->
-      Ok i
+  | i when Int64.(i = zero) ->
+      Ok Int64.zero
   | _ ->
       let open Result.Monad_infix in
       get t index >>= fun entry -> Ok entry.term
@@ -71,7 +70,7 @@ let add entry t = change (Add entry) t
 
 let removeGEQ index t = change (RemoveGEQ index) t
 
-let get_max_index (t : t) = Int64.(t.t.length - one)
+let get_max_index (t : t) = t.t.length
 
 let entries_after_inc t index =
   let drop = drop_of_index t.t index |> Int64.to_int_exn in
@@ -81,7 +80,7 @@ let to_string t =
   let entries = entries_after_inc t Int64.zero in
   string_of_entries entries
 
-let add_entries_remove_conflicts t start_index new_entries =
+let add_entries_remove_conflicts t ~start_index new_entries =
   let relevant_entries = entries_after_inc t start_index in
   (* Takes two lists of entries lowest index first
      iterates through the lists until there is a conflict

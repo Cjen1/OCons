@@ -1,5 +1,4 @@
 open Types
-open Utils
 open Base
 
 (* To do this there are several changes required.
@@ -16,15 +15,6 @@ type term = int64
 
 type command_id = int64
 
-module LOG = struct
-  type t =
-    { last_index: index
-    ; last_term: term
-    ; entries: (Int64.t, command_id, Int64.comparator_witness) Map.t }
-
-  let entries_after t index = Map.split
-end
-
 type node_id = int64
 
 type request_vote = {term: int64; leader_commit: int64}
@@ -40,7 +30,8 @@ type event =
   | `RRequestVote of request_vote
   | `RRequestVoteResponse of request_vote_response
   | `RAppendEntries of request
-  | `RAppendEntiresResponse of request ]
+  | `RAppendEntiresResponse of request 
+  | `LogChange]
 
 type action =
   [ `SendRequestVote
@@ -54,11 +45,11 @@ type node_state = Follower | Candidate | Leader
 
 type t = {config: config; leader_exists: bool; currentTerm: Term.t}
 
-let transition_to_candidate t = assert false
+let transition_to_candidate _t = assert false
 
-let transition_to_follower t = assert false
+let transition_to_follower _t = assert false
 
-let update_current_term term t = assert false
+let update_current_term _term _t = assert false
 
 let preempted t term =
   if Int64.(t.term < term) then
@@ -76,11 +67,12 @@ let handle t : event -> t * action list = function
   | `RAppendEntiresResponse {term; _}
     when Int64.(t.currentTerm.t < term) ->
       (t |> update_current_term term |> transition_to_follower, [])
-  | `RRequestVote s ->
+  | `RRequestVote _s ->
       assert false
-  | `RRequestVoteResponse s ->
+  | `RRequestVoteResponse _s ->
       assert false
-  | `RAppendEntries s ->
+  | `RAppendEntries _s ->
       assert false
-  | `RAppendEntiresResponse s ->
+  | `RAppendEntiresResponse _s ->
       assert false
+  | `LogChange -> assert false

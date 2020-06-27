@@ -65,18 +65,15 @@ let result_to_capnp cr result =
 
 let log_entry_from_capnp entry =
   let open API.Reader.LogEntry in
-  let command = command_get entry |> command_from_capnp in
-  let term = term_get_int_exn entry in
-  let index = index_get_int_exn entry in
-  {command; term; index}
+  let command_id = command_id_get entry in
+  let term = term_get entry in
+  {command_id; term}
 
 let log_entry_to_capnp entry =
   let open API.Builder.LogEntry in
   let root = init_root () in
-  let cmd_root = API.Builder.LogEntry.command_init root in
-  command_to_capnp cmd_root entry.command ;
-  term_set_int root entry.term ;
-  index_set_int root entry.index ;
+  API.Builder.LogEntry.command_id_set root entry.command_id;
+  term_set root entry.term ;
   root
 
 (** [Send] contains a few utility functions and the main user facing api's *)

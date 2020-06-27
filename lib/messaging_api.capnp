@@ -25,9 +25,8 @@ struct CommandResult {
 }
 
 struct LogEntry {
-  command @0: Command;
+  commandId @0: Int64;
   term @1 : Int64;
-  index @2 : Int64;
 }
 
 struct RequestVote {
