@@ -94,29 +94,40 @@ type term = int64 [@@deriving protobuf]
 
 type log_index = int64 [@@deriving protobuf]
 
-let log_index_mod : int Base__.Hashtbl_intf.Key.t = (module Int)
+(* To do this there are several changes required.
+ * 
+ * 1. Only the leader can respond to client requests
+ * 2. In the failure case prospective leaders need to also get any missing client requests
+        Thus request_vote_response messages must contain that info
+        Thus request_vote messages must contain the highest known client_request
+ *)
 
-type log_entry = {
-  command_id: command_id [@key 1];
-  term: term [@key 2]
-}
+type log_entry = {command_id: command_id [@key 1]; term: term [@key 2]}
 [@@deriving protobuf]
 
-let pp_entry f entry = 
+let pp_entry f entry =
   Fmt.pf f "(id:%a term:%a)" Fmt.int64 entry.command_id Fmt.int64 entry.term
 
-let string_of_entry entry =
-  Fmt.str "%a" pp_entry entry
+let string_of_entry entry = Fmt.str "%a" pp_entry entry
 
-let string_of_entries entries =
-  Fmt.str "(%a)" (Fmt.list pp_entry) entries
-
-type partial_log = log_entry list
-
-type persistent = Log_entry of log_entry
+let string_of_entries entries = Fmt.str "(%a)" (Fmt.list pp_entry) entries
 
 (* Messaging types *)
-type request_vote_response =
-  {term: term; voteGranted: bool; entries: log_entry list}
+type request_vote = {term: int64; leader_commit: log_index}
 
-type append_entries_response = {term: term; success: bool}
+type request_vote_response =
+  { term: term
+  ; vote_granted: bool
+  ; entries: log_entry list
+  ; start_index: log_index }
+
+type append_entries =
+  { term: term
+  ; prev_log_index: log_index
+  ; prev_log_term: term
+  ; entries: log_entry list
+  ; leader_commit: log_index }
+
+(* success is either the highest replicated term (match index) or prev_log_index *)
+type append_entries_response =
+  {term: term; success: (log_index, log_index) Result.t}

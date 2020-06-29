@@ -71,16 +71,13 @@ module Lwt_queue = struct
 end
 
 module Quorum = struct
-  type ('k, 'v) t = {add: 'k * 'v -> unit; mutable fulfilled: bool}
+  type 'a t = {elts: 'a list; n: int; threshold: int; eq:'a -> 'a -> bool}
 
-  let make_quorum ~threshold ~equal ~(f : ('a * 'b) list -> unit) : ('a, 'b) t =
-    let xs = ref [] in
-    let rec add ((k, _) as x) =
-      if not (List.Assoc.mem !xs ~equal k) then (
-        xs := x :: !xs ;
-        if List.length !xs >= threshold then (
-          t.fulfilled <- true ;
-          f !xs ) )
-    and t = {add; fulfilled= false} in
-    t
+  let empty threshold eq = {elts=[]; n=0; threshold; eq}
+
+  let add v t =
+    if List.mem t.elts v ~equal:t.eq then Error `AlreadyInList
+    else Ok {t with elts= v :: t.elts; n= t.n + 1}
+
+  let satisified t = t.n >= t.threshold
 end
