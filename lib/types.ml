@@ -105,13 +105,13 @@ type log_index = int64 [@@deriving protobuf]
 type log_entry = {command_id: command_id [@key 1]; term: term [@key 2]}
 [@@deriving protobuf]
 
-let pp_entry pp_a f entry =
-  Fmt.pf f "(id:%a term:%a)" pp_a entry.command_id Fmt.int64 entry.term
+let pp_entry f entry =
+  Fmt.pf f "(id:%a term:%a)" Fmt.int64 entry.command_id Fmt.int64 entry.term
 
 let string_of_entry (entry : log_entry)
-  = Fmt.str "%a" (pp_entry Int64.pp) entry
+  = Fmt.str "%a" pp_entry entry
 
-let string_of_entries entries = Fmt.str "(%a)" (Fmt.list (pp_entry Int64.pp)) entries
+let string_of_entries entries = Fmt.str "(%a)" (Fmt.list pp_entry) entries
 
 (* Messaging types *)
 type request_vote = {term: int64; leader_commit: log_index}
