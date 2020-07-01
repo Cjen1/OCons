@@ -3,6 +3,10 @@ open Base
 open Utils
 module L = Log
 
+let src = Logs.Src.create "Paxos" ~doc:"Paxos core algorithm"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 (* R before means receiving *)
 type event =
   [ `Tick
@@ -19,30 +23,46 @@ type action =
   | `SendAppendEntriesResponse of node_id * append_entries_response
   | `CommitIndexUpdate of log_index ]
 
+let pp_action f (x : action) =
+  match x with
+  | `SendRequestVote (id, _rv) ->
+      Fmt.pf f "SendRequestVote to %a" Fmt.int64 id
+  | `SendRequestVoteResponse (id, _) ->
+      Fmt.pf f "SendRequestVoteResponse to %a" Fmt.int64 id
+  | `SendAppendEntries (id, _) ->
+      Fmt.pf f "SendAppendEntries to %a" Fmt.int64 id
+  | `SendAppendEntriesResponse (id, _) ->
+      Fmt.pf f "SendAppendEntriesResponse to %a" Fmt.int64 id
+  | `CommitIndexUpdate i ->
+      Fmt.pf f "CommitIndexUpdate to %a" Fmt.int64 i
+
 type config =
-  {
-    phase1majority: int
+  { phase1majority: int
   ; phase2majority: int
   ; other_nodes: node_id list
-  ; num_nodes : int
-  ; node_id : node_id
-  }
+  ; num_nodes: int
+  ; node_id: node_id }
 
 type node_state =
-  | Follower
+  | Follower of {heartbeat: bool}
   | Candidate of
-      { 
-       quorum: node_id Quorum.t
-      ; entries: log_entry list
-      ; start_index: log_index }
+      {quorum: node_id Quorum.t; entries: log_entry list; start_index: log_index}
   | Leader of
-      { 
-      match_index: (node_id, log_index, Int64.comparator_witness) Map.t
-      ; next_index: (node_id, log_index, Int64.comparator_witness) Map.t }
+      { match_index: (node_id, log_index, Int64.comparator_witness) Map.t
+      ; next_index: (node_id, log_index, Int64.comparator_witness) Map.t
+      ; heartbeat: bool }
+
+let pp_node_state f (x : node_state) =
+  match x with
+  | Follower _ ->
+      Fmt.pf f "Follower"
+  | Candidate _ ->
+      Fmt.pf f "Candidate"
+  | Leader _ ->
+      Fmt.pf f "Leader"
 
 type t =
   { config: config
-  ; heartbeat: bool
   ; current_term: Term.t
   ; log: L.t
   ; commit_index: log_index
@@ -56,16 +76,35 @@ let make_append_entries (t : t) next_index =
   let leader_commit = t.commit_index in
   {term; prev_log_index; prev_log_term; entries; leader_commit}
 
+let check_commit_index t =
+  match t.node_state with
+  | Leader s ->
+      let commit_index =
+        Map.fold s.match_index ~init:[L.get_max_index t.log]
+          ~f:(fun ~key:_ ~data acc -> data :: acc)
+        |> List.sort ~compare:Int64.compare
+        |> List.rev
+        |> fun ls -> List.nth_exn ls (t.config.phase2majority - 1)
+      in
+      let actions =
+        if Int64.(commit_index <> t.commit_index) then
+          [`CommitIndexUpdate commit_index]
+        else []
+      in
+      (commit_index, actions)
+  | _ ->
+      (t.commit_index, [])
+
 let transition_to_leader t =
   match t.node_state with
   | Candidate s ->
+      Log.info (fun m -> m "Transition to leader") ;
       let entries =
         List.map s.entries ~f:(fun entry -> {entry with term= t.current_term.t})
       in
       let log =
         L.add_entries_remove_conflicts t.log ~start_index:s.start_index entries
       in
-      let highest_index = L.get_max_index log in
       let match_index, next_index =
         List.fold t.config.other_nodes
           ~init:(Map.empty (module Int64), Map.empty (module Int64))
@@ -74,14 +113,12 @@ let transition_to_leader t =
             let ni = Map.set ni ~key:id ~data:Int64.(t.commit_index + one) in
             (mi, ni))
       in
-      let node_state = Leader {match_index; next_index} in
+      let node_state = Leader {match_index; next_index; heartbeat= false} in
       let t = {t with node_state; log} in
       let fold actions node_id =
         let next_index = Map.find_exn next_index node_id in
-        if Int64.(next_index >= highest_index) then
-          `SendAppendEntries (node_id, make_append_entries t next_index)
-          :: actions
-        else actions
+        `SendAppendEntries (node_id, make_append_entries t next_index)
+        :: actions
       in
       let actions = List.fold t.config.other_nodes ~init:[] ~f:fold in
       (t, actions)
@@ -90,46 +127,73 @@ let transition_to_leader t =
       @@ Invalid_argument
            "Cannot transition to leader from states other than candidate"
 
-let update_current_term term t = 
+let update_current_term term t =
   let current_term = Term.update_current_term term t.current_term in
   {t with current_term}
 
-let transition_to_candidate t = 
+let transition_to_candidate t =
   let updated_term : term =
     let open Int64 in
     let id_in_current_epoch =
       t.current_term.t
       - (t.current_term.t % of_int t.config.num_nodes)
-      + t.config.node_id 
+      + t.config.node_id
     in
     if id_in_current_epoch <= t.current_term.t then
       id_in_current_epoch + of_int t.config.num_nodes
     else id_in_current_epoch
   in
-  let node_state = 
-    let quorum = Quorum.empty t.config.phase1majority Int64.equal in
-    let entries = L.entries_after_inc t.log Int64.(t.commit_index + one) in
-    Candidate {quorum; entries; start_index=Int64.(t.commit_index + one)}
+  Log.info (fun m ->
+      m "Transition to candidate term = %a" Fmt.int64 updated_term) ;
+  let quorum = Quorum.empty t.config.phase1majority Int64.equal in
+  let quorum =
+    match Quorum.add t.config.node_id quorum with
+    | Ok quorum ->
+        quorum
+    | Error _ ->
+        assert false
   in
-  let t = {t with node_state; heartbeat=true} |> update_current_term updated_term in
-  let actions = 
-    let fold actions node_id = 
-      `SendRequestVote (node_id, {term=t.current_term.t; leader_commit=t.commit_index}) :: actions
+  let entries = L.entries_after_inc t.log Int64.(t.commit_index + one) in
+  let node_state =
+    Candidate {quorum; entries; start_index= Int64.(t.commit_index + one)}
+  in
+  let t = {t with node_state} |> update_current_term updated_term in
+  if Quorum.satisified quorum then transition_to_leader t
+  else
+    let actions =
+      let fold actions node_id =
+        `SendRequestVote
+          (node_id, {term= t.current_term.t; leader_commit= t.commit_index})
+        :: actions
+      in
+      List.fold t.config.other_nodes ~init:[] ~f:fold
     in
-    List.fold t.config.other_nodes ~init:[] ~f:fold
-  in
-  t, actions
+    (t, actions)
 
-let transition_to_follower t = 
-  {t with node_state = Follower}
+let transition_to_follower t =
+  Log.info (fun m -> m "Transition to Follower") ;
+  {t with node_state= Follower {heartbeat= false}}
 
 let rec handle t : event -> t * action list =
  fun event ->
   match (event, t.node_state) with
-  | `Tick, _ when not t.heartbeat ->
+  | `Tick, Follower {heartbeat= false} ->
       transition_to_candidate t
+  | `Tick, Follower {heartbeat= true} ->
+      ({t with node_state= Follower {heartbeat= false}}, [])
+  | `Tick, Leader ({heartbeat= false; _} as s) ->
+      let highest_index = L.get_max_index t.log in
+      let fold actions node_id =
+        let next_index = Map.find_exn s.next_index node_id in
+        if Int64.(next_index >= highest_index) then
+          `SendAppendEntries (node_id, make_append_entries t next_index)
+          :: actions
+        else actions
+      in
+      let actions = List.fold t.config.other_nodes ~f:fold ~init:[] in
+      ({t with node_state= Leader {s with heartbeat= true}}, actions)
   | `Tick, _ ->
-      ({t with heartbeat= false}, [])
+      (t, [])
   | (`RRequestVote (_, {term; _}) as event), _
   | (`RRequestVoteResponse (_, {term; _}) as event), _
   | (`RAppendEntries (_, {term; _}) as event), _
@@ -155,9 +219,16 @@ let rec handle t : event -> t * action list =
             , { term= t.current_term.t
               ; vote_granted= true
               ; entries
-              ; start_index= msg.leader_commit } ) ]
+              ; start_index= Int64.(msg.leader_commit + one) } ) ]
       in
-      ({t with heartbeat= true}, actions)
+      let t =
+        match t.node_state with
+        | Follower _s ->
+            {t with node_state= Follower {heartbeat= true}}
+        | _ ->
+            t
+      in
+      (t, actions)
   | `RRequestVoteResponse (src_id, msg), Candidate s
     when Int64.(msg.term = t.current_term.t) && msg.vote_granted -> (
     match Quorum.add src_id s.quorum with
@@ -218,10 +289,16 @@ let rec handle t : event -> t * action list =
               Int64.(min msg.leader_commit last_entry)
             else t.commit_index
           in
-          ( {t with log; commit_index; heartbeat= true}
-          , [send t (Ok match_index)] ) )
-  | `RAppendEntiresResponse (src, msg), Leader s when Int64.(msg.term = t.current_term.t)
-    -> (
+          let t =
+            match t.node_state with
+            | Follower _s ->
+                {t with node_state= Follower {heartbeat= true}}
+            | _ ->
+                t
+          in
+          ({t with log; commit_index}, [send t (Ok match_index)]) )
+  | `RAppendEntiresResponse (src, msg), Leader s
+    when Int64.(msg.term = t.current_term.t) -> (
     match msg.success with
     | Ok match_index ->
         let updated_match_index =
@@ -233,20 +310,10 @@ let rec handle t : event -> t * action list =
         let next_index =
           Map.set s.next_index ~key:src ~data:Int64.(updated_match_index + one)
         in
-        let node_state = Leader {match_index; next_index} in
-        let commit_index =
-          Map.fold match_index ~init:[] ~f:(fun ~key:_ ~data acc -> data :: acc)
-          |> List.sort ~compare:Int64.compare
-          |> List.rev
-          |> fun ls ->
-          List.nth_exn (L.get_max_index t.log :: ls) t.config.phase2majority
-        in
-        let actions =
-          if Int64.(commit_index <> t.commit_index) then
-            [`CommitIndexUpdate commit_index]
-          else []
-        in
-        ({t with node_state; commit_index}, actions)
+        let node_state = Leader {match_index; next_index; heartbeat= false} in
+        let t = {t with node_state} in
+        let commit_index, actions = check_commit_index t in
+        ({t with commit_index}, actions)
     | Error prev_log_index ->
         let next_index = Map.set s.next_index ~key:src ~data:prev_log_index in
         let actions =
@@ -260,20 +327,21 @@ let rec handle t : event -> t * action list =
       let highest_index = L.get_max_index t.log in
       let fold actions node_id =
         let next_index = Map.find_exn s.next_index node_id in
-        if Int64.(next_index >= highest_index) then
+        if Int64.(highest_index >= next_index) then
           `SendAppendEntries (node_id, make_append_entries t next_index)
           :: actions
         else actions
       in
       let actions = List.fold t.config.other_nodes ~f:fold ~init:[] in
-      (t, actions)
+      let commit_index, actions' = check_commit_index t in
+      ({t with commit_index}, actions' @ actions)
   | `LogAddition, _ ->
       (t, [])
 
 let create_node config log current_term =
+  Log.info (fun m -> m "Creating new node with id %a" Fmt.int64 config.node_id) ;
   { config
-  ; heartbeat= false
   ; log
   ; current_term
   ; commit_index= Int64.zero
-  ; node_state= Follower }
+  ; node_state= Follower {heartbeat= false} }

@@ -118,14 +118,18 @@ let () =
          (fun _ -> raise @@ Unix.Unix_error (Unix.EPIPE, "", "")))
   in
   let open Alcotest_lwt in
-  Lwt_main.run
-  @@ run "Log tests"
-       [ ( "Basic functionality"
-         , [ test_case "Change" `Quick test_change_sync
-           ; test_case "Reload" `Quick test_reload 
-           ; test_case "get_term" `Quick test_get_term
-           ; test_case "get_max_index" `Quick test_get_max_index
-           ; test_case "entries_after" `Quick test_entries_after_inc
-           ; test_case "add_remove_conficts" `Quick test_add_entries_remove_conflicts
-           ; test_case "remove geq" `Quick test_remove_geq
-           ] ) ]
+  let run () =
+    Lwt_main.run
+    @@ run "Log tests"
+         [ ( "Basic functionality"
+           , [ test_case "Change" `Quick test_change_sync
+             ; test_case "Reload" `Quick test_reload
+             ; test_case "get_term" `Quick test_get_term
+             ; test_case "get_max_index" `Quick test_get_max_index
+             ; test_case "entries_after" `Quick test_entries_after_inc
+             ; test_case "add_remove_conficts" `Quick
+                 test_add_entries_remove_conflicts
+             ; test_case "remove geq" `Quick test_remove_geq ] ) ]
+  in
+  let finally () = Unix.unlink test_file in
+  try run () ; finally () with e -> finally () ; raise e

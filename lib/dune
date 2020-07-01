@@ -4,7 +4,7 @@
  (libraries base lwt lwt.unix logs.lwt logs.fmt fmt.tty capnp hex
    unix_capnp_messaging owal)
  (preprocess
-  (pps ppx_deriving_protobuf)))
+  (pps ppx_deriving.std ppx_deriving_protobuf)))
 
 (rule
  (targets messaging_api.ml messaging_api.mli)
