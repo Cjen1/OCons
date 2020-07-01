@@ -72,7 +72,7 @@ let log_entry_from_capnp entry =
 let log_entry_to_capnp entry =
   let open API.Builder.LogEntry in
   let root = init_root () in
-  API.Builder.LogEntry.command_id_set root entry.command_id;
+  API.Builder.LogEntry.command_id_set root entry.command_id ;
   term_set root entry.term ;
   root
 
@@ -88,14 +88,14 @@ module Send = struct
     let requestVote ~term ~leaderCommit =
       let root = ServerMessage.init_root ~message_size () in
       let rv = ServerMessage.request_vote_init root in
-      RequestVote.term_set_int rv term ;
-      RequestVote.leader_commit_set_int rv leaderCommit ;
+      RequestVote.term_set rv term ;
+      RequestVote.leader_commit_set rv leaderCommit ;
       message_of_builder root
 
     let requestVoteResp ~term ~voteGranted ~entries =
       let root = ServerMessage.init_root ~message_size () in
       let rvr = ServerMessage.request_vote_resp_init root in
-      RequestVoteResp.term_set_int rvr term ;
+      RequestVoteResp.term_set rvr term ;
       RequestVoteResp.vote_granted_set rvr voteGranted ;
       let _residual_reference =
         RequestVoteResp.entries_set_list rvr
@@ -106,21 +106,26 @@ module Send = struct
     let appendEntries ~term ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
       let root = ServerMessage.init_root ~message_size () in
       let ae = ServerMessage.append_entries_init root in
-      AppendEntries.term_set_int ae term ;
-      AppendEntries.prev_log_index_set_int ae prevLogIndex ;
-      AppendEntries.prev_log_term_set_int ae prevLogTerm ;
+      AppendEntries.term_set ae term ;
+      AppendEntries.prev_log_index_set ae prevLogIndex ;
+      AppendEntries.prev_log_term_set ae prevLogTerm ;
       let _residual_reference =
         AppendEntries.entries_set_list ae (List.map log_entry_to_capnp entries)
       in
-      AppendEntries.leader_commit_set_int ae leaderCommit ;
+      AppendEntries.leader_commit_set ae leaderCommit ;
       message_of_builder root
 
-    let appendEntriesResp ~term ~success ~matchIndex =
+    let appendEntriesResp ~term ~success =
       let root = ServerMessage.init_root ~message_size () in
       let aer = ServerMessage.append_entries_resp_init root in
-      AppendEntriesResp.term_set_int aer term ;
-      AppendEntriesResp.success_set aer success ;
-      AppendEntriesResp.match_index_set_int aer matchIndex ;
+      AppendEntriesResp.term_set aer term ;
+      let () =
+        match success with
+        | Ok mi ->
+            AppendEntriesResp.success_set aer mi
+        | Error pli ->
+            AppendEntriesResp.failure_set aer pli
+      in
       message_of_builder root
 
     let clientRequest ~command =
@@ -144,6 +149,21 @@ module Send = struct
             CommandResult.failure_set cr
       in
       message_of_builder root
+
+    let requestsAfter ~index = 
+      let root = ServerMessage.init_root ~message_size () in
+      ServerMessage.requests_after_set root index;
+      message_of_builder root
+
+    let requestUpdate ~commands = 
+      let root = ServerMessage.init_root ~message_size () in
+      let commands = List.map (fun cmd ->
+          let root = Command.init_root ~message_size () in
+          command_to_capnp root cmd;
+          root ) commands 
+      in 
+      let _ = ServerMessage.requests_update_set_list root commands in
+      message_of_builder root
   end
 
   let requestVote ?(sem = `AtMostOnce) conn_mgr (t : service) ~term
@@ -163,9 +183,9 @@ module Send = struct
          ~leaderCommit)
 
   let appendEntriesResp ?(sem = `AtMostOnce) conn_mgr (t : service) ~term
-      ~success ~matchIndex =
+      ~success =
     Conn_manager.send ~semantics:sem conn_mgr t
-      (Serialise.appendEntriesResp ~term ~success ~matchIndex)
+      (Serialise.appendEntriesResp ~term ~success)
 
   let clientRequest ?(sem = `AtMostOnce) conn_mgr (t : service) ~command =
     Conn_manager.send ~semantics:sem conn_mgr t
@@ -174,4 +194,12 @@ module Send = struct
   let clientResponse ?(sem = `AtMostOnce) conn_mgr (t : service) ~id ~result =
     Conn_manager.send ~semantics:sem conn_mgr t
       (Serialise.clientResponse ~id ~result)
+
+  let requestsAfter ?(sem = `AtLeastOnce) conn_mgr (t : service) ~index = 
+    Conn_manager.send ~semantics:sem conn_mgr t
+      (Serialise.requestsAfter ~index)
+
+  let requestUpdate ?(sem = `AtLeastOnce) conn_mgr (t : service) ~commands =
+    Conn_manager.send ~semantics:sem conn_mgr t
+      (Serialise.requestUpdate ~commands)
 end

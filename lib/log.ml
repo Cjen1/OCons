@@ -36,10 +36,10 @@ module L_t = struct
 
   let apply t = function
     | Add entry ->
-        {store= entry :: t.store; length= Int64.(t.length + of_int 1)}
+      {store= entry :: t.store; length= Int64.(t.length + of_int 1)}
     | RemoveGEQ i ->
         let drop = drop_of_index t i |> Int64.(max zero) in
-        let store = List.drop t.store (Int64.to_int_exn drop) in
+        let _, store = List.split_n t.store (Int64.to_int_exn drop) in
         let length = Int64.(max zero (t.length - drop)) in
         {store; length}
 end
