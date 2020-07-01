@@ -41,16 +41,17 @@ type config =
   ; phase2majority: int
   ; other_nodes: node_id list
   ; num_nodes: int
-  ; node_id: node_id }
+  ; node_id: node_id
+  ; election_timeout: int }
 
 type node_state =
-  | Follower of {heartbeat: bool}
+  | Follower of {heartbeat: int}
   | Candidate of
       {quorum: node_id Quorum.t; entries: log_entry list; start_index: log_index}
   | Leader of
       { match_index: (node_id, log_index, Int64.comparator_witness) Map.t
       ; next_index: (node_id, log_index, Int64.comparator_witness) Map.t
-      ; heartbeat: bool }
+      ; heartbeat: int }
 
 let pp_node_state f (x : node_state) =
   match x with
@@ -113,7 +114,7 @@ let transition_to_leader t =
             let ni = Map.set ni ~key:id ~data:Int64.(t.commit_index + one) in
             (mi, ni))
       in
-      let node_state = Leader {match_index; next_index; heartbeat= false} in
+      let node_state = Leader {match_index; next_index; heartbeat= 0} in
       let t = {t with node_state; log} in
       let fold actions node_id =
         let next_index = Map.find_exn next_index node_id in
@@ -172,16 +173,18 @@ let transition_to_candidate t =
 
 let transition_to_follower t =
   Log.info (fun m -> m "Transition to Follower") ;
-  {t with node_state= Follower {heartbeat= false}}
+  {t with node_state= Follower {heartbeat= 0}}
 
-let rec handle t : event -> t * action list =
+let rec advance t : event -> t * action list =
  fun event ->
   match (event, t.node_state) with
-  | `Tick, Follower {heartbeat= false} ->
+  | `Tick, Follower {heartbeat} when heartbeat >= t.config.election_timeout ->
+    Log.debug (fun m -> m "transition to candidate");
       transition_to_candidate t
-  | `Tick, Follower {heartbeat= true} ->
-      ({t with node_state= Follower {heartbeat= false}}, [])
-  | `Tick, Leader ({heartbeat= false; _} as s) ->
+  | `Tick, Follower {heartbeat} ->
+    Log.debug (fun m -> m "increment %d to %d" heartbeat (heartbeat + 1));
+      ({t with node_state= Follower {heartbeat= heartbeat + 1}}, [])
+  | `Tick, Leader ({heartbeat; _} as s) when heartbeat > 0 ->
       let highest_index = L.get_max_index t.log in
       let fold actions node_id =
         let next_index = Map.find_exn s.next_index node_id in
@@ -191,7 +194,9 @@ let rec handle t : event -> t * action list =
         else actions
       in
       let actions = List.fold t.config.other_nodes ~f:fold ~init:[] in
-      ({t with node_state= Leader {s with heartbeat= true}}, actions)
+      ({t with node_state= Leader {s with heartbeat= 0}}, actions)
+  | `Tick, Leader ({heartbeat; _} as s) ->
+      ({t with node_state= Leader {s with heartbeat= heartbeat + 1}}, [])
   | `Tick, _ ->
       (t, [])
   | (`RRequestVote (_, {term; _}) as event), _
@@ -200,7 +205,7 @@ let rec handle t : event -> t * action list =
   | (`RAppendEntiresResponse (_, {term; _}) as event), _
     when Int64.(t.current_term.t < term) ->
       let t = t |> update_current_term term |> transition_to_follower in
-      handle t event
+      advance t event
   | `RRequestVote (src, msg), _ when Int64.(msg.term < t.current_term.t) ->
       let actions =
         [ `SendRequestVoteResponse
@@ -224,7 +229,7 @@ let rec handle t : event -> t * action list =
       let t =
         match t.node_state with
         | Follower _s ->
-            {t with node_state= Follower {heartbeat= true}}
+            {t with node_state= Follower {heartbeat= 0}}
         | _ ->
             t
       in
@@ -292,7 +297,7 @@ let rec handle t : event -> t * action list =
           let t =
             match t.node_state with
             | Follower _s ->
-                {t with node_state= Follower {heartbeat= true}}
+                {t with node_state= Follower {heartbeat= 0}}
             | _ ->
                 t
           in
@@ -310,7 +315,7 @@ let rec handle t : event -> t * action list =
         let next_index =
           Map.set s.next_index ~key:src ~data:Int64.(updated_match_index + one)
         in
-        let node_state = Leader {match_index; next_index; heartbeat= false} in
+        let node_state = Leader {s with match_index; next_index} in
         let t = {t with node_state} in
         let commit_index, actions = check_commit_index t in
         ({t with commit_index}, actions)
@@ -344,4 +349,4 @@ let create_node config log current_term =
   ; log
   ; current_term
   ; commit_index= Int64.zero
-  ; node_state= Follower {heartbeat= false} }
+  ; node_state= Follower {heartbeat= config.election_timeout} }

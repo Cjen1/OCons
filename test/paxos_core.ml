@@ -1,7 +1,7 @@
 open Base 
-open Ocamlpaxos
 open Lwt.Infix
-module P = Paxos_core
+module OP = Ocamlpaxos
+module P = OP.Paxos_core
 
 let node_state =
   Alcotest.testable P.pp_node_state (fun a b ->
@@ -24,7 +24,8 @@ let single_config =
     ; phase2majority= 1
     ; other_nodes= []
     ; num_nodes= 1
-    ; node_id= Int64.one }
+    ; node_id= Int64.one 
+    ; election_timeout=1}
 
 let three_config =
   P.
@@ -32,17 +33,18 @@ let three_config =
     ; phase2majority= 2
     ; other_nodes= [2; 3] |> List.map ~f:Int64.of_int
     ; num_nodes= 3
-    ; node_id= Int64.one }
+    ; node_id= Int64.one 
+    ; election_timeout = 1}
 
 let file_init switch n =
   let log_file = Fmt.str "%d.log" n in
   let term_file = Fmt.str "%d.term" n in
-  Log.of_file log_file
+  OP.Log.of_file log_file
   >>= fun log ->
-  Term.of_file term_file
+  OP.Term.of_file term_file
   >>= fun term ->
   Lwt_switch.add_hook (Some switch) (fun () ->
-      Lwt.join [Log.close log; Term.close term]
+      Lwt.join [OP.Log.close log; OP.Term.close term]
       >>= fun () ->
       Lwt.join [Lwt_unix.unlink log_file; Lwt_unix.unlink term_file]) ;
   Lwt.return (log, term)
@@ -101,7 +103,7 @@ let test_tick switch () =
   file_init switch 2
   >>= fun (log, term) ->
   let t = P.create_node three_config log term in
-  let t, actions = P.handle t `Tick in
+  let t, actions = P.advance t `Tick in
   let () =
     match t.node_state with
     | Candidate _ ->
@@ -120,12 +122,12 @@ let test_tick switch () =
       ~init:t.config.other_nodes actions
   in
   Alcotest.(check int) "Number of sends" 0 (List.length rem) ;
-  let t = {t with node_state= Follower {heartbeat= true}} in
-  let t, actions = P.handle t `Tick in
+  let t = {t with node_state= Follower {heartbeat= 0}} in
+  let t, actions = P.advance t `Tick in
   Alcotest.(check int) "Check empty actions" 0 (List.length actions) ;
   let () =
     match t.node_state with
-    | Follower {heartbeat= false} ->
+    | Follower {heartbeat= 1} ->
         ()
     | _ ->
         Alcotest.fail "Incorrect tick state"
@@ -136,7 +138,7 @@ let test_loop_single switch () =
   file_init switch 3
   >>= fun (log, term) ->
   let t = P.create_node single_config log term in
-  let t, actions = P.handle t `Tick in
+  let t, actions = P.advance t `Tick in
   let () =
     match t.node_state with
     | Leader _ ->
@@ -149,11 +151,11 @@ let test_loop_single switch () =
   in
   let log =
     t.log
-    |> Log.add Int64.{term= t.current_term.t; command_id= of_int 1}
-    |> Log.add Int64.{term= t.current_term.t; command_id= of_int 2}
+    |> OP.Log.add Int64.{term= t.current_term.t; command_id= of_int 1}
+    |> OP.Log.add Int64.{term= t.current_term.t; command_id= of_int 2}
   in
   let t = {t with log} in
-  let t, actions = P.handle t `LogAddition in
+  let t, actions = P.advance t `LogAddition in
   (* Since singleton then actions should include a commit index update to 2 *)
   Alcotest.(check @@ list action)
     "Actions = [commit index to 2]"
@@ -183,7 +185,7 @@ let test_loop_triple switch () =
   file_init switch 13 >>= fun (log, term) ->
   let t3 = P.create_node {three_config with node_id = Int64.of_int 3} log term in
      *)
-  let t2, actions = P.handle t2 `Tick in
+  let t2, actions = P.advance t2 `Tick in
   let rv1 =
     List.find_map
       ~f:(function
@@ -198,7 +200,7 @@ let test_loop_triple switch () =
     |> function
     | Some rv -> rv | None -> Alcotest.fail "Did not have request vote"
   in
-  let t1, actions = P.handle t1 (`RRequestVote (n2, rv1)) in
+  let t1, actions = P.advance t1 (`RRequestVote (n2, rv1)) in
   let rvr =
     List.find_map
       ~f:(function
@@ -219,17 +221,17 @@ let test_loop_triple switch () =
       Logs.debug (fun m -> m "Candidate(start Index = %a), rvr(start index = %a" Fmt.int64 s.start_index Fmt.int64 rvr.start_index);
     | _ -> Alcotest.fail "Should be candidate still"
   in
-  let t2, _ = P.handle t2 (`RRequestVoteResponse (n1, rvr)) in
+  let t2, _ = P.advance t2 (`RRequestVoteResponse (n1, rvr)) in
   Alcotest.(check string)
     "Leader after election" "Leader"
     (Fmt.str "%a" P.pp_node_state t2.node_state) ;
   let log =
     t2.log
-    |> Log.add Int64.{term= t2.current_term.t; command_id= of_int 1}
-    |> Log.add Int64.{term= t2.current_term.t; command_id= of_int 2}
+    |> OP.Log.add Int64.{term= t2.current_term.t; command_id= of_int 1}
+    |> OP.Log.add Int64.{term= t2.current_term.t; command_id= of_int 2}
   in
   let t2 = {t2 with log} in
-  let t2, actions = P.handle t2 `LogAddition in
+  let t2, actions = P.advance t2 `LogAddition in
   Logs.debug (fun m -> m "Log addition: %a" (Fmt.list ~sep:(Fmt.comma) P.pp_action) actions);
   let ae =
     List.find_map
@@ -245,7 +247,7 @@ let test_loop_triple switch () =
     | None ->
       Alcotest.fail "Did not receive append entries"
   in
-  let t1, actions = P.handle t1 (`RAppendEntries (n2, ae)) in
+  let t1, actions = P.advance t1 (`RAppendEntries (n2, ae)) in
   Logs.debug (fun m -> m "Append entries: %a" (Fmt.list ~sep:(Fmt.comma) P.pp_action) actions);
   let aer =
     List.find_map
@@ -261,7 +263,7 @@ let test_loop_triple switch () =
     | None ->
       Alcotest.fail "Did not receive append entries"
   in
-  let t2, actions = P.handle t2 (`RAppendEntiresResponse (n1, aer)) in
+  let t2, actions = P.advance t2 (`RAppendEntiresResponse (n1, aer)) in
   Logs.debug (fun m -> m "Append entries response: %a" (Fmt.list ~sep:(Fmt.comma) P.pp_action) actions);
   let () = 
     List.find actions ~f:(function 
