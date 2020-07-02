@@ -9,13 +9,16 @@ open Base
         - Append to end of log
     *)
 module L_t = struct
-  type t = {store: log_entry list; length: int64}
+  type t =
+    { store: log_entry list
+    ; command_set: (command_id, Int64.comparator_witness) Set.t
+    ; length: int64 }
 
-  let nth_of_index t i = Int64.(t.length - i) 
+  let nth_of_index t i = Int64.(t.length - i)
 
   let drop_of_index t i = Int64.(nth_of_index t i + one)
 
-  let init () = {store= []; length= Int64.zero}
+  let init () = {store= []; command_set= Set.empty (module Int64); length= Int64.zero}
 
   type op = Add of log_entry [@key 1] | RemoveGEQ of log_index [@key 2]
   [@@deriving protobuf]
@@ -36,12 +39,16 @@ module L_t = struct
 
   let apply t = function
     | Add entry ->
-      {store= entry :: t.store; length= Int64.(t.length + of_int 1)}
+      let command_set = Set.add t.command_set entry.command_id in
+      {store= entry :: t.store; command_set; length= Int64.(t.length + of_int 1)}
     | RemoveGEQ i ->
         let drop = drop_of_index t i |> Int64.(max zero) in
-        let _, store = List.split_n t.store (Int64.to_int_exn drop) in
+        let removed, store = List.split_n t.store (Int64.to_int_exn drop) in
+        let command_set = List.fold_left removed ~init:t.command_set ~f:(fun cset entry ->
+            Set.remove cset entry.command_id) 
+        in 
         let length = Int64.(max zero (t.length - drop)) in
-        {store; length}
+        {store; command_set; length}
 end
 
 module P = Persistant (L_t)
@@ -52,7 +59,9 @@ type t = P.t
 
 let get (t : t) index =
   let nth = nth_of_index t.t index |> Int64.to_int_exn in
-  List.nth t.t.store nth |> Result.of_option ~error:(Not_found_s (Sexp.Atom (Fmt.str "%a" Fmt.int64 index)))
+  List.nth t.t.store nth
+  |> Result.of_option
+       ~error:(Not_found_s (Sexp.Atom (Fmt.str "%a" Fmt.int64 index)))
 
 let get_exn t i = get t i |> Result.ok_exn
 
@@ -71,6 +80,8 @@ let add entry t = change (Add entry) t
 let removeGEQ index t = change (RemoveGEQ index) t
 
 let get_max_index (t : t) = t.t.length
+
+let id_in_log t id = Set.mem t.t.command_set id
 
 let entries_after_inc t index =
   let drop = drop_of_index t.t index |> Int64.to_int_exn in

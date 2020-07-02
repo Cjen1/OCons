@@ -34,13 +34,13 @@ let command =
       and data_path = anon ("data_path" %: string)
       and node_id = anon ("node_id" %: int)
       and node_list = anon ("node_list" %: node_list)
-      and election_timeout = anon ("election_timeout" %: float)
-      and idle_timeout = anon ("idle_timeout" %: float) in
+      and election_timeout = anon ("election_timeout" %: int)
+      and tick_time = anon ("tick_time" %: float) in
       fun () ->
         let node_id = Int64.of_int node_id in
         let log_path = data_path ^ ".log" in
         let term_path = data_path ^ ".term" in
-        Paxos.create ~listen_address ~node_list ~election_timeout ~idle_timeout
+        Infra.create ~listen_address ~node_list ~election_timeout ~tick_time
           ~log_path ~term_path node_id
         |> Lwt_main.run)
 

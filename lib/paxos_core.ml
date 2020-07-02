@@ -152,7 +152,7 @@ let transition_to_candidate t =
     | Ok quorum ->
         quorum
     | Error _ ->
-        assert false
+      raise @@ Invalid_argument "Tried to add element to empty quorum and failed"
   in
   let entries = L.entries_after_inc t.log Int64.(t.commit_index + one) in
   let node_state =

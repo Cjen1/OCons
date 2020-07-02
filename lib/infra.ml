@@ -16,9 +16,10 @@ let ( >>>= ) = Lwt_result.bind
 
 type t =
   { mutable core: P.t
-  ; last_applied: log_index
-  ; seen_client_requests: (command_id, command * client_id option) Hashtbl.t
+  ; mutable last_applied: log_index
   ; mutable ongoing_log_addition: bool
+  ; seen_client_requests: (command_id, command * client_id option) Hashtbl.t
+  ; client_results: (command_id, op_result) Hashtbl.t
   ; state_machine: StateMachine.t
   ; cmgr: U.Conn_manager.t }
 
@@ -28,12 +29,18 @@ let rec advance_state_machine t = function
       let entry = L.get_exn t.core.log index in
       match Hashtbl.find t.seen_client_requests entry.command_id with
       | None ->
+          Log.err (fun m -> m "Have to get client command from other replicas") ;
           List.map t.core.config.other_nodes ~f:(fun id ->
               M.Send.requestsAfter t.cmgr id ~index)
       | Some (cmd, id_o) -> (
           let result = StateMachine.update t.state_machine cmd in
+          Hashtbl.set t.client_results ~key:cmd.id ~data:result ;
+          t.last_applied <- index ;
           match id_o with
           | Some cid ->
+              Log.err (fun m ->
+                  m "Sending response for index %a cid %a to %a" Fmt.int64 index
+                    Fmt.int64 cmd.id Fmt.int64 cid) ;
               [M.Send.clientResponse t.cmgr cid ~id:cmd.id ~result]
           | None ->
               [] ) )
@@ -44,17 +51,23 @@ let perform_action t : P.action -> (unit, exn) Lwt_result.t list =
   let open M.Send in
   function
   | `SendRequestVote (node_id, msg) ->
+      Log.debug (fun m -> m "Sending request vote") ;
       [requestVote t.cmgr node_id ~term:msg.term ~leaderCommit:msg.leader_commit]
   | `SendRequestVoteResponse (node_id, msg) ->
+      Log.debug (fun m -> m "Sending request vote response") ;
       [ requestVoteResp t.cmgr node_id ~term:msg.term
           ~voteGranted:msg.vote_granted ~entries:msg.entries ]
   | `SendAppendEntries (node_id, msg) ->
+      Log.debug (fun m -> m "Sending append entries") ;
       [ appendEntries t.cmgr node_id ~term:msg.term
           ~prevLogIndex:msg.prev_log_index ~prevLogTerm:msg.prev_log_term
           ~entries:msg.entries ~leaderCommit:msg.leader_commit ]
   | `SendAppendEntriesResponse (node_id, msg) ->
+      Log.debug (fun m -> m "Sending append entries response") ;
       [appendEntriesResp t.cmgr node_id ~term:msg.term ~success:msg.success]
   | `CommitIndexUpdate commit_index ->
+      Log.debug (fun m ->
+          m "Advancing state machine to commit index %a" Fmt.int64 commit_index) ;
       advance_state_machine t commit_index
 
 let do_actions t actions =
@@ -150,26 +163,32 @@ let handle_message t_p _cmgr src msg =
          This should ensure that the system gets minimally overloaded
       *)
       let command = Messaging.command_from_capnp msg in
-      Base.Hashtbl.update t.seen_client_requests command.id ~f:(function
-        | Some v ->
-            v
-        | None ->
-            (* Dispatch `LogAddition as a side effect *)
-            ( if not t.ongoing_log_addition then
-              let async () =
-                Lwt.catch
-                  (fun () -> handle_advance t `LogAddition)
-                  Lwt.return_error
-                >|= function
-                | Ok () ->
-                    ()
-                | Error exn ->
-                    Log.err (fun m ->
-                        m "Got %a while handling log addition" Fmt.exn exn)
-              in
-              Lwt.async async ) ;
-            (command, Some src)) ;
-      Lwt.return_ok ()
+      if Hashtbl.mem t.client_results command.id then
+        M.Send.clientResponse ~sem:`AtLeastOnce t.cmgr src ~id:command.id
+          ~result:(Hashtbl.find_exn t.client_results command.id)
+      else (
+        Base.Hashtbl.update t.seen_client_requests command.id ~f:(function
+          | Some v ->
+              v
+          | None when L.id_in_log t.core.log command.id ->
+              (command, Some src)
+          | None ->
+              (* Dispatch `LogAddition as a side effect *)
+              ( if not t.ongoing_log_addition then
+                let async () =
+                  Lwt.catch
+                    (fun () -> handle_advance t `LogAddition)
+                    Lwt.return_error
+                  >|= function
+                  | Ok () ->
+                      ()
+                  | Error exn ->
+                      Log.err (fun m ->
+                          m "Got %a while handling log addition" Fmt.exn exn)
+                in
+                Lwt.async async ) ;
+              (command, Some src)) ;
+        Lwt.return_ok () )
   | ClientResponse _msg ->
       raise (Invalid_argument "ClientResponse message")
   | RequestsAfter index ->
@@ -253,6 +272,7 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
     ; last_applied
     ; state_machine
     ; seen_client_requests= Hashtbl.create (module Int64)
+    ; client_results = Hashtbl.create (module Int64)
     ; ongoing_log_addition= false
     ; cmgr }
   in
