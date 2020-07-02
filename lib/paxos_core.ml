@@ -343,6 +343,11 @@ let rec advance t : event -> t * action list =
   | `LogAddition, _ ->
       (t, [])
 
+let is_leader t = 
+  match t.node_state with 
+  | Leader _ -> true
+  | _ -> false
+
 let create_node config log current_term =
   Log.info (fun m -> m "Creating new node with id %a" Fmt.int64 config.node_id) ;
   { config

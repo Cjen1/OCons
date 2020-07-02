@@ -38,7 +38,7 @@ let rec advance_state_machine t = function
           t.last_applied <- index ;
           match id_o with
           | Some cid ->
-              Log.err (fun m ->
+              Log.debug (fun m ->
                   m "Sending response for index %a cid %a to %a" Fmt.int64 index
                     Fmt.int64 cmd.id Fmt.int64 cid) ;
               [M.Send.clientResponse t.cmgr cid ~id:cmd.id ~result]
@@ -71,6 +71,7 @@ let perform_action t : P.action -> (unit, exn) Lwt_result.t list =
       advance_state_machine t commit_index
 
 let do_actions t actions =
+  Log.debug (fun m -> m "Doing actions: %a" (Fmt.list P.pp_action) actions) ;
   let actions = List.map ~f:(perform_action t) actions in
   let actions = List.fold_left actions ~init:[] ~f:(fun acc v -> v @ acc) in
   List.fold_left actions ~init:(Lwt.return_ok ()) ~f:(fun prev v ->
@@ -108,12 +109,14 @@ let handle_message t_p _cmgr src msg =
   let open ServerMessage in
   match msg |> Capnp.BytesMessage.Message.readonly |> of_message |> get with
   | RequestVote msg ->
+      Log.debug (fun m -> m "Got request vote from %a" Fmt.int64 src) ;
       let open RequestVote in
       let term = term_get msg in
       let leader_commit = leader_commit_get msg in
       let event = `RRequestVote (src, Types.{term; leader_commit}) in
       handle_advance t event
   | RequestVoteResp msg ->
+      Log.debug (fun m -> m "Got request vote response from %a" Fmt.int64 src) ;
       let open RequestVoteResp in
       let vote_granted = vote_granted_get msg in
       let term = term_get msg in
@@ -127,6 +130,7 @@ let handle_message t_p _cmgr src msg =
       in
       handle_advance t event
   | AppendEntries msg ->
+      Log.debug (fun m -> m "Got append entries from %a" Fmt.int64 src) ;
       let open AppendEntries in
       let term = term_get msg in
       let prev_log_index = prev_log_index_get msg in
@@ -143,6 +147,7 @@ let handle_message t_p _cmgr src msg =
       in
       handle_advance t event
   | AppendEntriesResp msg ->
+      Log.debug (fun m -> m "Got append entries response from %a" Fmt.int64 src) ;
       let open AppendEntriesResp in
       let term = term_get msg in
       let success =
@@ -158,37 +163,68 @@ let handle_message t_p _cmgr src msg =
       in
       let event = `RAppendEntiresResponse (src, Types.{term; success}) in
       handle_advance t event
-  | ClientRequest msg ->
-      (* Dispatch a thread to add new entries to the log at some future point
-         This should ensure that the system gets minimally overloaded
-      *)
+  | ClientRequest msg when P.is_leader t.core -> (
       let command = Messaging.command_from_capnp msg in
-      if Hashtbl.mem t.client_results command.id then
-        M.Send.clientResponse ~sem:`AtLeastOnce t.cmgr src ~id:command.id
-          ~result:(Hashtbl.find_exn t.client_results command.id)
-      else (
-        Base.Hashtbl.update t.seen_client_requests command.id ~f:(function
-          | Some v ->
-              v
-          | None when L.id_in_log t.core.log command.id ->
-              (command, Some src)
-          | None ->
-              (* Dispatch `LogAddition as a side effect *)
-              ( if not t.ongoing_log_addition then
-                let async () =
-                  Lwt.catch
-                    (fun () -> handle_advance t `LogAddition)
-                    Lwt.return_error
-                  >|= function
-                  | Ok () ->
-                      ()
-                  | Error exn ->
-                      Log.err (fun m ->
-                          m "Got %a while handling log addition" Fmt.exn exn)
-                in
-                Lwt.async async ) ;
-              (command, Some src)) ;
-        Lwt.return_ok () )
+      match Hashtbl.find t.client_results command.id with
+      | Some result ->
+          ( Log.debug (fun m ->
+                m "Got client request %a from %a but already has a result."
+                  Fmt.int64 command.id Fmt.int64 src) ;
+            M.Send.clientResponse ~sem:`AtLeastOnce t.cmgr src ~id:command.id )
+            ~result
+      | None when L.id_in_log t.core.log command.id ->
+          Log.debug (fun m -> m "Command already in log, but uncommitted") ;
+          Hashtbl.set t.seen_client_requests ~key:command.id
+            ~data:(command, Some src) ;
+          Lwt.return_ok ()
+      | None ->
+          Log.debug (fun m -> m "Client request not in log, adding") ;
+          Hashtbl.set t.seen_client_requests ~key:command.id
+            ~data:(command, Some src);
+          t.core <-
+            { t.core with
+              log=
+                L.add
+                  {term= t.core.current_term.t; command_id= command.id}
+                  t.core.log } ;
+          (* Dispatch a thread to add new entries to the log at some future point
+             This should ensure that the system gets minimally overloaded
+          *)
+          let _dispatch_log_addition =
+            if not t.ongoing_log_addition then
+              let async () =
+                Lwt.catch
+                  (fun () -> handle_advance t `LogAddition)
+                  Lwt.return_error
+                >|= function
+                | Ok () ->
+                    ()
+                | Error exn ->
+                    Log.err (fun m ->
+                        m "Got %a while handling log addition" Fmt.exn exn)
+              in
+              Lwt.async async
+          in
+          Lwt.return_ok () )
+  | ClientRequest msg -> (
+      let command = Messaging.command_from_capnp msg in
+      Log.debug (fun m ->
+          m "Got client request %a from %a when not the leader." Fmt.int64
+            command.id Fmt.int64 src) ;
+      Hashtbl.set t.seen_client_requests ~key:command.id
+        ~data:(command, Some src) ;
+      match Hashtbl.find t.client_results command.id with
+      | Some result ->
+          ( Log.debug (fun m ->
+                m "Got client request %a from %a but already has a result."
+                  Fmt.int64 command.id Fmt.int64 src) ;
+            M.Send.clientResponse ~sem:`AtLeastOnce t.cmgr src ~id:command.id )
+            ~result
+      | None ->
+          Log.debug (fun m ->
+              m "No result found for %a from %a" Fmt.int64 command.id Fmt.int64
+                src) ;
+          Lwt.return_ok () )
   | ClientResponse _msg ->
       raise (Invalid_argument "ClientResponse message")
   | RequestsAfter index ->
@@ -254,8 +290,8 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
   >>= fun (log, term) ->
   let config =
     let num_nodes = List.length node_list in
-    let phase1majority = num_nodes / 2 in
-    let phase2majority = num_nodes / 2 in
+    let phase1majority = (num_nodes / 2) + 1 in
+    let phase2majority = (num_nodes / 2) + 1 in
     let other_nodes = other_node_list |> List.map ~f:fst in
     P.
       { phase1majority
@@ -272,7 +308,7 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
     ; last_applied
     ; state_machine
     ; seen_client_requests= Hashtbl.create (module Int64)
-    ; client_results = Hashtbl.create (module Int64)
+    ; client_results= Hashtbl.create (module Int64)
     ; ongoing_log_addition= false
     ; cmgr }
   in
