@@ -273,7 +273,10 @@ let test_loop_triple switch () =
     | Some _ -> ()
     | None -> Alcotest.fail "Did not get commit index update"
   in 
-  ignore(t1,t2);
+  let t1, actions = P.advance t1 `Tick in
+  Alcotest.(check int) "Tick actions = []" 0 (List.length actions);
+  let t1, actions = P.advance t1 `Tick in
+
   Lwt.return_unit
 
 let reporter =

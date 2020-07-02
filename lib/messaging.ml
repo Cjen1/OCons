@@ -92,7 +92,7 @@ module Send = struct
       RequestVote.leader_commit_set rv leaderCommit ;
       message_of_builder root
 
-    let requestVoteResp ~term ~voteGranted ~entries =
+    let requestVoteResp ~term ~voteGranted ~entries ~startIndex =
       let root = ServerMessage.init_root ~message_size () in
       let rvr = ServerMessage.request_vote_resp_init root in
       RequestVoteResp.term_set rvr term ;
@@ -101,6 +101,7 @@ module Send = struct
         RequestVoteResp.entries_set_list rvr
           (List.map log_entry_to_capnp entries)
       in
+      RequestVoteResp.start_index_set rvr startIndex;
       message_of_builder root
 
     let appendEntries ~term ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
@@ -172,9 +173,9 @@ module Send = struct
       (Serialise.requestVote ~term ~leaderCommit)
 
   let requestVoteResp ?(sem = `AtMostOnce) conn_mgr (t : service) ~term
-      ~voteGranted ~entries =
+      ~voteGranted ~entries ~startIndex =
     Conn_manager.send ~semantics:sem conn_mgr t
-      (Serialise.requestVoteResp ~term ~voteGranted ~entries)
+      (Serialise.requestVoteResp ~term ~voteGranted ~entries ~startIndex)
 
   let appendEntries ?(sem = `AtMostOnce) conn_mgr (t : service) ~term
       ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =

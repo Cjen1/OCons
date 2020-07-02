@@ -56,7 +56,7 @@ let perform_action t : P.action -> (unit, exn) Lwt_result.t list =
   | `SendRequestVoteResponse (node_id, msg) ->
       Log.debug (fun m -> m "Sending request vote response") ;
       [ requestVoteResp t.cmgr node_id ~term:msg.term
-          ~voteGranted:msg.vote_granted ~entries:msg.entries ]
+          ~voteGranted:msg.vote_granted ~entries:msg.entries ~startIndex:(msg.start_index)]
   | `SendAppendEntries (node_id, msg) ->
       Log.debug (fun m -> m "Sending append entries") ;
       [ appendEntries t.cmgr node_id ~term:msg.term

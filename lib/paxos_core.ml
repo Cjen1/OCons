@@ -152,7 +152,8 @@ let transition_to_candidate t =
     | Ok quorum ->
         quorum
     | Error _ ->
-      raise @@ Invalid_argument "Tried to add element to empty quorum and failed"
+        raise
+        @@ Invalid_argument "Tried to add element to empty quorum and failed"
   in
   let entries = L.entries_after_inc t.log Int64.(t.commit_index + one) in
   let node_state =
@@ -179,10 +180,10 @@ let rec advance t : event -> t * action list =
  fun event ->
   match (event, t.node_state) with
   | `Tick, Follower {heartbeat} when heartbeat >= t.config.election_timeout ->
-    Log.debug (fun m -> m "transition to candidate");
+      Log.debug (fun m -> m "transition to candidate") ;
       transition_to_candidate t
   | `Tick, Follower {heartbeat} ->
-    Log.debug (fun m -> m "increment %d to %d" heartbeat (heartbeat + 1));
+      Log.debug (fun m -> m "Tick: increment %d to %d" heartbeat (heartbeat + 1)) ;
       ({t with node_state= Follower {heartbeat= heartbeat + 1}}, [])
   | `Tick, Leader ({heartbeat; _} as s) when heartbeat > 0 ->
       let highest_index = L.get_max_index t.log in
@@ -213,12 +214,12 @@ let rec advance t : event -> t * action list =
             , { term= t.current_term.t
               ; vote_granted= false
               ; entries= []
-              ; start_index= msg.leader_commit } ) ]
+              ; start_index= Int64.(msg.leader_commit + one) } ) ]
       in
       (t, actions)
   | `RRequestVote (src, msg), _ ->
       let actions =
-        let entries = L.entries_after_inc t.log msg.leader_commit in
+        let entries = L.entries_after_inc t.log Int64.(msg.leader_commit + one) in
         [ `SendRequestVoteResponse
             ( src
             , { term= t.current_term.t
@@ -241,7 +242,11 @@ let rec advance t : event -> t * action list =
         (t, [])
     | Ok (quorum : node_id Quorum.t) ->
         let merge x sx y sy =
-          assert (Int64.(sx = sy)) ;
+          if not Int64.(sx = sy) then (
+            Log.err (fun m ->
+                m "RRequestVoteResponse %a != %a" Fmt.int64 sx Fmt.int64 sy) ;
+            raise
+            @@ Invalid_argument "Not correct entry to request vote response" ) ;
           let rec loop acc : 'a -> log_entry list = function
             | xs, [] ->
                 xs
@@ -343,10 +348,7 @@ let rec advance t : event -> t * action list =
   | `LogAddition, _ ->
       (t, [])
 
-let is_leader t = 
-  match t.node_state with 
-  | Leader _ -> true
-  | _ -> false
+let is_leader t = match t.node_state with Leader _ -> true | _ -> false
 
 let create_node config log current_term =
   Log.info (fun m -> m "Creating new node with id %a" Fmt.int64 config.node_id) ;
