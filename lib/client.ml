@@ -109,7 +109,7 @@ let resend_iter t (send_fn, promise) =
       Lwt.catch p_t catch >>= Lwt.return_error
     in
     let promise = promise >>= fun _ -> Lwt.return_ok () in
-    Lwt.choose [timeout (); promise]
+    Lwt.choose [promise; timeout ()]
     >>= function
     | Error () ->
         Log.err (fun m -> m "Timed out while waiting for response") ;
