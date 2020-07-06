@@ -149,13 +149,7 @@ let test_loop_single switch () =
   let () =
     match actions with [] -> () | _ -> Alcotest.fail "Not empty actions"
   in
-  let log =
-    t.log
-    |> OP.Log.add Int64.{term= t.current_term.t; command_id= of_int 1}
-    |> OP.Log.add Int64.{term= t.current_term.t; command_id= of_int 2}
-  in
-  let t = {t with log} in
-  let t, actions = P.advance t `LogAddition in
+  let t, actions = P.advance t (`LogAddition Int64.[of_int 1; of_int 2]) in
   (* Since singleton then actions should include a commit index update to 2 *)
   Alcotest.(check @@ list action)
     "Actions = [commit index to 2]"
@@ -225,13 +219,7 @@ let test_loop_triple switch () =
   Alcotest.(check string)
     "Leader after election" "Leader"
     (Fmt.str "%a" P.pp_node_state t2.node_state) ;
-  let log =
-    t2.log
-    |> OP.Log.add Int64.{term= t2.current_term.t; command_id= of_int 1}
-    |> OP.Log.add Int64.{term= t2.current_term.t; command_id= of_int 2}
-  in
-  let t2 = {t2 with log} in
-  let t2, actions = P.advance t2 `LogAddition in
+  let t2, actions = P.advance t2 (`LogAddition Int64.[of_int 1; of_int 2]) in
   Logs.debug (fun m -> m "Log addition: %a" (Fmt.list ~sep:(Fmt.comma) P.pp_action) actions);
   let ae =
     List.find_map

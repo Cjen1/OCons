@@ -17,9 +17,9 @@ let ( >>>= ) = Lwt_result.bind
 type t =
   { mutable core: P.t
   ; mutable last_applied: log_index
-  ; mutable ongoing_log_addition: bool
+  ; mutable log_addition_dispatched: bool
   ; seen_client_requests: (command_id, command * client_id option) Hashtbl.t
-  (*; unapplied_client_requests: command list*)
+  ; mutable unapplied_client_requests: command_id list * int
   ; client_results: (command_id, op_result) Hashtbl.t
   ; state_machine: StateMachine.t
   ; switch: Lwt_switch.t }
@@ -83,7 +83,8 @@ let handle_advance t cmgr event =
   (* Due to global ocaml lock any changes within handle will be serialisable *)
   let t_core', actions = P.advance t.core event in
   t.core <- t_core' ;
-  if Poly.(event = `LogAddition) then t.ongoing_log_addition <- false ;
+  if match event with `LogAddition _ -> true | _ -> false then
+    t.log_addition_dispatched <- false ;
   let sync =
     if
       List.exists
@@ -103,6 +104,17 @@ let handle_advance t cmgr event =
     else Lwt.return_unit
   in
   sync >>= fun () -> do_actions t cmgr actions
+
+let dispatch_log_addition t cmgr () =
+  let requests = List.rev (fst t.unapplied_client_requests) in
+  t.unapplied_client_requests <- ([], 0) ;
+  let event = `LogAddition requests in
+  handle_advance t cmgr event
+  >|= function
+  | Ok () ->
+      ()
+  | Error exn ->
+      Log.err (fun m -> m "Could not dispatch requests with %a" Fmt.exn exn)
 
 let handle_message t cmgr src msg =
   let open Messaging.API.Reader in
@@ -163,11 +175,6 @@ let handle_message t cmgr src msg =
       in
       let event = `RAppendEntiresResponse (src, Types.{term; success}) in
       handle_advance t cmgr event
-      (*
-  | ClientRequest msg ->
-      let command = Messaging.command_from_capnp msg in
-    Messaging.Send.clientResponse ~sem:`AtLeastOnce cmgr src ~id:command.id ~result:StateMachine.Failure
-         *)
   | ClientRequest msg when P.is_leader t.core -> (
       let command = Messaging.command_from_capnp msg in
       match Hashtbl.find t.client_results command.id with
@@ -183,34 +190,26 @@ let handle_message t cmgr src msg =
             ~data:(command, Some src) ;
           Lwt.return_ok ()
       | None ->
-          Log.debug (fun m -> m "Client request not in log, adding") ;
+          Log.debug (fun m ->
+              m "Client request not in log, adding_to_unapplied") ;
           Hashtbl.set t.seen_client_requests ~key:command.id
             ~data:(command, Some src) ;
-          t.core <-
-            { t.core with
-              log=
-                L.add
-                  {term= t.core.current_term.t; command_id= command.id}
-                  t.core.log } ;
-          (* Dispatch a thread to add new entries to the log at some future point
-             This should ensure that the system gets minimally overloaded
-          *)
-          let _dispatch_log_addition =
-            if not t.ongoing_log_addition then
-              let async () =
-                Lwt.catch
-                  (fun () -> handle_advance t cmgr `LogAddition)
-                  Lwt.return_error
-                >|= function
-                | Ok () ->
-                    ()
-                | Error exn ->
-                    Log.err (fun m ->
-                        m "Got %a while handling log addition" Fmt.exn exn)
-              in
-              Lwt.async async
+          t.unapplied_client_requests <-
+            ( command.id :: fst t.unapplied_client_requests
+            , 1 + snd t.unapplied_client_requests ) ;
+          let window_size = 64 in
+          let dispatch =
+            match snd t.unapplied_client_requests with
+            | n when n > window_size ->
+                dispatch_log_addition t cmgr ()
+            | _ when not t.log_addition_dispatched ->
+                t.log_addition_dispatched <- true ;
+                Lwt.async (dispatch_log_addition t cmgr) ;
+                Lwt.return_unit
+            | _ ->
+                Lwt.return_unit
           in
-          Lwt.return_ok () )
+          dispatch >>= fun () -> Lwt.return_ok () )
   | ClientRequest msg -> (
       let command = Messaging.command_from_capnp msg in
       Log.debug (fun m ->
@@ -302,8 +301,9 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
     ; last_applied
     ; state_machine
     ; seen_client_requests= Hashtbl.create (module Int64)
+    ; unapplied_client_requests= ([], 0)
     ; client_results= Hashtbl.create (module Int64)
-    ; ongoing_log_addition= false
+    ; log_addition_dispatched= false
     ; switch }
   in
   let cmgr =
@@ -321,7 +321,7 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
   in
   Lwt.choose ps
   >>= fun () ->
-  Lwt.async (fun () -> ticker t cmgr tick_time);
+  Lwt.async (fun () -> ticker t cmgr tick_time) ;
   Lwt.return t
 
 let close t =

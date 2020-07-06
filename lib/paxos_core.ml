@@ -14,7 +14,7 @@ type event =
   | `RRequestVoteResponse of node_id * request_vote_response
   | `RAppendEntries of node_id * append_entries
   | `RAppendEntiresResponse of node_id * append_entries_response
-  | `LogAddition ]
+  | `LogAddition of command_id list ]
 
 type action =
   [ `SendRequestVote of node_id * request_vote
@@ -336,7 +336,12 @@ let rec advance t : event -> t * action list =
         ({t with node_state= Leader {s with next_index}}, actions) )
   | `RAppendEntiresResponse _, _ ->
       (t, [])
-  | `LogAddition, Leader s ->
+  | `LogAddition rs, Leader s ->
+      let log =
+        List.fold rs ~init:t.log ~f:(fun log id ->
+            L.add {term= t.current_term.t; command_id = id} log)
+      in
+      let t = {t with log} in
       let highest_index = L.get_max_index t.log in
       let fold actions node_id =
         let next_index = Map.find_exn s.next_index node_id in
@@ -347,8 +352,8 @@ let rec advance t : event -> t * action list =
       in
       let t, actions = check_commit_index t in
       let actions = List.fold t.config.other_nodes ~f:fold ~init:actions in
-      t, actions
-  | `LogAddition, _ ->
+      (t, actions)
+  | `LogAddition _, _ ->
       (t, [])
 
 let is_leader t = match t.node_state with Leader _ -> true | _ -> false
