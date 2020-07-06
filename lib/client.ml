@@ -121,7 +121,7 @@ let resend_iter t (send_fn, promise) =
   loop ()
 
 let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.)
-    ?(max_concurrency = 1024) ?(client_port = Random.int 30768 + 10000)
+    ?(max_concurrency = 128) ?(client_port = Random.int 30768 + 10000)
     addresses () =
   let t_p, t_f = Lwt.wait () in
   let cmgr =

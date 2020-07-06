@@ -21,11 +21,6 @@ let throughput n () =
   Infra.create ~listen_address:(snd node_address) ~node_list:[node_address]
     ~election_timeout:5 ~tick_time:0.5 ~log_path ~term_path (fst node_address)
   >>= fun node ->
-  let close () =
-    Infra.close node >|= fun () -> Unix.unlink log_path ; Unix.unlink term_path
-  in
-  Lwt.return close
-  >>= fun close ->
   Client.new_client [node_address] ()
   >>= fun client ->
   let test_data = Bytes.of_string "asdf" in
@@ -51,7 +46,10 @@ let throughput n () =
   time_it test
   >>= fun time ->
   Log.info (fun m -> m "Closing managers") ;
-  Lwt.join [close (); Client.close client]
+  Client.close client
+  >>= fun () ->
+  Infra.close node
+  >|= (fun () -> Unix.unlink log_path ; Unix.unlink term_path)
   >>= fun () ->
   Log.info (fun m -> m "Finished throughput test!") ;
   Fmt.str "Took %f to do %d operations: %f ops/s" time n
@@ -75,7 +73,10 @@ let reporter =
   {Logs.report}
 
 let () =
-  Logs.(set_level ~all:true (Some Info)) ;
+  Logs.(set_level ~all:true (Some Debug)) ;
+  List.iter
+    (fun src -> Logs.Src.set_level src (Some Info))
+    [Unix_capnp_messaging.Conn_manager.src; Unix_capnp_messaging.Sockets.src] ;
   Logs.set_reporter reporter ;
   let res = Lwt_main.run @@ throughput 1000 () in
   print_endline res
