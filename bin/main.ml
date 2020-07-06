@@ -40,9 +40,13 @@ let command =
         let node_id = Int64.of_int node_id in
         let log_path = data_path ^ ".log" in
         let term_path = data_path ^ ".term" in
-        Infra.create ~listen_address ~node_list ~election_timeout ~tick_time
-          ~log_path ~term_path node_id
-        |> Lwt_main.run)
+        let main = 
+          let open Lwt.Infix in
+          Infra.create ~listen_address ~node_list ~election_timeout ~tick_time
+            ~log_path ~term_path node_id >>= fun _node ->
+          Lwt.task () |> fst
+        in 
+        Lwt_main.run main)
 
 let reporter =
   let report src level ~over k msgf =

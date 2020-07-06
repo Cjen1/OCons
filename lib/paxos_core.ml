@@ -92,9 +92,9 @@ let check_commit_index t =
           [`CommitIndexUpdate commit_index]
         else []
       in
-      (commit_index, actions)
+      ({t with commit_index}, actions)
   | _ ->
-      (t.commit_index, [])
+      (t, [])
 
 let transition_to_leader t =
   match t.node_state with
@@ -121,7 +121,8 @@ let transition_to_leader t =
         `SendAppendEntries (node_id, make_append_entries t next_index)
         :: actions
       in
-      let actions = List.fold t.config.other_nodes ~init:[] ~f:fold in
+      let t, actions = check_commit_index t in
+      let actions = List.fold t.config.other_nodes ~init:actions ~f:fold in
       (t, actions)
   | _ ->
       raise
@@ -183,7 +184,8 @@ let rec advance t : event -> t * action list =
       Log.debug (fun m -> m "transition to candidate") ;
       transition_to_candidate t
   | `Tick, Follower {heartbeat} ->
-      Log.debug (fun m -> m "Tick: increment %d to %d" heartbeat (heartbeat + 1)) ;
+      Log.debug (fun m ->
+          m "Tick: increment %d to %d" heartbeat (heartbeat + 1)) ;
       ({t with node_state= Follower {heartbeat= heartbeat + 1}}, [])
   | `Tick, Leader ({heartbeat; _} as s) when heartbeat > 0 ->
       let highest_index = L.get_max_index t.log in
@@ -219,7 +221,9 @@ let rec advance t : event -> t * action list =
       (t, actions)
   | `RRequestVote (src, msg), _ ->
       let actions =
-        let entries = L.entries_after_inc t.log Int64.(msg.leader_commit + one) in
+        let entries =
+          L.entries_after_inc t.log Int64.(msg.leader_commit + one)
+        in
         [ `SendRequestVoteResponse
             ( src
             , { term= t.current_term.t
@@ -322,8 +326,7 @@ let rec advance t : event -> t * action list =
         in
         let node_state = Leader {s with match_index; next_index} in
         let t = {t with node_state} in
-        let commit_index, actions = check_commit_index t in
-        ({t with commit_index}, actions)
+        check_commit_index t
     | Error prev_log_index ->
         let next_index = Map.set s.next_index ~key:src ~data:prev_log_index in
         let actions =
@@ -342,9 +345,9 @@ let rec advance t : event -> t * action list =
           :: actions
         else actions
       in
-      let actions = List.fold t.config.other_nodes ~f:fold ~init:[] in
-      let commit_index, actions' = check_commit_index t in
-      ({t with commit_index}, actions' @ actions)
+      let t, actions = check_commit_index t in
+      let actions = List.fold t.config.other_nodes ~f:fold ~init:actions in
+      t, actions
   | `LogAddition, _ ->
       (t, [])
 
