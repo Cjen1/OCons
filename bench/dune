@@ -1,0 +1,3 @@
+(executables
+ (names bench_loop)
+ (libraries core ocamlpaxos ))
