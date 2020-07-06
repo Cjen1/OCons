@@ -24,6 +24,11 @@ type t =
   ; state_machine: StateMachine.t
   ; switch: Lwt_switch.t }
 
+let sync t =
+  let t_p = T.sync t.core.current_term |> Lwt_result.get_exn in
+  let l_p = L.sync t.core.log |> Lwt_result.get_exn in
+  Lwt.join [t_p; l_p]
+
 let rec advance_state_machine t cmgr = function
   | commit_index when Int64.(t.last_applied < commit_index) -> (
       let index = Int64.(succ t.last_applied) in
@@ -42,7 +47,7 @@ let rec advance_state_machine t cmgr = function
               Log.debug (fun m ->
                   m "Sending response for index %a cid %a to %a" Fmt.int64 index
                     Fmt.int64 cmd.id Fmt.int64 cid) ;
-              [M.Send.clientResponse cmgr cid ~id:cmd.id ~result]
+              [sync t >>= fun () -> M.Send.clientResponse cmgr cid ~id:cmd.id ~result]
           | None ->
               [] ) )
   | _ ->
@@ -97,10 +102,7 @@ let handle_advance t cmgr event =
           | _ ->
               false)
         actions
-    then
-      let t_p = T.sync t.core.current_term |> Lwt_result.get_exn in
-      let l_p = L.sync t.core.log |> Lwt_result.get_exn in
-      Lwt.join [t_p; l_p]
+    then sync t
     else Lwt.return_unit
   in
   sync >>= fun () -> do_actions t cmgr actions
@@ -179,10 +181,10 @@ let handle_message t cmgr src msg =
       let command = Messaging.command_from_capnp msg in
       match Hashtbl.find t.client_results command.id with
       | Some result ->
-          ( Log.debug (fun m ->
-                m "Got client request %a from %a but already has a result."
-                  Fmt.int64 command.id Fmt.int64 src) ;
-            M.Send.clientResponse ~sem:`AtLeastOnce cmgr src ~id:command.id )
+          Log.debug (fun m ->
+              m "Got client request %a from %a but already has a result."
+                Fmt.int64 command.id Fmt.int64 src) ;
+          M.Send.clientResponse ~sem:`AtLeastOnce cmgr src ~id:command.id
             ~result
       | None when L.id_in_log t.core.log command.id ->
           Log.debug (fun m -> m "Command already in log, but uncommitted") ;
