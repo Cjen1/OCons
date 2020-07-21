@@ -10,31 +10,36 @@ let create_id () =
   Random.self_init () ;
   Random.int64 Int64.max_value
 
-type node_id = int64 [@@deriving protobuf]
+type node_id = int64
 
 type node_addr = string
 
 type client_id = node_id
 
-type command_id = int64 [@@deriving protobuf]
+type command_id = int64 
+let len_command_id = 8
 
 module StateMachine : sig
   type t
 
-  type key = string [@@deriving protobuf]
+  type key = string 
 
-  type value = string [@@deriving protobuf]
+  type value = string
 
   type op = Read of key [@key 1] | Write of key * value [@key 2]
-  [@@deriving protobuf]
 
-  type command = {op: op; id: command_id} [@@deriving protobuf]
+  type command = {op: op; id: command_id} 
+
+  val blit_command : bytes -> command -> offset:int -> unit  
+
+  val get_encoded_length : command -> int
+
+  val decode_command : bytes -> offset:int -> command
 
   type op_result =
     | Success [@key 1]
     | Failure [@key 2]
     | ReadSuccess of key [@key 3]
-  [@@deriving protobuf]
 
   val op_result_failure : unit -> op_result
 
@@ -44,23 +49,114 @@ module StateMachine : sig
 
   val command_equal : command -> command -> bool
 end = struct
-  type key = string [@@deriving protobuf]
+  type key = string 
 
-  type value = string [@@deriving protobuf]
+  type value = string 
 
   type t = (key, value) Hashtbl.t
 
   type op = Read of key [@key 1] | Write of key * value [@key 2]
-  [@@deriving protobuf]
 
   type command = {op: op [@key 1]; id: command_id [@key 2]}
-  [@@deriving protobuf]
+
+  let get_encoded_length = function
+    | {op=Read k; id=_id} -> 1 + 8 + String.length k + 8   
+    | {op=Write (k,v); id=_id} -> 1 + 8 + String.length k + 8 + String.length v + len_command_id
+
+  let blit_command buf command ~offset =
+    match command with
+    | {op=Read key; id} -> 
+      let offset =
+        EndianBytes.LittleEndian.set_int8 buf offset 0;
+        offset + 1
+      in
+      let offset, key_len =
+        let key_len = String.length key in
+        EndianBytes.LittleEndian.set_int64 buf offset (key_len|> Int64.of_int);
+        offset + 8, key_len
+      in 
+      let offset = 
+        Bytes.From_string.blito ~src:key ~dst:buf ~dst_pos:offset ();
+        offset + key_len 
+      in
+      let _offset = 
+        EndianBytes.LittleEndian.set_int64 buf offset id;
+        offset + 8
+      in 
+      ()
+    | {op=Write (key,value); id} ->
+      let offset =
+        EndianBytes.LittleEndian.set_int8 buf offset 0;
+        offset + 1
+      in
+      let offset, key_len =
+        let key_len = String.length key in
+        EndianBytes.LittleEndian.set_int64 buf offset (key_len|> Int64.of_int);
+        offset + 8, key_len
+      in 
+      let offset = 
+        Bytes.From_string.blito ~src:key ~dst:buf ~dst_pos:offset ();
+        offset + key_len 
+      in
+      let offset, value_len =
+        let value_len = String.length value in
+        EndianBytes.LittleEndian.set_int64 buf offset (value_len|> Int64.of_int);
+        offset + 8, value_len
+      in 
+      let offset = 
+        Bytes.From_string.blito ~src:value ~dst:buf ~dst_pos:offset ();
+        offset + value_len 
+      in
+      let _offset = 
+        EndianBytes.LittleEndian.set_int64 buf offset id;
+        offset + 8
+      in 
+      ()
+
+  let decode_command buf ~offset =
+    match EndianBytes.LittleEndian.get_int8 buf 0, offset + 1 with
+    | 0, offset -> 
+      let key_len, offset = 
+        EndianBytes.LittleEndian.get_int64 buf offset |> Int64.to_int_exn,
+        offset + 8
+      in
+      let key,offset = 
+        Bytes.To_string.sub buf ~pos:offset ~len:key_len,
+        offset + key_len
+      in
+      let id,_offset = 
+        EndianBytes.LittleEndian.get_int64 buf offset,
+        offset + 8
+      in
+      {op=Read key; id}
+    | 1, offset -> 
+      let key_len, offset = 
+        EndianBytes.LittleEndian.get_int64 buf offset |> Int64.to_int_exn,
+        offset + 8
+      in
+      let key,offset = 
+        Bytes.To_string.sub buf ~pos:offset ~len:key_len,
+        offset + key_len
+      in
+      let value_len, offset = 
+        EndianBytes.LittleEndian.get_int64 buf offset |> Int64.to_int_exn,
+        offset + 8
+      in
+      let value,offset = 
+        Bytes.To_string.sub buf ~pos:offset ~len:value_len,
+        offset + value_len
+      in
+      let id,_offset = 
+        EndianBytes.LittleEndian.get_int64 buf offset,
+        offset + 8
+      in
+      {op=Write (key,value); id}
+    | _ -> assert false
 
   type op_result =
-    | Success [@key 1]
-    | Failure [@key 2]
-    | ReadSuccess of key [@key 3]
-  [@@deriving protobuf]
+    | Success
+    | Failure
+    | ReadSuccess of key
 
   let op_result_failure () = Failure
 
@@ -90,9 +186,9 @@ type command = StateMachine.command
 
 type op_result = StateMachine.op_result
 
-type term = int64 [@@deriving protobuf]
+type term = int64 
 
-type log_index = int64 [@@deriving protobuf]
+type log_index = int64
 
 (* To do this there are several changes required.
  * 
@@ -102,14 +198,12 @@ type log_index = int64 [@@deriving protobuf]
         Thus request_vote messages must contain the highest known client_request
  *)
 
-type log_entry = {command_id: command_id [@key 1]; term: term [@key 2]}
-[@@deriving protobuf]
+type log_entry = {command: command [@key 1]; term: term [@key 2]}
 
 let pp_entry f entry =
-  Fmt.pf f "(id:%a term:%a)" Fmt.int64 entry.command_id Fmt.int64 entry.term
+  Fmt.pf f "(id:%a term:%a)" Fmt.int64 entry.command.id Fmt.int64 entry.term
 
-let string_of_entry (entry : log_entry)
-  = Fmt.str "%a" pp_entry entry
+let string_of_entry (entry : log_entry) = Fmt.str "%a" pp_entry entry
 
 let string_of_entries entries = Fmt.str "(%a)" (Fmt.list pp_entry) entries
 

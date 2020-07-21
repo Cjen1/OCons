@@ -1,7 +1,7 @@
-open Owal
+open Odbutils.Owal
 open Base
 
-module Term_t = struct
+module Term = struct
   type t = int64
 
   let init () = Int64.of_int 0
@@ -18,7 +18,12 @@ module Term_t = struct
   let apply _t op = op
 end
 
-module Term = Persistant (Term_t)
-include Term
+module Term_wal = Persistant (Term)
 
-let update_current_term v t = if Int64.(v = t.t) then t else Term.change v t
+type t = Term.t
+
+type op = Term.op
+
+let update t op = Term.apply t op, [op]
+
+include Term_wal

@@ -4,7 +4,8 @@ module S = Types.StateMachine
 module L = Log
 module T = Term
 module UC = Unix_capnp_messaging.Conn_manager
-module O = Owal
+module O = Odbutils.Owal
+module B = Odbutils.Batcher
 module MS = Messaging.Serialise
 module H = Hashtbl
 open Types
@@ -19,16 +20,18 @@ let src = Logs.Src.create "Infra" ~doc:"Infrastructure module"
 module Log = (val Logs.src_log src : Logs.LOG)
 
 type state_machine_actions =
-  [ `RequestsAfter of node_id * log_index
-  | `ClientResponse of S.op_result * command_id * client_id ]
+  [`ClientResponse of S.op_result * command_id * client_id]
 
 type actions = [P.action | state_machine_actions]
 
+type wal = {t: T.t_wal; l: L.t_wal}
+
 type t =
   { mutable core: P.t
+  ; wal: wal
   ; mutable last_applied: log_index
   ; state_machine: S.t
-  ; seen_client_requests: (command_id, command * client_id option) H.t
+  ; seen_client_requests: (command_id, client_id) H.t
   ; mutable unapplied_client_requests: command_id list * int
   ; client_results: (command_id, op_result) H.t
   ; switch: Lwt_switch.t
@@ -36,8 +39,8 @@ type t =
   ; client_request_batcher: (client_id * command) Batcher.t }
 
 let sync t =
-  let l_p = L.sync t.core.log |> Lwt_result.get_exn in
-  let t_p = T.sync t.core.current_term |> Lwt_result.get_exn in
+  let l_p = L.datasync t.wal.l in
+  let t_p = T.datasync t.wal.t in
   Lwt.join [t_p; l_p]
 
 let rec advance_state_machine t = function
@@ -45,36 +48,30 @@ let rec advance_state_machine t = function
       let res =
         let index = Int64.(succ t.last_applied) in
         let entry = L.get_exn t.core.log index in
-        match H.find t.seen_client_requests entry.command_id with
+        let result = StateMachine.update t.state_machine entry.command in
+        H.set t.client_results ~key:entry.command.id ~data:result ;
+        t.last_applied <- index ;
+        match H.find t.seen_client_requests entry.command.id with
+        | Some cid ->
+            Log.debug (fun m ->
+                m "adding response for index %a cid %a to %a" Fmt.int64 index
+                  Fmt.int64 entry.command.id Fmt.int64 cid) ;
+            [`ClientResponse (result, entry.command.id, cid)]
         | None ->
-            Log.err (fun m ->
-                m "Have to get client command from other replicas") ;
-            List.map t.core.config.other_nodes ~f:(fun id ->
-                `RequestsAfter (id, index))
-        | Some (cmd, id_o) -> (
-            let result = StateMachine.update t.state_machine cmd in
-            H.set t.client_results ~key:cmd.id ~data:result ;
-            t.last_applied <- index ;
-            match id_o with
-            | Some cid ->
-                Log.debug (fun m ->
-                    m "Sending response for index %a cid %a to %a" Fmt.int64
-                      index Fmt.int64 cmd.id Fmt.int64 cid) ;
-                [`ClientResponse (result, cmd.id, cid)]
-            | None ->
-                [] )
+            []
       in
       res @ advance_state_machine t commit_index
   | _ ->
       []
 
-let rec perform_action t cmgr : actions -> unit = function
-  | `SendRequestVote (node_id, msg) ->
+let rec perform_action : t -> UC.t -> actions -> unit =
+ fun t cmgr -> function
+  | (`SendRequestVote (node_id, msg) : actions) ->
       Log.debug (fun m -> m "Sending request vote") ;
       MS.requestVote ~term:msg.term ~leaderCommit:msg.leader_commit
       |> UC.send cmgr node_id
       |> handle_failure_result "send_request_vote"
-  | `SendRequestVoteResponse (node_id, msg) ->
+  | (`SendRequestVoteResponse (node_id, msg) : actions) ->
       Log.debug (fun m -> m "Sending request vote response") ;
       let msg =
         MS.requestVoteResp ~term:msg.term ~voteGranted:msg.vote_granted
@@ -83,43 +80,43 @@ let rec perform_action t cmgr : actions -> unit = function
       sync t
       >>= (fun () -> UC.send cmgr node_id msg)
       |> handle_failure_result "send_request_vote_response"
-  | `SendAppendEntries (node_id, msg) ->
+  | (`SendAppendEntries (node_id, msg) : actions) ->
       Log.debug (fun m -> m "Sending append entries") ;
       MS.appendEntries ~term:msg.term ~prevLogIndex:msg.prev_log_index
         ~prevLogTerm:msg.prev_log_term ~entries:msg.entries
         ~leaderCommit:msg.leader_commit
       |> UC.send cmgr node_id
       |> handle_failure_result "send_append_entries"
-  | `SendAppendEntriesResponse (node_id, msg) ->
+  | (`SendAppendEntriesResponse (node_id, msg) : actions) ->
       Log.debug (fun m -> m "Sending append entries response") ;
       let msg = MS.appendEntriesResp ~term:msg.term ~success:msg.success in
       sync t
       >>= (fun () -> UC.send cmgr node_id msg)
       |> handle_failure_result "send_append_entries_response"
-  | `RequestsAfter (node_id, index) ->
-      Log.debug (fun m -> m "Requesting entries after %a" Fmt.int64 index) ;
-      MS.requestsAfter ~index |> UC.send cmgr node_id
-      |> handle_failure_result "send_requests_after"
-  | `ClientResponse (result, cmd_id, cid) ->
+  | (`ClientResponse (result, cmd_id, cid) : actions) ->
       Log.debug (fun m ->
           m "Responding to %a for req %a" Fmt.int64 cid Fmt.int64 cmd_id) ;
       let msg = MS.clientResponse ~id:cmd_id ~result in
       sync t
       >>= (fun () -> UC.send cmgr cid msg)
       |> handle_failure_result "send_client_response"
-  | `CommitIndexUpdate commit_index ->
+  | (`CommitIndexUpdate commit_index : actions) ->
       Log.debug (fun m ->
           m "Advancing state machine to commit index %a" Fmt.int64 commit_index) ;
       let actions = advance_state_machine t commit_index in
       List.iter ~f:(perform_action t cmgr) actions
+  | (`PersistantChange (`Log op) : actions) ->
+      L.write t.wal.l op |> handle_failure "Log write failure"
+  | (`PersistantChange (`Term op) : actions) ->
+      T.write t.wal.t op |> handle_failure "Term write failure"
 
 let handle_advance_batch t cmgr events =
   List.iter events ~f:(fun event ->
-      (* Due to global ocaml lock any changes within advance will be serialisable *)
+      (* Due to global ocaml lock any changes within advance will be serialised *)
       let t_core', actions = P.advance t.core event in
       t.core <- t_core' ;
       Log.debug (fun m -> m "Doing actions: %a" (Fmt.list P.pp_action) actions) ;
-      List.iter ~f:(perform_action t cmgr) actions) ;
+      List.iter ~f:(perform_action t cmgr) (actions :> actions list)) ;
   Lwt.pause ()
 
 let handle_client_request_batch t cmgr batch =
@@ -136,15 +133,15 @@ let handle_client_request_batch t cmgr batch =
         log_additions
     | None when L.id_in_log t.core.log command.id ->
         Log.debug (fun m -> m "Command already in log, but uncommitted.") ;
-        H.set t.seen_client_requests ~key:command.id ~data:(command, Some src) ;
+        H.set t.seen_client_requests ~key:command.id ~data:src ;
         log_additions
     | None when P.is_leader t.core ->
         Log.debug (fun m -> m "Command not in log, adding.") ;
-        H.set t.seen_client_requests ~key:command.id ~data:(command, Some src) ;
-        command.id :: log_additions
+        H.set t.seen_client_requests ~key:command.id ~data:src ;
+        command :: log_additions
     | None ->
         Log.debug (fun m -> m "No result found for %a" Fmt.int64 command.id) ;
-        H.set t.seen_client_requests ~key:command.id ~data:(command, Some src) ;
+        H.set t.seen_client_requests ~key:command.id ~data:src ;
         log_additions
   in
   match List.fold batch ~init:[] ~f:fold with
@@ -153,7 +150,7 @@ let handle_client_request_batch t cmgr batch =
   | ids ->
       `LogAddition ids |> Batcher.auto_dispatch t.event_batcher
 
-let handle_message t cmgr src msg =
+let handle_message t _cmgr src msg =
   let () =
     let open Messaging.API.Reader in
     let open ServerMessage in
@@ -216,32 +213,6 @@ let handle_message t cmgr src msg =
         |> Batcher.auto_dispatch t.client_request_batcher
     | ClientResponse _msg ->
         raise (Invalid_argument "ClientResponse message")
-    | RequestsAfter index ->
-        let relevant_entries = L.entries_after_inc t.core.log index in
-        let fold acc v =
-          let open Continue_or_stop in
-          match H.find t.seen_client_requests v.command_id with
-          | Some (cmd, _) ->
-              Continue (cmd :: acc)
-          | None ->
-              Stop acc
-        in
-        let commands =
-          List.fold_until relevant_entries ~finish:(fun x -> x) ~init:[] ~f:fold
-        in
-        MS.requestUpdate ~commands |> UC.send cmgr src
-        |> handle_failure_result "requests_after"
-    | RequestsUpdate commands ->
-        let iter command =
-          let command = Messaging.command_from_capnp command in
-          H.update t.seen_client_requests command.id ~f:(function
-            | Some v ->
-                v
-            | None ->
-                (command, None))
-        in
-        Capnp.Array.iter commands ~f:iter ;
-        perform_action t cmgr (`CommitIndexUpdate t.core.commit_index)
     | Undefined i ->
         raise (Invalid_argument (Fmt.str "Undefined message of %d" i))
   in
@@ -265,10 +236,10 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
         if Int64.(i <> node_id) then Some x else None)
   in
   (* Wait for at least one connection to be made *)
-  let log_p = L.of_file log_path in
-  let term_p = T.of_file term_path in
+  let log_p = L.of_dir log_path in
+  let term_p = T.of_dir term_path in
   Lwt.both log_p term_p
-  >>= fun (log, term) ->
+  >>= fun ((log_wal, log), (term_wal, term)) ->
   let config =
     let num_nodes = List.length node_list in
     let phase1majority = (num_nodes / 2) + 1 in
@@ -299,8 +270,10 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
     Batcher.create ~label:2 request_batching
       (handle_client_request_wrapper ref_t ref_cmgr)
   in
+  let wal = {t=term_wal;l=log_wal} in
   let rec t =
     { core= P.create_node config log term
+    ; wal
     ; last_applied
     ; state_machine
     ; seen_client_requests= Hashtbl.create (module Int64)
@@ -332,4 +305,4 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
 
 let close t =
   Lwt_switch.turn_off t.switch
-  >>= fun () -> Lwt.join [T.close t.core.current_term; L.close t.core.log]
+  >>= fun () -> Lwt.join [T.close t.wal.t; L.close t.wal.l]

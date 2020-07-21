@@ -25,7 +25,7 @@ struct CommandResult {
 }
 
 struct LogEntry {
-  commandId @0: Int64;
+  command @0: Command;
   term @1 : Int64;
 }
 
@@ -70,7 +70,5 @@ struct ServerMessage {
     appendEntriesResp @3: AppendEntriesResp;
     clientRequest @4: Command;
     clientResponse @5: ClientResponse;
-    requestsAfter @6: Int64; #Index
-    requestsUpdate @7: List(Command);
   }
 }

@@ -1,5 +1,4 @@
 open Types
-open Unix_capnp_messaging
 
 let ( >>>= ) a b = Lwt_result.bind a b
 
@@ -65,108 +64,92 @@ let result_to_capnp cr result =
 
 let log_entry_from_capnp entry =
   let open API.Reader.LogEntry in
-  let command_id = command_id_get entry in
+  let command = command_get entry |> command_from_capnp in
   let term = term_get entry in
-  {command_id; term}
+  {command; term}
 
 let log_entry_to_capnp entry =
   let open API.Builder.LogEntry in
   let root = init_root () in
-  API.Builder.LogEntry.command_id_set root entry.command_id ;
+  let command_builder = command_init root in
+  command_to_capnp command_builder entry.command;
   term_set root entry.term ;
   root
 
 (** [Send] contains a few utility functions and the main user facing api's *)
-module Send = struct
+module Serialise = struct
   type service = int64
 
   open API.Builder
 
   let message_size = 256
 
-  module Serialise = struct
-    let requestVote ~term ~leaderCommit =
-      let root = ServerMessage.init_root ~message_size () in
-      let rv = ServerMessage.request_vote_init root in
-      RequestVote.term_set rv term ;
-      RequestVote.leader_commit_set rv leaderCommit ;
-      message_of_builder root
+  let requestVote ~term ~leaderCommit =
+    let root = ServerMessage.init_root ~message_size () in
+    let rv = ServerMessage.request_vote_init root in
+    RequestVote.term_set rv term ;
+    RequestVote.leader_commit_set rv leaderCommit ;
+    message_of_builder root
 
-    let requestVoteResp ~term ~voteGranted ~entries ~startIndex =
-      let root = ServerMessage.init_root ~message_size () in
-      let rvr = ServerMessage.request_vote_resp_init root in
-      RequestVoteResp.term_set rvr term ;
-      RequestVoteResp.vote_granted_set rvr voteGranted ;
-      let _residual_reference =
-        RequestVoteResp.entries_set_list rvr
-          (List.map log_entry_to_capnp entries)
-      in
-      RequestVoteResp.start_index_set rvr startIndex;
-      message_of_builder root
+  let requestVoteResp ~term ~voteGranted ~entries ~startIndex =
+    let root = ServerMessage.init_root ~message_size () in
+    let rvr = ServerMessage.request_vote_resp_init root in
+    RequestVoteResp.term_set rvr term ;
+    RequestVoteResp.vote_granted_set rvr voteGranted ;
+    let _residual_reference =
+      RequestVoteResp.entries_set_list rvr (List.map log_entry_to_capnp entries)
+    in
+    RequestVoteResp.start_index_set rvr startIndex ;
+    message_of_builder root
 
-    let appendEntries ~term ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
-      let root = ServerMessage.init_root ~message_size () in
-      let ae = ServerMessage.append_entries_init root in
-      AppendEntries.term_set ae term ;
-      AppendEntries.prev_log_index_set ae prevLogIndex ;
-      AppendEntries.prev_log_term_set ae prevLogTerm ;
-      let _residual_reference =
-        AppendEntries.entries_set_list ae (List.map log_entry_to_capnp entries)
-      in
-      AppendEntries.leader_commit_set ae leaderCommit ;
-      message_of_builder root
+  let appendEntries ~term ~prevLogIndex ~prevLogTerm ~entries ~leaderCommit =
+    let root = ServerMessage.init_root ~message_size () in
+    let ae = ServerMessage.append_entries_init root in
+    AppendEntries.term_set ae term ;
+    AppendEntries.prev_log_index_set ae prevLogIndex ;
+    AppendEntries.prev_log_term_set ae prevLogTerm ;
+    let _residual_reference =
+      AppendEntries.entries_set_list ae (List.map log_entry_to_capnp entries)
+    in
+    AppendEntries.leader_commit_set ae leaderCommit ;
+    message_of_builder root
 
-    let appendEntriesResp ~term ~success =
-      let root = ServerMessage.init_root ~message_size () in
-      let aer = ServerMessage.append_entries_resp_init root in
-      AppendEntriesResp.term_set aer term ;
-      let () =
-        match success with
-        | Ok mi ->
-            AppendEntriesResp.success_set aer mi
-        | Error pli ->
-            AppendEntriesResp.failure_set aer pli
-      in
-      message_of_builder root
+  let appendEntriesResp ~term ~success =
+    let root = ServerMessage.init_root ~message_size () in
+    let aer = ServerMessage.append_entries_resp_init root in
+    AppendEntriesResp.term_set aer term ;
+    let () =
+      match success with
+      | Ok mi ->
+          AppendEntriesResp.success_set aer mi
+      | Error pli ->
+          AppendEntriesResp.failure_set aer pli
+    in
+    message_of_builder root
 
-    let clientRequest ~command =
-      let root = ServerMessage.init_root ~message_size () in
-      let crq = ServerMessage.client_request_init root in
-      command_to_capnp crq command ;
-      message_of_builder root
+  let clientRequest ~command =
+    let root = ServerMessage.init_root ~message_size () in
+    let crq = ServerMessage.client_request_init root in
+    command_to_capnp crq command ;
+    message_of_builder root
 
-    let clientResponse ~id ~result =
-      let root = ServerMessage.init_root ~message_size () in
-      let crp = ServerMessage.client_response_init root in
-      ClientResponse.id_set crp id ;
-      let cr = ClientResponse.result_init crp in
-      let () =
-        match result with
-        | StateMachine.Success ->
-            CommandResult.success_set cr
-        | StateMachine.ReadSuccess s ->
-            CommandResult.read_success_set cr s
-        | StateMachine.Failure ->
-            CommandResult.failure_set cr
-      in
-      message_of_builder root
+  let clientResponse ~id ~result =
+    let root = ServerMessage.init_root ~message_size () in
+    let crp = ServerMessage.client_response_init root in
+    ClientResponse.id_set crp id ;
+    let cr = ClientResponse.result_init crp in
+    let () =
+      match result with
+      | StateMachine.Success ->
+          CommandResult.success_set cr
+      | StateMachine.ReadSuccess s ->
+          CommandResult.read_success_set cr s
+      | StateMachine.Failure ->
+          CommandResult.failure_set cr
+    in
+    message_of_builder root
 
-    let requestsAfter ~index = 
-      let root = ServerMessage.init_root ~message_size () in
-      ServerMessage.requests_after_set root index;
-      message_of_builder root
-
-    let requestUpdate ~commands = 
-      let root = ServerMessage.init_root ~message_size () in
-      let commands = List.map (fun cmd ->
-          let root = Command.init_root ~message_size () in
-          command_to_capnp root cmd;
-          root ) commands 
-      in 
-      let _ = ServerMessage.requests_update_set_list root commands in
-      message_of_builder root
-  end
-
+  (*
   let requestVote ?(sem = `AtMostOnce) conn_mgr (t : service) ~term
       ~leaderCommit =
     Conn_manager.send ~semantics:sem conn_mgr t
@@ -203,4 +186,5 @@ module Send = struct
   let requestUpdate ?(sem = `AtLeastOnce) conn_mgr (t : service) ~commands =
     Conn_manager.send ~semantics:sem conn_mgr t
       (Serialise.requestUpdate ~commands)
+     *)
 end

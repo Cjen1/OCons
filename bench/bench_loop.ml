@@ -5,24 +5,24 @@ let src = Logs.Src.create "Bench"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-let node_address =
+let node_address p =
   ( Int64.of_int 1
-  , Unix_capnp_messaging.Conn_manager.addr_of_string "127.0.0.1:5000"
+  , Unix_capnp_messaging.Conn_manager.addr_of_string (Fmt.str "127.0.0.1:%d" p) 
     |> Result.get_ok )
 
 let log_path, term_path = ("tmp.log", "tmp.term")
+
+let remove path = if Sys.file_exists path then Unix.unlink path else ()
+
+let cleanup _ = remove log_path ; remove term_path
 
 let time_it f =
   let start = Unix.gettimeofday () in
   f () >>= fun () -> Unix.gettimeofday () -. start |> Lwt.return
 
-let throughput n () =
+let throughput n request_batching p =
   Log.info (fun m -> m "Setting up throughput test") ;
-  Infra.create ~listen_address:(snd node_address) ~node_list:[node_address]
-    ~election_timeout:5 ~tick_time:0.5 ~log_path ~term_path (fst node_address)
-    ~request_batching:1000
-  >>= fun node ->
-  Client.new_client [node_address] ()
+  Client.new_client [node_address p] ()
   >>= fun client ->
   let test_data = Bytes.of_string "asdf" in
   Client.op_write client test_data test_data
@@ -31,15 +31,18 @@ let throughput n () =
     List.init n (fun _ -> Bytes.(of_string "asdf", of_string "asdf"))
     |> Lwt_stream.of_list
   in
+  let result_q = Queue.create () in
   let test () =
-    Lwt_stream.iter_p
+    Lwt_stream.iter_n ~max_concurrency:request_batching
       (fun (key, value) ->
+        let start = Unix.gettimeofday () in
         Client.op_write client key value
         >|= function
         | Error (`Msg s) ->
             Log.err (fun m -> m "Failed with %s during run" s)
         | Ok _ ->
-            ())
+            let time = Unix.gettimeofday () -. start in
+            Queue.add time result_q)
       stream
   in
   Log.info (fun m -> m "Starting throughput test") ;
@@ -48,13 +51,53 @@ let throughput n () =
   Log.info (fun m -> m "Closing managers") ;
   Client.close client
   >>= fun () ->
-  Infra.close node
-  >|= (fun () -> Unix.unlink log_path ; Unix.unlink term_path)
-  >>= fun () ->
   Log.info (fun m -> m "Finished throughput test!") ;
-  Fmt.str "Took %f to do %d operations: %f ops/s" time n
-    Core.Float.(of_int n / time)
-  |> Lwt.return
+  let res_str = Base.Float.(of_int n / time) in
+  Lwt.return
+    (res_str, request_batching, Queue.fold (fun ls e -> e :: ls) [] result_q)
+
+type test_res = {throughput: float; batch: int; latencies: float array}
+
+let server (p,request_batching, close_flag) =
+  let run () =
+    Log.info (fun m ->
+        m "Starting server on %a" Unix_capnp_messaging.Conn_manager.pp_addr
+          (snd @@ node_address p)) ;
+    Infra.create ~listen_address:(snd @@ node_address p) ~node_list:[node_address p]
+      ~election_timeout:5 ~tick_time:0.5 ~log_path ~term_path (fst @@ node_address p)
+      ~request_batching
+    >>= fun node ->
+    close_flag
+    >>= fun () ->
+    Log.info (fun m -> m "Closing server") ;
+    Infra.close node
+  in
+  Lwt_preemptive.run_in_main run
+
+let tests () =
+  let run (n, batch, p) =
+    let inner =
+      Log.info (fun m -> m "Running test for batch %d" batch) ;
+      let close_flag, close_fulfiller = Lwt.task () in
+      let server_t = Lwt_preemptive.detach server (p,batch, close_flag) in
+      throughput n batch p
+      >>= fun res ->
+      Lwt.wakeup close_fulfiller () ;
+      server_t >>= fun () -> cleanup () ; Lwt.return res
+    in
+    Lwt_main.run inner
+  in
+  let process (throughput, batch, latencies) =
+    let latencies = latencies |> Array.of_list in
+    {throughput; batch; latencies}
+  in
+  (*
+  let batch_sizes =
+    [(100, 1,5001); (10000, 10,5002); (10000, 100,5003); (100000, 1000,5004); (100000, 10000, 5005)]
+  in
+     *)
+  let batch_sizes = [100,1,5001] in
+  List.map run batch_sizes |> List.map process |> Lwt.return
 
 let reporter =
   let open Core in
@@ -72,11 +115,27 @@ let reporter =
   in
   {Logs.report}
 
+(* test_res Fmt.t*)
+let pp_stats =
+  let open Owl.Stats in
+  let open Fmt in
+  let fields =
+    [ field "batch" (fun s -> s.batch) int
+    ; field "throughput" (fun s -> s.throughput) float
+    ; field "mean" (fun s -> mean s.latencies) float
+    ; field "p50" (fun stats -> percentile stats.latencies 50.) float
+    ; field "p75" (fun stats -> percentile stats.latencies 75.) float
+    ; field "p99" (fun stats -> percentile stats.latencies 99.) float ]
+  in
+  record fields
+
 let () =
+  cleanup () ;
   Logs.(set_level ~all:true (Some Debug)) ;
   List.iter
     (fun src -> Logs.Src.set_level src (Some Info))
     [Unix_capnp_messaging.Conn_manager.src; Unix_capnp_messaging.Sockets.src] ;
+  Lwt_unix.on_signal Sys.sigterm (fun _ -> cleanup () ; exit 0) |> ignore ;
   Logs.set_reporter reporter ;
-  let res = Lwt_main.run @@ throughput 1000 () in
-  print_endline res
+  let res = try Lwt_main.run (tests ()) with e -> cleanup () ; raise e in
+  Fmt.pr "%a" (Fmt.list pp_stats) res
