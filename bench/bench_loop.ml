@@ -20,6 +20,7 @@ let throughput n () =
   Log.info (fun m -> m "Setting up throughput test") ;
   Infra.create ~listen_address:(snd node_address) ~node_list:[node_address]
     ~election_timeout:5 ~tick_time:0.5 ~log_path ~term_path (fst node_address)
+    ~request_batching:1000
   >>= fun node ->
   Client.new_client [node_address] ()
   >>= fun client ->
@@ -30,9 +31,8 @@ let throughput n () =
     List.init n (fun _ -> Bytes.(of_string "asdf", of_string "asdf"))
     |> Lwt_stream.of_list
   in
-  let max_concurrency = 1024 in
   let test () =
-    Lwt_stream.iter_n ~max_concurrency
+    Lwt_stream.iter_p
       (fun (key, value) ->
         Client.op_write client key value
         >|= function

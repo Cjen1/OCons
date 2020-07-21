@@ -23,25 +23,24 @@ let send t op =
   let id = Random.int32 Int32.max_int |> Int64.of_int32 in
   Log.debug (fun m -> m "Sending %a" Fmt.int64 id) ;
   let command : command = {op; id} in
-  let msg = Send.Serialise.clientRequest ~command in
+  let msg = Serialise.clientRequest ~command in
   let prom, fulfiller = Lwt.wait () in
   let send () =
     List.map
       (fun addr ->
-         Log.debug (fun m -> m "Sending to %a" Fmt.int64 addr) ;
-         Conn_manager.send ~semantics:`AtMostOnce t.mgr addr msg
-         >|= function
-         | Ok () ->
-           ()
-         | Error exn ->
-           Log.err (fun m -> m "Failed to send %a" Fmt.exn exn)
-        )
+        Log.debug (fun m -> m "Sending to %a" Fmt.int64 addr) ;
+        Conn_manager.send ~semantics:`AtMostOnce t.mgr addr msg
+        >|= function
+        | Ok () ->
+            ()
+        | Error exn ->
+            Log.err (fun m -> m "Failed to send %a" Fmt.exn exn))
       t.addrs
-  |> Lwt.choose
+    |> Lwt.choose
   in
   Hashtbl.add t.ongoing_requests id fulfiller ;
   t.push (Some (send, prom)) ;
-  Lwt.on_failure (send ()) (fun _ -> ());
+  Lwt.on_failure (send ()) (fun _ -> ()) ;
   prom
   >>= function
   | StateMachine.Success ->
@@ -75,6 +74,7 @@ let fulfiller t _mgr src msg =
               | Undefined d ->
                   Fmt.failwith "Got undefined client response %d" d
             in
+            Log.debug (fun m -> m "Resolving %a" Fmt.int64 id) ;
             Hashtbl.remove t.ongoing_requests id ;
             Lwt.wakeup fulfiller res
         | None ->
@@ -113,16 +113,15 @@ let resend_iter t (send_fn, promise) =
     >>= function
     | Error () ->
         Log.err (fun m -> m "Timed out while waiting for response") ;
-        send_fn () >>= fun () ->
-        loop ()
+        send_fn () >>= fun () -> loop ()
     | Ok () ->
         Lwt.return_unit
   in
   loop ()
 
 let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.)
-    ?(max_concurrency = 128) ?(client_port = Random.int 30768 + 10000)
-    addresses () =
+    ?(max_concurrency = 128) ?(client_port = Random.int 30768 + 10000) addresses
+    () =
   let t_p, t_f = Lwt.wait () in
   let cmgr =
     Conn_manager.create

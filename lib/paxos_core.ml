@@ -1,7 +1,7 @@
 open Types
 open Base
-open Utils
 module L = Log
+open Utils
 
 let src = Logs.Src.create "Paxos" ~doc:"Paxos core algorithm"
 
@@ -177,7 +177,7 @@ let transition_to_follower t =
   Log.info (fun m -> m "Transition to Follower") ;
   {t with node_state= Follower {heartbeat= 0}}
 
-let rec advance t : event -> t * action list =
+let rec advance t : event -> t * [> action] list =
  fun event ->
   match (event, t.node_state) with
   | `Tick, Follower {heartbeat} when heartbeat >= t.config.election_timeout ->
@@ -339,7 +339,7 @@ let rec advance t : event -> t * action list =
   | `LogAddition rs, Leader s ->
       let log =
         List.fold rs ~init:t.log ~f:(fun log id ->
-            L.add {term= t.current_term.t; command_id = id} log)
+            L.add {term= t.current_term.t; command_id= id} log)
       in
       let t = {t with log} in
       let highest_index = L.get_max_index t.log in

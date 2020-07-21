@@ -29,7 +29,8 @@ let test_bytes = Bytes.of_string "asdf"
 let send_read_req client = Client.op_read client test_bytes
 
 let send_res res server cid cmdid =
-  Send.clientResponse ~sem:`AtLeastOnce ~id:cmdid ~result:res server cid
+  Messaging.Serialise.clientResponse ~id:cmdid ~result:res
+  |> send ~semantics:`AtLeastOnce server cid
 
 let res_eq_failure msg =
   let test = function
@@ -111,8 +112,9 @@ let test_internal () =
           Hashtbl.mem client.Client.ongoing_requests (Command.id_get cmd)
         in
         Alcotest.(check bool) "Client request in resolvers" true test ;
-        Send.clientResponse ~sem:`AtLeastOnce ~id:(Command.id_get cmd)
-          ~result:StateMachine.Failure server cid
+        Serialise.clientResponse ~id:(Command.id_get cmd)
+          ~result:StateMachine.Failure
+        |> send ~semantics:`AtLeastOnce server cid
         >>>= fun () ->
         p_c
         >>= fun _ ->

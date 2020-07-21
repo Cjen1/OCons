@@ -1,6 +1,10 @@
 open Base
 open Lwt.Infix
 
+let src = Logs.Src.create "Utils" ~doc:"Utils"
+
+module Log = (val Logs.src_log src : Logs.LOG)
+
 module DEBUG = struct
   let ( >>= ) p f =
     let handler e =
@@ -70,10 +74,59 @@ module Lwt_queue = struct
     {q= Stdlib.Queue.create (); cond; switch}
 end
 
-module Quorum = struct
-  type 'a t = {elts: 'a list; n: int; threshold: int; eq:'a -> 'a -> bool}
+let handle_failure str p =
+  Lwt.on_failure p (fun exn ->
+      Log.err (fun m -> m "Got error %a at %s" Fmt.exn exn str))
 
-  let empty threshold eq = {elts=[]; n=0; threshold; eq}
+let handle_failure_result str p =
+  let p =
+    p
+    >|= function
+    | Ok () ->
+        ()
+    | Error exn ->
+        Log.err (fun m -> m "Got error %a at %s" Fmt.exn exn str)
+  in
+  Lwt.async (fun () -> p)
+
+module Batcher = struct
+  type 'a t =
+    { batch_limit: int
+    ; f: 'a list -> unit Lwt.t
+    ; mutable dispatched: bool
+    ; mutable outstanding: 'a list
+    ; label: int }
+
+  let auto_dispatch t = function
+    | v when List.length t.outstanding + 1 >= t.batch_limit ->
+        Log.debug (fun m -> m "Batcher: batch full, handling") ;
+        let vs = v :: t.outstanding |> List.rev in
+        t.outstanding <- [] ;
+        t.f vs |> handle_failure "batcher"
+    | v when not t.dispatched ->
+        Log.debug (fun m -> m "Batcher: dispatching async handler") ;
+        t.dispatched <- true ;
+        t.outstanding <- v :: t.outstanding ;
+        Lwt.async (fun () ->
+            Lwt.pause ()
+            >>= fun () ->
+            let vs = t.outstanding |> List.rev in
+            t.outstanding <- [] ;
+            t.dispatched <- false ;
+            t.f vs |> handle_failure "batcher" ;
+            Lwt.return_unit)
+    | v ->
+        Log.debug (fun m -> m "Batcher: adding") ;
+        t.outstanding <- v :: t.outstanding
+
+  let create batch_limit ?(label = -1) f =
+    {batch_limit; f; dispatched= false; outstanding= []; label}
+end
+
+module Quorum = struct
+  type 'a t = {elts: 'a list; n: int; threshold: int; eq: 'a -> 'a -> bool}
+
+  let empty threshold eq = {elts= []; n= 0; threshold; eq}
 
   let add v t =
     if List.mem t.elts v ~equal:t.eq then Error `AlreadyInList
