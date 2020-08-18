@@ -9,7 +9,7 @@ let client = Logs.Src.create "Client" ~doc:"Client module"
 
 module Log = (val Logs.src_log client : Logs.LOG)
 
-type send_fn = unit -> unit
+type send_fn = unit -> unit Lwt.t
 
 type t =
   { mgr: Conn_manager.t
@@ -23,25 +23,24 @@ let send t op =
   let id = Random.int32 Int32.max_int |> Int64.of_int32 in
   Log.debug (fun m -> m "Sending %a" Fmt.int64 id) ;
   let command : command = {op; id} in
-  let msg = Send.Serialise.clientRequest ~command in
+  let msg = Serialise.clientRequest ~command in
   let prom, fulfiller = Lwt.wait () in
   let send () =
-    List.iter
+    List.map
       (fun addr ->
-        let async () =
-          Log.debug (fun m -> m "Sending to %a" Fmt.int64 addr) ;
-          Conn_manager.send t.mgr addr msg
-          >|= function
-          | Ok () ->
-              ()
-          | Error exn ->
-              Log.err (fun m -> m "Failed to send %a" Fmt.exn exn)
-        in
-        Lwt.async async)
+        Log.debug (fun m -> m "Sending to %a" Fmt.int64 addr) ;
+        Conn_manager.send ~semantics:`AtMostOnce t.mgr addr msg
+        >|= function
+        | Ok () ->
+            ()
+        | Error exn ->
+            Log.err (fun m -> m "Failed to send %a" Fmt.exn exn))
       t.addrs
+    |> Lwt.choose
   in
   Hashtbl.add t.ongoing_requests id fulfiller ;
   t.push (Some (send, prom)) ;
+  Lwt.on_failure (send ()) (fun _ -> ()) ;
   prom
   >>= function
   | StateMachine.Success ->
@@ -75,6 +74,7 @@ let fulfiller t _mgr src msg =
               | Undefined d ->
                   Fmt.failwith "Got undefined client response %d" d
             in
+            Log.debug (fun m -> m "Resolving %a" Fmt.int64 id) ;
             Hashtbl.remove t.ongoing_requests id ;
             Lwt.wakeup fulfiller res
         | None ->
@@ -100,8 +100,7 @@ let op_write t k v =
 
 let resend_iter t (send_fn, promise) =
   let rec loop () =
-    send_fn () ;
-    let timeout =
+    let timeout () =
       let p_t () = Lwt_unix.sleep t.connection_retry in
       let catch exn =
         Log.debug (fun m -> m "Failed %a while sleeping" Fmt.exn exn) ;
@@ -110,18 +109,18 @@ let resend_iter t (send_fn, promise) =
       Lwt.catch p_t catch >>= Lwt.return_error
     in
     let promise = promise >>= fun _ -> Lwt.return_ok () in
-    Lwt.choose [timeout; promise]
+    Lwt.choose [promise; timeout ()]
     >>= function
     | Error () ->
         Log.err (fun m -> m "Timed out while waiting for response") ;
-        loop ()
+        send_fn () >>= fun () -> loop ()
     | Ok () ->
         Lwt.return_unit
   in
   loop ()
 
-let new_client ?(cid = Types.create_id ()) ?(connection_retry = 1.)
-    ?(max_concurrency = 1024) ?(client_port = Random.int 30768 + 10000) addresses
+let new_client ?(cid = Types.create_id ()) ?(connection_retry = 2.)
+    ?(max_concurrency = 128) ?(client_port = Random.int 30768 + 10000) addresses
     () =
   let t_p, t_f = Lwt.wait () in
   let cmgr =

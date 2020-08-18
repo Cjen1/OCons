@@ -37,13 +37,10 @@ let put =
       and key = anon ("key" %: bytes)
       and value = anon ("value" %: bytes) in
       fun () ->
-        Random.self_init ();
-        Lwt_main.run begin
-          new_client addresses () >>= fun client ->
-          op_write 
-            client key value >>= print_res
-        end 
-    )
+        Random.self_init () ;
+        Lwt_main.run
+          ( new_client addresses ()
+          >>= fun client -> op_write client key value >>= print_res ))
 
 let get =
   Command.basic ~summary:"Get operation"
@@ -51,12 +48,10 @@ let get =
       let%map_open addresses = anon ("addresses" %: node_list)
       and key = anon ("key" %: bytes) in
       fun () ->
-        Random.self_init ();
-        Lwt_main.run begin
-          new_client addresses () >>= fun client ->
-          op_read client key >>= print_res
-        end 
-    )
+        Random.self_init () ;
+        Lwt_main.run
+          ( new_client addresses ()
+          >>= fun client -> op_read client key >>= print_res ))
 
 let reporter =
   let report src level ~over k msgf =
@@ -79,8 +74,8 @@ let cmd =
     [("put", put); ("get", get)]
 
 let () =
-  Stdlib.Random.self_init ();
-  Random.self_init ();
+  Stdlib.Random.self_init () ;
+  Random.self_init () ;
   Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.(set_level (Some Debug)) ;

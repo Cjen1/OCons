@@ -27,7 +27,6 @@ struct CommandResult {
 struct LogEntry {
   command @0: Command;
   term @1 : Int64;
-  index @2 : Int64;
 }
 
 struct RequestVote {
@@ -39,6 +38,7 @@ struct RequestVoteResp {
   term @0:Int64;
   voteGranted @1: Bool;
   entries @2: List(LogEntry);
+  startIndex @3: Int64;
 }
 
 struct AppendEntries {
@@ -51,8 +51,10 @@ struct AppendEntries {
 
 struct AppendEntriesResp {
   term @0: Int64;
-  success @1: Bool;
-  matchIndex @2: Int64;
+  union {
+    success @1 : Int64; # Match Index
+    failure @2 : Int64; # Prev_log_index
+  }
 }
 
 struct ClientResponse {
