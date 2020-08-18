@@ -64,22 +64,28 @@ end = struct
     | {op=Write (k,v); id=_id} -> 1 + 8 + String.length k + 8 + String.length v + len_command_id
 
   let blit_command buf command ~offset =
+    let total_size = get_encoded_length command in
+    Logs.debug (fun m -> m "offset = %d, p_len = %d" offset  total_size);
     match command with
     | {op=Read key; id} -> 
       let offset =
+        Logs.debug (fun m -> m "%d, %d" offset 1);
         EndianBytes.LittleEndian.set_int8 buf offset 0;
         offset + 1
       in
       let offset, key_len =
         let key_len = String.length key in
+        Logs.debug (fun m -> m "%d, %d" offset 8);
         EndianBytes.LittleEndian.set_int64 buf offset (key_len|> Int64.of_int);
         offset + 8, key_len
       in 
       let offset = 
+        Logs.debug (fun m -> m "%d, %d" offset key_len);
         Bytes.From_string.blito ~src:key ~dst:buf ~dst_pos:offset ();
         offset + key_len 
       in
       let _offset = 
+        Logs.debug (fun m -> m "%d, %d" offset 8);
         EndianBytes.LittleEndian.set_int64 buf offset id;
         offset + 8
       in 

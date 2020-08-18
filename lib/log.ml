@@ -36,9 +36,9 @@ module L = struct
 
     let get_encoded_length = function
       | Add {term= _; command} ->
-          5 + StateMachine.get_encoded_length command
+          9 + StateMachine.get_encoded_length command
       | RemoveGEQ _index ->
-          5
+          9
 
     let encode_blit op =
       let p_len = get_encoded_length op in
@@ -49,7 +49,7 @@ module L = struct
       match EndianBytes.LittleEndian.get_int8 buf offset with
       | 0 ->
           let term = EndianBytes.LittleEndian.get_int64 buf (offset + 1) in
-          let command = StateMachine.decode_command buf ~offset in
+          let command = StateMachine.decode_command buf ~offset:(offset + 9) in
           Add {term; command}
       | 1 ->
           let index = EndianBytes.LittleEndian.get_int64 buf (offset + 1) in
@@ -74,7 +74,11 @@ module L = struct
           {store; command_set; length}
   end
 
-  include Persistant
+  type t = Persistant.t
+
+  type op = Persistant.op
+
+  open Persistant
 
   let get (t : t) index =
     let nth = nth_of_index t index |> Int64.to_int_exn in
@@ -154,6 +158,7 @@ module L = struct
     apply_wrap t (Add entry)
 end
 
-module P = Persistant (L)
-include L
+module P = Persistant (L.Persistant)
 include P
+type t_wal = P.t
+include L

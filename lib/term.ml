@@ -20,10 +20,12 @@ end
 
 module Term_wal = Persistant (Term)
 
-type t = Term.t
-
 type op = Term.op
 
 let update t op = Term.apply t op, [op]
 
 include Term_wal
+
+type t_wal = Term_wal.t
+
+type t = Term.t
