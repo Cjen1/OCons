@@ -50,7 +50,7 @@ let test_reload _ () =
         List.map map log_entries_tuple
       in
       Alcotest.(check @@ list log_entry)
-        "Check reloaded values correctly" log_repr test_repr)
+        "Check reloaded values correctly" test_repr log_repr)
 
 let test_get_term _ () =
   open_file (fun (t,_w) ->
