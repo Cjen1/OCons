@@ -5,7 +5,8 @@ module L = Log
 module T = Term
 module UC = Unix_capnp_messaging.Conn_manager
 module O = Odbutils.Owal
-module B = Odbutils.Batcher
+module BR = Odbutils.Batcher.Time
+module BE = Odbutils.Batcher.Count
 module MS = Messaging.Serialise
 module H = Hashtbl
 open Types
@@ -35,8 +36,8 @@ type t =
   ; mutable unapplied_client_requests: command_id list * int
   ; client_results: (command_id, op_result) H.t
   ; switch: Lwt_switch.t
-  ; event_batcher: P.event Batcher.t
-  ; client_request_batcher: (client_id * command) Batcher.t }
+  ; client_request_batcher: (client_id * command) BR.t
+  }
 
 let sync t =
   let l_p = L.datasync t.wal.l in
@@ -110,14 +111,12 @@ let rec perform_action : t -> UC.t -> actions -> unit =
   | (`PersistantChange (`Term op) : actions) ->
       T.write t.wal.t op |> handle_failure "Term write failure"
 
-let handle_advance_batch t cmgr events =
-  List.iter events ~f:(fun event ->
-      (* Due to global ocaml lock any changes within advance will be serialised *)
-      let t_core', actions = P.advance t.core event in
-      t.core <- t_core' ;
-      Log.debug (fun m -> m "Doing actions: %a" (Fmt.list P.pp_action) actions) ;
-      List.iter ~f:(perform_action t cmgr) (actions :> actions list)) ;
-  Lwt.pause ()
+let handle_advance t cmgr event =
+  (* Due to global ocaml lock any changes within advance will be serialised *)
+  let t_core', actions = P.advance t.core event in
+  t.core <- t_core' ;
+  Log.debug (fun m -> m "Doing actions: %a" (Fmt.list P.pp_action) actions) ;
+  List.iter ~f:(perform_action t cmgr) (actions :> actions list)
 
 let handle_client_request_batch t cmgr batch =
   let fold log_additions (src, command) =
@@ -146,11 +145,12 @@ let handle_client_request_batch t cmgr batch =
   in
   match List.fold batch ~init:[] ~f:fold with
   | [] ->
-      ()
-  | ids ->
-      `LogAddition ids |> Batcher.auto_dispatch t.event_batcher
+    Lwt.return_unit
+  | commands ->
+    handle_advance t cmgr (`LogAddition commands);
+    Lwt.return_unit
 
-let handle_message t _cmgr src msg =
+let handle_message t cmgr src msg =
   let () =
     let open Messaging.API.Reader in
     let open ServerMessage in
@@ -160,8 +160,7 @@ let handle_message t _cmgr src msg =
         let open RequestVote in
         let term = term_get msg in
         let leader_commit = leader_commit_get msg in
-        `RRequestVote (src, Types.{term; leader_commit})
-        |> Batcher.auto_dispatch t.event_batcher
+        `RRequestVote (src, Types.{term; leader_commit}) |> handle_advance t cmgr
     | RequestVoteResp msg ->
         Log.debug (fun m -> m "Got request vote response from %a" Fmt.int64 src) ;
         let open RequestVoteResp in
@@ -173,7 +172,7 @@ let handle_message t _cmgr src msg =
         let start_index = start_index_get msg in
         `RRequestVoteResponse
           (src, Types.{vote_granted; term; entries; start_index})
-        |> Batcher.auto_dispatch t.event_batcher
+        |> handle_advance t cmgr
     | AppendEntries msg ->
         Log.debug (fun m -> m "Got append entries from %a" Fmt.int64 src) ;
         let open AppendEntries in
@@ -188,7 +187,7 @@ let handle_message t _cmgr src msg =
           ( src
           , Types.{term; prev_log_index; prev_log_term; entries; leader_commit}
           )
-        |> Batcher.auto_dispatch t.event_batcher
+        |> handle_advance t cmgr
     | AppendEntriesResp msg ->
         Log.debug (fun m ->
             m "Got append entries response from %a" Fmt.int64 src) ;
@@ -205,12 +204,14 @@ let handle_message t _cmgr src msg =
               @@ Invalid_argument
                    (Fmt.str "Success undefined %d in AppendEntriesResp" i)
         in
-        `RAppendEntiresResponse (src, Types.{term; success})
-        |> Batcher.auto_dispatch t.event_batcher
+        `RAppendEntiresResponse (src, Types.{term; success}) |> handle_advance t cmgr
     | ClientRequest msg ->
-        Log.debug (fun m -> m "Got client request from %a" Fmt.int64 src) ;
+      Log.debug (fun m -> m "Got client request from %a" Fmt.int64 src) ;
+      let do_client_requests = 
         (src, Messaging.command_from_capnp msg)
-        |> Batcher.auto_dispatch t.client_request_batcher
+        |> BR.auto_dispatch t.client_request_batcher (handle_client_request_batch t cmgr)
+      in 
+      Lwt.on_failure do_client_requests !Lwt.async_exception_hook
     | ClientResponse _msg ->
         raise (Invalid_argument "ClientResponse message")
     | Undefined i ->
@@ -220,17 +221,18 @@ let handle_message t _cmgr src msg =
 
 let ticker t cmgr s =
   let rec loop () =
-    if Lwt_switch.is_on t.switch then
+    if Lwt_switch.is_on t.switch then (
       Lwt_unix.sleep s
-      >>= fun () -> handle_advance_batch t cmgr [`Tick] >>= fun () -> loop ()
+      >>= fun () ->
+      handle_advance t cmgr `Tick ;
+      loop () )
     else Lwt.return_ok ()
   in
   loop () |> Lwt_result.get_exn
 
 let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
     ?(retry_connection_timeout = 0.1) ?(log_path = "./log")
-    ?(term_path = "./term") ?(event_batching = 1) ?(request_batching = 1)
-    node_id =
+    ?(term_path = "./term") ?(request_batching = 0.01) node_id =
   let other_node_list =
     List.filter_map node_list ~f:(fun ((i, _) as x) ->
         if Int64.(i <> node_id) then Some x else None)
@@ -258,19 +260,10 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
   let switch = Lwt_switch.create () in
   let ref_t = ref (fun _ -> assert false) in
   let ref_cmgr = ref (fun _ -> assert false) in
-  let event_batcher =
-    Batcher.create ~label:1 event_batching (fun batch ->
-        handle_advance_batch (!ref_t ()) (!ref_cmgr ()) batch)
-  in
-  let handle_client_request_wrapper t c b =
-    handle_client_request_batch (!t ()) (!c ()) b ;
-    Lwt.return_unit
-  in
   let client_request_batcher =
-    Batcher.create ~label:2 request_batching
-      (handle_client_request_wrapper ref_t ref_cmgr)
+    BR.create request_batching
   in
-  let wal = {t=term_wal;l=log_wal} in
+  let wal = {t= term_wal; l= log_wal} in
   let rec t =
     { core= P.create_node config log term
     ; wal
@@ -280,7 +273,6 @@ let create ~listen_address ~node_list ?(election_timeout = 5) ?(tick_time = 0.1)
     ; unapplied_client_requests= ([], 0)
     ; client_results= Hashtbl.create (module Int64)
     ; switch
-    ; event_batcher
     ; client_request_batcher }
   in
   let cmgr =

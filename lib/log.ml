@@ -26,11 +26,12 @@ module L = struct
 
     let encode buf offset = function
       | Add {term; command} ->
+        Logs.debug (fun m -> m "Encoding Add"); 
           EndianBytes.LittleEndian.set_int8 buf offset 0 ;
           EndianBytes.LittleEndian.set_int64 buf (offset + 1) term ;
           StateMachine.blit_command buf command ~offset:(offset + 9)
       | RemoveGEQ index ->
-          let buf = Bytes.create (1 + 8) in
+        Logs.debug (fun m -> m "Encoding Remove GEQ"); 
           EndianBytes.LittleEndian.set_int8 buf offset 1 ;
           EndianBytes.LittleEndian.set_int64 buf (offset + 1) index
 
@@ -130,6 +131,7 @@ module L = struct
       | [], ys ->
           (None, ys)
       | x :: _, (y :: _ as ys) when Int64.(x.term <> y.term) ->
+        Logs.debug (fun m -> m "Mismatch at %a" Fmt.int64 idx);
           (Some idx, ys)
       | _ :: xs, _ :: ys ->
           merge_y_into_x Int64.(succ idx) (xs, ys)
@@ -138,20 +140,23 @@ module L = struct
       merge_y_into_x start_index
         (List.rev relevant_entries, List.rev new_entries)
     in
+    (* entries_to_add is in oldest first order *)
     let entries_to_add = entries_to_add in
+    let ops = OpsList.empty in
     let t, ops =
       match removeGEQ_o with
       | Some i ->
-          apply_wrap t (RemoveGEQ i)
+        let t', op' = apply_wrap t (RemoveGEQ i) in
+        t', OpsList.appendv ops op'
       | None ->
-          (t, [])
+          (t, ops)
     in
     let t, ops =
       List.fold_left entries_to_add ~init:(t, ops) ~f:(fun (t, ops) v ->
           let t', ops' = apply_wrap t (Add v) in
-          (t', ops' @ ops))
+          (t', OpsList.appendv ops ops'))
     in
-    (t, List.rev ops)
+    (t, OpsList.get_list ops)
 
   let append t command term =
     let entry = {command; term} in

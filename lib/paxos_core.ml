@@ -139,6 +139,7 @@ let transition_to_leader t =
       let entries =
         List.map s.entries ~f:(fun entry -> {entry with term= t.current_term})
       in
+      (* If the node has the highest node_id then it will write its entire log back to disk with a higher term ... This feels like a bug but is in the protocol *)
       let log, actions =
         L.add_entries_remove_conflicts t.log ~start_index:s.start_index entries
       in
@@ -290,6 +291,7 @@ let rec advance_raw t : event -> t C.t =
     | Error `AlreadyInList ->
         C.return t
     | Ok (quorum : node_id Quorum.t) ->
+      (* TODO check correctness regarding ordering *)
         let merge x sx y sy =
           if not Int64.(sx = sy) then (
             Log.err (fun m ->

@@ -14,12 +14,13 @@
   (pps lwt_ppx ppx_jane))
  (modules client))
 
-(executables
- (names log_test)
- (libraries ocamlpaxos core lwt lwt_ppx fmt)
+(executable
+ (name bench)
+ (public_name ocamlpaxos-bench)
+ (libraries ocamlpaxos owl core lwt lwt_ppx)
  (preprocess
-  (pps lwt_ppx ppx_deriving_protobuf))
- (modules log_test))
+  (pps lwt_ppx ppx_jane))
+ (modules bench))
 
 (env
  (dev

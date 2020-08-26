@@ -10,23 +10,13 @@ let node_address p =
   , Unix_capnp_messaging.Conn_manager.addr_of_string (Fmt.str "127.0.0.1:%d" p)
     |> Result.get_ok )
 
-let log_path, term_path = ("tmp.log", "tmp.term")
-
-let remove path =
-  if Sys.file_exists path then
-    let path = Fpath.of_string path |> Result.get_ok in
-    Bos.OS.Dir.delete ~must_exist:false ~recurse:true path |> Result.get_ok
-  else ()
-
-let cleanup _ = remove log_path ; remove term_path
-
 let time_it f =
   let start = Unix.gettimeofday () in
   f () >>= fun () -> Unix.gettimeofday () -. start |> Lwt.return
 
-let throughput n request_batching p =
+let throughput n max_concurrency p =
   Log.info (fun m -> m "Setting up throughput test") ;
-  Client.new_client [node_address p] ()
+  Client.new_client ~cid:(Int64.of_int p) [node_address p] ()
   >>= fun client ->
   let test_data = Bytes.of_string "asdf" in
   Client.op_write client test_data test_data
@@ -37,7 +27,7 @@ let throughput n request_batching p =
   in
   let result_q = Queue.create () in
   let test () =
-    Lwt_stream.iter_n ~max_concurrency:request_batching
+    Lwt_stream.iter_n ~max_concurrency
       (fun (key, value) ->
         let start = Unix.gettimeofday () in
         Client.op_write client key value
@@ -52,51 +42,24 @@ let throughput n request_batching p =
   Log.info (fun m -> m "Starting throughput test") ;
   time_it test
   >>= fun time ->
-  Log.info (fun m -> m "Closing managers") ;
+  Log.info (fun m -> m "Closing client") ;
   Client.close client
   >>= fun () ->
   Log.info (fun m -> m "Finished throughput test!") ;
-  let res_str = Base.Float.(of_int n / time) in
+  let throughput = Base.Float.(of_int n / time) in
   Lwt.return
-    (res_str, request_batching, Queue.fold (fun ls e -> e :: ls) [] result_q)
+    (throughput, max_concurrency, Queue.fold (fun ls e -> e :: ls) [] result_q)
 
-type test_res = {throughput: float; batch: int; latencies: float array}
-
-let server (p, _request_batching, close_flag) =
-  let run () =
-    Log.info (fun m ->
-        m "Starting server on %a" Unix_capnp_messaging.Conn_manager.pp_addr
-          (snd @@ node_address p)) ;
-    Infra.create
-      ~listen_address:(snd @@ node_address p)
-      ~node_list:[node_address p] ~election_timeout:5 ~tick_time:0.5 ~log_path
-      ~term_path
-      (fst @@ node_address p)
-      ~request_batching:0.001
-    >>= fun node ->
-    close_flag
-    >>= fun () ->
-    Log.info (fun m -> m "Closing server") ;
-    Infra.close node
-  in
-  Lwt_preemptive.run_in_main run
+type test_res = {throughput: float; concurrency: int; latencies: float array}
 
 let run (n, batch, p) =
-  let inner =
-    Log.info (fun m -> m "Running test for batch %d" batch) ;
-    let close_flag, close_fulfiller = Lwt.task () in
-    let server_t = Lwt_preemptive.detach server (p, batch, close_flag) in
-    throughput n batch p
-    >>= fun res ->
-    Lwt.wakeup close_fulfiller () ;
-    server_t >>= fun () -> cleanup () ; Lwt.return res
-  in
-  Lwt_main.run inner
+  Log.info (fun m -> m "Running test for batch %d" batch) ;
+  Lwt_main.run (throughput n batch p)
 
 let tests () =
-  let process (throughput, batch, latencies) =
+  let process (throughput, concurrency, latencies) =
     let latencies = latencies |> Array.of_list in
-    {throughput; batch; latencies}
+    {throughput; concurrency; latencies}
   in
   let batch_sizes =
     if true then
@@ -130,7 +93,7 @@ let pp_stats =
   let open Owl.Stats in
   let open Fmt in
   let fields =
-    [ field "batch" (fun s -> s.batch) int
+    [ field "concurrency" (fun s -> s.concurrency) int
     ; field "throughput" (fun s -> s.throughput) float
     ; field "mean" (fun s -> mean s.latencies) float
     ; field "p50" (fun stats -> percentile stats.latencies 50.) float
@@ -140,12 +103,10 @@ let pp_stats =
   record fields
 
 let () =
-  cleanup () ;
   Logs.(set_level ~all:true (Some Info)) ;
   List.iter
-    (fun src -> Logs.Src.set_level src (Some Info))
+    (fun src -> Logs.Src.set_level src (Some Debug))
     [Unix_capnp_messaging.Conn_manager.src; Unix_capnp_messaging.Sockets.src] ;
-  Lwt_unix.on_signal Sys.sigterm (fun _ -> cleanup () ; exit 0) |> ignore ;
   Logs.set_reporter reporter ;
-  let res = try Lwt_main.run (tests ()) with e -> cleanup () ; raise e in
+  let res = Lwt_main.run (tests ()) in
   Fmt.pr "%a" (Fmt.list pp_stats) res
