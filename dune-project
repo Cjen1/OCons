@@ -24,4 +24,5 @@
     fmt
     capnp
     owl
+    odbutils
     ))

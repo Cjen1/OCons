@@ -17,6 +17,7 @@ depends: [
   "fmt"
   "capnp"
   "owl"
+  "odbutils"
 ]
 build: [
   ["dune" "subst"] {pinned}
