@@ -14,17 +14,14 @@
   (depends 
     (ocaml (>= 4.08.0))
     base
-    core
-    dune
+    (core (<= v0.13.0))
     ppx_jane
+    dune
     lwt
-    lwt_ppx
     ppx_deriving_protobuf
     conf-libev
     logs
     fmt
-    capnp-rpc-net
-    capnp-rpc-unix
-    capnp-rpc-lwt
     capnp
+    owl
     ))

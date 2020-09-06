@@ -1,7 +1,7 @@
 open Types
 open Messaging
 open Lwt.Infix
-open Unix_capnp_messaging
+module U = Unix_capnp_messaging
 
 let ( >>>= ) = Lwt_result.bind
 
@@ -12,7 +12,7 @@ module Log = (val Logs.src_log client : Logs.LOG)
 type send_fn = unit -> unit Lwt.t
 
 type t =
-  { mgr: Conn_manager.t
+  { mgr: U.Conn_manager.t
   ; addrs: int64 list
   ; send_stream: (send_fn * StateMachine.op_result Lwt.t) Lwt_stream.t
   ; push: (send_fn * StateMachine.op_result Lwt.t) option -> unit
@@ -29,7 +29,7 @@ let send t op =
     List.map
       (fun addr ->
         Log.debug (fun m -> m "Sending to %a" Fmt.int64 addr) ;
-        Conn_manager.send ~semantics:`AtMostOnce t.mgr addr msg
+        U.Conn_manager.send ~semantics:`AtMostOnce t.mgr addr msg
         >|= function
         | Ok () ->
             ()
@@ -55,28 +55,29 @@ let fulfiller t _mgr src msg =
   >>= fun t ->
   let handle msg =
     let open API.Reader in
+    let open CAPI.Reader in
     match
       msg |> Capnp.BytesMessage.Message.readonly |> ServerMessage.of_message
       |> ServerMessage.get
     with
     | ServerMessage.ClientResponse resp -> (
-        let id = ClientResponse.id_get resp in
+        let id = Response.id_get resp in
         match Hashtbl.find_opt t.ongoing_requests id with
         | Some fulfiller ->
             let res =
-              match ClientResponse.result_get resp |> CommandResult.get with
-              | CommandResult.Success ->
+              match Response.get resp with
+              | Response.Success ->
                   StateMachine.Success
-              | CommandResult.Failure ->
+              | Response.Failure ->
                   StateMachine.Failure
-              | CommandResult.ReadSuccess s ->
+              | Response.ReadSuccess s ->
                   StateMachine.ReadSuccess s
               | Undefined d ->
                   Fmt.failwith "Got undefined client response %d" d
             in
             Log.debug (fun m -> m "Resolving %a" Fmt.int64 id) ;
             Hashtbl.remove t.ongoing_requests id ;
-            Lwt.wakeup fulfiller res
+            Lwt.wakeup_later fulfiller res
         | None ->
             () )
     | _ ->
@@ -124,14 +125,14 @@ let new_client ?(cid = Types.create_id ()) ?(connection_retry = 2.)
     () =
   let t_p, t_f = Lwt.wait () in
   let cmgr =
-    Conn_manager.create
+    U.Conn_manager.create
       ~listen_address:(TCP ("0.0.0.0", client_port))
       ~node_id:cid (fulfiller t_p)
   in
   let ps =
     List.map
       (fun (id, addr) ->
-        Conn_manager.add_outgoing cmgr id addr (`Persistant addr))
+        U.Conn_manager.add_outgoing cmgr id addr (`Persistant addr))
       addresses
   in
   (* get at least once connection established *)
@@ -154,7 +155,7 @@ let new_client ?(cid = Types.create_id ()) ?(connection_retry = 2.)
 exception Closed
 
 let close t =
-  Conn_manager.close t.mgr
+  U.Conn_manager.close t.mgr
   >>= fun () ->
   t.push None ;
   Hashtbl.iter (fun _ f -> Lwt.wakeup_exn f Closed) t.ongoing_requests ;

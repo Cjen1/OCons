@@ -16,14 +16,6 @@ struct Command {
   id @1 :Int64;
 }
 
-struct CommandResult {
-  union {
-    success @0 : Void;
-    readSuccess @1 : Data;
-    failure @2 : Void;
-  }
-}
-
 struct LogEntry {
   command @0: Command;
   term @1 : Int64;
@@ -57,10 +49,7 @@ struct AppendEntriesResp {
   }
 }
 
-struct ClientResponse {
-  id @0 : Int64 ;
-  result @1 : CommandResult;
-}
+using Client = import "client_api.capnp";
 
 struct ServerMessage {
   union {
@@ -68,7 +57,7 @@ struct ServerMessage {
     requestVoteResp @1: RequestVoteResp;
     appendEntries @2: AppendEntries;
     appendEntriesResp @3: AppendEntriesResp;
-    clientRequest @4: Command;
-    clientResponse @5: ClientResponse;
+    clientRequest @4: Client.Request;
+    clientResponse @5: Client.Response;
   }
 }

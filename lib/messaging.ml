@@ -7,6 +7,7 @@ let msg = Logs.Src.create "Msg" ~doc:"Messaging module"
 module Log = (val Logs.src_log msg : Logs.LOG)
 
 module API = Messaging_api.Make [@inlined] (Capnp.BytesMessage)
+module CAPI = Client_api.Make [@inlined] (Capnp.BytesMessage) 
 
 let message_of_builder = Capnp.BytesMessage.StructStorage.message_of_builder
 
@@ -40,27 +41,20 @@ let command_to_capnp cmd_root (command : command) =
       let write = API.Builder.Op.write_init op_root in
       API.Builder.Op.Write.value_set write value
 
-let result_from_capnp result =
-  let open API.Reader.CommandResult in
-  match get result with
-  | Success ->
-      StateMachine.Success
-  | ReadSuccess s ->
-      StateMachine.ReadSuccess s
-  | Failure ->
-      StateMachine.Failure
-  | Undefined i ->
-      Fmt.failwith "Got undefined result %d" i
-
-let result_to_capnp cr result =
-  let open API.Builder.CommandResult in
-  match result with
-  | StateMachine.Success ->
-      success_set cr
-  | StateMachine.ReadSuccess s ->
-      read_success_set cr s
-  | StateMachine.Failure ->
-      failure_set cr
+let command_from_request r =
+  let module C = CAPI.Reader.Request in
+  let key = C.key_get r in
+  let op = 
+    match C.get r with
+    | C.Read ->
+      StateMachine.Read key
+    | C.Write v ->
+      StateMachine.Write (key, v)
+    | C.Undefined _ ->
+      assert false
+  in
+  let id = C.id_get r in
+  StateMachine.{op;id}
 
 let log_entry_from_capnp entry =
   let open API.Reader.LogEntry in
@@ -127,25 +121,34 @@ module Serialise = struct
     in
     message_of_builder root
 
-  let clientRequest ~command =
+  let clientRequest ~(command:Types.command) =
     let root = ServerMessage.init_root ~message_size () in
     let crq = ServerMessage.client_request_init root in
-    command_to_capnp crq command ;
+    let module C = CAPI.Builder.Request in
+    C.id_set crq command.id;
+    let () = match command.op with
+    | Read key ->
+      C.key_set crq key;
+      C.read_set crq
+    | Write (key, value) ->
+      C.key_set crq key;
+      C.write_set crq value;
+    in 
     message_of_builder root
 
   let clientResponse ~id ~result =
     let root = ServerMessage.init_root ~message_size () in
     let crp = ServerMessage.client_response_init root in
-    ClientResponse.id_set crp id ;
-    let cr = ClientResponse.result_init crp in
+    let module C = CAPI.Builder.Response in
+    C.id_set crp id ;
     let () =
       match result with
       | StateMachine.Success ->
-          CommandResult.success_set cr
+          C.success_set crp
       | StateMachine.ReadSuccess s ->
-          CommandResult.read_success_set cr s
+          C.read_success_set crp s
       | StateMachine.Failure ->
-          CommandResult.failure_set cr
+          C.failure_set crp
     in
     message_of_builder root
 
