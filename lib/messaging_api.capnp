@@ -1,5 +1,9 @@
 @0xd66c44db48f005fe;
 
+using Go = import "/go.capnp";
+$Go.package("client_api");
+$Go.import("github.com/Cjen1/rc_op_go/client_api");
+
 struct Op {
   key @0 :Data;
   union {
@@ -49,15 +53,30 @@ struct AppendEntriesResp {
   }
 }
 
-using Client = import "client_api.capnp";
+struct ClientRequest {
+  id @0 :Int64;
+  key@1: Data;
+  union {
+    read @2: Void;
+    write @3: Data;
+  }
+}
 
+struct ClientResponse {
+  id @0 : Int64;
+  union {
+    success @1 : Void;
+    readSuccess @2 : Data;
+    failure @3 : Void;
+  }
+}
 struct ServerMessage {
   union {
     requestVote @0: RequestVote;
     requestVoteResp @1: RequestVoteResp;
     appendEntries @2: AppendEntries;
     appendEntriesResp @3: AppendEntriesResp;
-    clientRequest @4: Client.Request;
-    clientResponse @5: Client.Response;
+    clientRequest @4: ClientRequest;
+    clientResponse @5: ClientResponse;
   }
 }

@@ -55,22 +55,21 @@ let fulfiller t _mgr src msg =
   >>= fun t ->
   let handle msg =
     let open API.Reader in
-    let open CAPI.Reader in
     match
       msg |> Capnp.BytesMessage.Message.readonly |> ServerMessage.of_message
       |> ServerMessage.get
     with
     | ServerMessage.ClientResponse resp -> (
-        let id = Response.id_get resp in
+        let id = ClientResponse.id_get resp in
         match Hashtbl.find_opt t.ongoing_requests id with
         | Some fulfiller ->
             let res =
-              match Response.get resp with
-              | Response.Success ->
+              match ClientResponse.get resp with
+              | ClientResponse.Success ->
                   StateMachine.Success
-              | Response.Failure ->
+              | ClientResponse.Failure ->
                   StateMachine.Failure
-              | Response.ReadSuccess s ->
+              | ClientResponse.ReadSuccess s ->
                   StateMachine.ReadSuccess s
               | Undefined d ->
                   Fmt.failwith "Got undefined client response %d" d
