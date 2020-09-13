@@ -25,6 +25,8 @@ let send t op =
   let command : command = {op; id} in
   let msg = Serialise.clientRequest ~command in
   let prom, fulfiller = Lwt.wait () in
+  (* Add handler before dispatching to prevent race condition *)
+  Hashtbl.add t.ongoing_requests id fulfiller ;
   let send () =
     List.map
       (fun addr ->
@@ -38,7 +40,6 @@ let send t op =
       t.addrs
     |> Lwt.choose
   in
-  Hashtbl.add t.ongoing_requests id fulfiller ;
   t.push (Some (send, prom)) ;
   Lwt.on_failure (send ()) (fun _ -> ()) ;
   prom
