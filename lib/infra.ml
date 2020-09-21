@@ -97,6 +97,7 @@ let rec perform_action : t -> UC.t -> actions -> unit =
       Log.debug (fun m ->
           m "Responding to %a for req %a" Fmt.int64 cid Fmt.int64 cmd_id) ;
       let msg = MS.clientResponse ~id:cmd_id ~result in
+      Log.debug(fun m -> m "Sending Client Response");
       sync t
       >>= (fun () -> UC.send cmgr cid msg)
       |> handle_failure_result "send_client_response"
@@ -106,11 +107,9 @@ let rec perform_action : t -> UC.t -> actions -> unit =
       let actions = advance_state_machine t commit_index in
       List.iter ~f:(perform_action t cmgr) actions
   | (`PersistantChange (`Log op) : actions) ->
-      if true then L.write t.wal.l op |> handle_failure "Log write failure"
-      else ()
+      L.write t.wal.l op |> handle_failure "Log write failure"
   | (`PersistantChange (`Term op) : actions) ->
-      if true then T.write t.wal.t op |> handle_failure "Term write failure"
-      else ()
+      T.write t.wal.t op |> handle_failure "Term write failure"
 
 let handle_advance t cmgr event =
   (* Due to global ocaml lock any changes within advance will be serialised *)
@@ -213,13 +212,8 @@ let handle_message t cmgr src msg =
       let do_client_requests =
         (src, Messaging.command_from_request msg)
         |> 
-        if true then
         BR.auto_dispatch t.client_request_batcher
           (handle_client_request_batch t cmgr)
-        else 
-          fun (src, cmd) ->
-          let msg = MS.clientResponse ~id:cmd.id ~result:StateMachine.Success in
-          UC.send cmgr src msg |> Lwt_result.get_exn
       in
       Lwt.on_failure do_client_requests !Lwt.async_exception_hook
     | ClientResponse _msg ->

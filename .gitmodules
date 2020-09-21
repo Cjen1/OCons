@@ -4,3 +4,6 @@
 [submodule "odbutils"]
 	path = odbutils
 	url = git@github.com:cjen1/odbutils
+[submodule "ocamlpaxos_api"]
+	path = ocamlpaxos_api
+	url = git@github.com:cjen1/ocamlpaxos_api

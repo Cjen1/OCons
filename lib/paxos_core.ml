@@ -291,7 +291,6 @@ let rec advance_raw t : event -> t C.t =
     | Error `AlreadyInList ->
         C.return t
     | Ok (quorum : node_id Quorum.t) ->
-      (* TODO check correctness regarding ordering *)
         let merge x sx y sy =
           if not Int64.(sx = sy) then (
             Log.err (fun m ->

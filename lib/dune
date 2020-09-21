@@ -2,18 +2,9 @@
  (name ocamlpaxos)
  (public_name ocamlpaxos)
  (libraries base lwt lwt.unix logs.lwt logs.fmt fmt.tty capnp 
-   unix_capnp_messaging odbutils)
+   unix_capnp_messaging odbutils ocamlpaxos_api)
  (preprocess
   (pps ppx_deriving.std ppx_deriving_protobuf)))
-
-(rule
- (targets messaging_api.ml messaging_api.mli)
- (deps messaging_api.capnp )
- (action
-  (run 
-    capnp compile -I /home/cjj39/go/src/zombiezen.com/go/capnproto2/std -o ocaml %{deps})
-  )
-  )
 
 (env
  (dev

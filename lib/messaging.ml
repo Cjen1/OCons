@@ -6,7 +6,7 @@ let msg = Logs.Src.create "Msg" ~doc:"Messaging module"
 
 module Log = (val Logs.src_log msg : Logs.LOG)
 
-module API = Messaging_api.Make [@inlined] (Capnp.BytesMessage)
+module API = Ocamlpaxos_api.Messaging_api.Make [@inlined] (Capnp.BytesMessage)
 
 let message_of_builder = Capnp.BytesMessage.StructStorage.message_of_builder
 
@@ -121,8 +121,9 @@ module Serialise = struct
     message_of_builder root
 
   let clientRequest ~(command:Types.command) =
+    let root = ServerMessage.init_root ~message_size () in
     let module C = API.Builder.ClientRequest in
-    let crq = C.init_root () in
+    let crq = ServerMessage.client_request_init root in
     C.id_set crq command.id;
     let () = match command.op with
     | Read key ->
@@ -135,8 +136,9 @@ module Serialise = struct
     message_of_builder crq
 
   let clientResponse ~id ~result =
+    let root = ServerMessage.init_root ~message_size () in
     let module C = API.Builder.ClientResponse in
-    let crp = C.init_root () in
+    let crp = ServerMessage.client_response_init root in
     C.id_set crp id ;
     let () =
       match result with
