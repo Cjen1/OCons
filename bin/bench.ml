@@ -14,9 +14,10 @@ let time_it f =
   let start = Unix.gettimeofday () in
   f () >>= fun () -> Unix.gettimeofday () -. start |> Lwt.return
 
+let client_counter = ref 0
 let throughput n max_concurrency p =
   Log.info (fun m -> m "Setting up throughput test") ;
-  Client.new_client ~cid:(Int64.of_int p) [node_address p] ()
+  Client.new_client ~cid:(incr client_counter; Int64.of_int !client_counter) [node_address p] ()
   >>= fun client ->
   let test_data = Bytes.of_string "asdf" in
   Client.op_write client test_data test_data
@@ -64,11 +65,11 @@ let tests () =
   let batch_sizes =
     if true then
       [ (10000, 1, 5001)
-      ; (10000, 10, 5002)
-      ; (10000, 100, 5003)
-      ; (10000, 1000, 5004)
-      ; (10000, 10000, 5005) ]
-    else [(1000, 1, 5001)]
+      ; (10000, 10, 5001)
+      ; (10000, 100, 5001)
+      ; (10000, 1000, 5001)
+      ; (10000, 10000, 5001) ]
+    else [(1, 1, 5001); (1,1,5001)]
   in
   List.map run batch_sizes |> List.map process |> Lwt.return
 
@@ -105,7 +106,7 @@ let pp_stats =
 let () =
   Logs.(set_level ~all:true (Some Info)) ;
   List.iter
-    (fun src -> Logs.Src.set_level src (Some Debug))
+    (fun src -> Logs.Src.set_level src (Some Info))
     [Unix_capnp_messaging.Conn_manager.src; Unix_capnp_messaging.Sockets.src] ;
   Logs.set_reporter reporter ;
   let res = Lwt_main.run (tests ()) in
