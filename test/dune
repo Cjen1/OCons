@@ -1,0 +1,5 @@
+(library
+ (name tests)
+ (inline_tests)
+ (libraries core async ocamlpaxos)
+ (preprocess (pps ppx_jane)))
