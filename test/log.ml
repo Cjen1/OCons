@@ -1,6 +1,6 @@
 open! Core
 open! Async
-    open! Ocamlpaxos
+open! Ocamlpaxos
 module L = Types.Log
 
 let with_file f path =
@@ -26,6 +26,18 @@ let init_log (wal, log) =
   let log = List.fold_left init_state ~init:log ~f:fold in
   let%bind () = L.Wal.datasync wal in
   return log
+
+let%expect_test "id_in_log" =
+  let path = "id_in_log.wal" in
+  let f (wal, log) =
+    L.id_in_log log (Types.Id.of_int_exn 1) |> Bool.to_string |> print_endline ;
+    let%bind () = [%expect {| false |}] in
+    let%bind log = init_log (wal, log) in
+    L.id_in_log log (Types.Id.of_int_exn 1) |> Bool.to_string |> print_endline ;
+    let%bind () = [%expect {| true |}] in
+    return ()
+  in
+  with_file f path
 
 let%expect_test "get_term" =
   let path = "term_test.wal" in

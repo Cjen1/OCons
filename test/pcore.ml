@@ -103,7 +103,7 @@ let%expect_test "loop single" =
     Leader
     PersistantChange to Term |}] in
   let t, actions =
-    P.advance t (`LogAddition [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+    P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
   in
   t.log.store |> [%sexp_of: Types.log_entry list] |> Sexp.to_string_hum
   |> print_endline ;
@@ -113,7 +113,7 @@ let%expect_test "loop single" =
     {|
     (((command ((op (Read 2)) (id 2))) (term 1))
      ((command ((op (Read 1)) (id 1))) (term 1)))
-    CommitIndexUpdate to 2, PersistantChange to Log,
+    Sync, CommitIndexUpdate to 2, PersistantChange to Log,
     PersistantChange to Log
     2 |}]
 
@@ -146,7 +146,7 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Follower(0)
-    SendRequestVoteResponse to 2,
+    Sync, SendRequestVoteResponse to 2,
     PersistantChange to Term |}]
   in
   let rvr =
@@ -166,7 +166,7 @@ let%expect_test "loop triple" =
     SendAppendEntries to 1 |}]
   in
   let t2, actions =
-    P.advance t2 (`LogAddition [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+    P.advance t2 (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
   in
   print_state t2 actions ;
   let%bind () =
@@ -189,7 +189,7 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Follower(0)
-    SendAppendEntriesResponse to 2, PersistantChange to Log,
+    Sync, SendAppendEntriesResponse to 2, PersistantChange to Log,
     PersistantChange to Log |}]
   in
   let aer =
@@ -202,4 +202,5 @@ let%expect_test "loop triple" =
   let t2, actions = P.advance t2 (`RAppendEntiresResponse (1, aer)) |> get_ok in
   print_state t2 actions ; [%expect {|
     Leader
+    Sync,
     CommitIndexUpdate to 2 |}]
