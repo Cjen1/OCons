@@ -43,7 +43,7 @@ let get_ok = function
       v
 
 let print_state (t : P.t) actions =
-  print_endline @@ Fmt.str "%a" P.pp_node_state t.node_state ;
+  print_endline @@ Fmt.str "%a" P.pp_node_state (P.Test.get_node_state t);
   print_endline @@ Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) actions
 
 let%expect_test "transitions" =
@@ -51,13 +51,13 @@ let%expect_test "transitions" =
   print_endline @@ Fmt.str "%d" term ;
   let%bind () = [%expect {| 0 |}] in
   let t = P.create_node three_config log term in
-  let () = P.transition_to_leader t |> pr_err in
+  let () = P.Test.transition_to_leader t |> pr_err in
   let%bind () =
     [%expect
       {| Error: Cannot transition to leader from states other than candidate |}]
   in
-  let t, actions = P.transition_to_candidate t |> get_ok in
-  print_endline @@ Fmt.str "%d" t.current_term ;
+  let t, actions = P.Test.transition_to_candidate t |> get_ok in
+  print_endline @@ Fmt.str "%d" (P.get_term t) ;
   let%bind () = [%expect {| 1 |}] in
   print_state t actions ;
   let%bind () =
@@ -67,7 +67,7 @@ let%expect_test "transitions" =
     SendRequestVote to 3, SendRequestVote to 2,
     PersistantChange to Term |}]
   in
-  let t, actions = P.transition_to_leader t |> get_ok in
+  let t, actions = P.Test.transition_to_leader t |> get_ok in
   print_state t actions ;
   [%expect
     {|
@@ -87,17 +87,23 @@ let%expect_test "tick" =
     SendRequestVote to 3, SendRequestVote to 2,
     PersistantChange to Term |}]
   in
-  let t = {t with node_state= Follower {heartbeat= 0}} in
+  let t, _ = P.Test.transition_to_follower t |> get_ok in
   let t, actions = P.advance t `Tick |> get_ok in
-  print_endline @@ Fmt.str "%a" P.pp_node_state t.node_state ;
-  print_endline @@ Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) actions ;
+  print_state t actions;
   [%expect {| Follower(1) |}]
 
 let%expect_test "loop single" =
   let%bind log, term = file_init 3 in
   let t = P.create_node single_config log term in
+  let t, actions =
+    P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+  in
+  print_state t actions;
+  let%bind () = [%expect {|
+    Follower(1)
+    Unapplied (((op(Read 1))(id 1))((op(Read 2))(id 2))) |}] in
   let t, actions = P.advance t `Tick |> get_ok in
-  print_endline @@ Fmt.str "%a" P.pp_node_state t.node_state ;
+  print_endline @@ Fmt.str "%a" P.pp_node_state (P.Test.get_node_state t) ;
   print_endline @@ Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) actions ;
   let%bind () = [%expect {|
     Leader
@@ -105,10 +111,10 @@ let%expect_test "loop single" =
   let t, actions =
     P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
   in
-  t.log.store |> [%sexp_of: Types.log_entry list] |> Sexp.to_string_hum
+  (P.get_log t).store |> [%sexp_of: Types.log_entry list] |> Sexp.to_string_hum
   |> print_endline ;
   print_endline @@ Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) actions ;
-  print_endline @@ Fmt.str "%a" Fmt.int64 t.commit_index ;
+  print_endline @@ Fmt.str "%a" Fmt.int64 (P.Test.get_commit_index t) ;
   [%expect
     {|
     (((command ((op (Read 2)) (id 2))) (term 1))

@@ -209,7 +209,7 @@ module MessageTypes = struct
 
   type client_request = command [@@deriving bin_io, sexp]
 
-  type client_response = {result: op_result; command_id: Id.t}
+  type client_response = op_result
   [@@deriving bin_io, sexp]
 end
 

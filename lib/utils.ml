@@ -5,44 +5,9 @@ let src = Logs.Src.create "Utils" ~doc:"Utils"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-(*
-module Batcher = struct
-  type 'a t =
-    { batch_limit: int
-    ; f: 'a list -> unit Lwt.t
-    ; mutable dispatched: bool
-    ; mutable outstanding: 'a list
-    ; label: int }
-
-  let auto_dispatch t = function
-    | v when List.length t.outstanding + 1 >= t.batch_limit ->
-        Log.debug (fun m -> m "Batcher: batch full, handling") ;
-        let vs = v :: t.outstanding |> List.rev in
-        t.outstanding <- [] ;
-        t.f vs |> handle_failure "batcher"
-    | v when not t.dispatched ->
-        Log.debug (fun m -> m "Batcher: dispatching async handler") ;
-        t.dispatched <- true ;
-        t.outstanding <- v :: t.outstanding ;
-        Lwt.async (fun () ->
-            Lwt.pause ()
-            >>= fun () ->
-            let vs = t.outstanding |> List.rev in
-            t.outstanding <- [] ;
-            t.dispatched <- false ;
-            t.f vs |> handle_failure "batcher" ;
-            Lwt.return_unit)
-    | v ->
-        Log.debug (fun m -> m "Batcher: adding") ;
-        t.outstanding <- v :: t.outstanding
-
-  let create batch_limit ?(label = -1) f =
-    {batch_limit; f; dispatched= false; outstanding= []; label}
-end
-*)
-
 module Quorum = struct
-  type 'a t = {elts: 'a list; n: int; threshold: int; eq: 'a -> 'a -> bool} [@@deriving sexp_of]
+  type 'a t = {elts: 'a list; n: int; threshold: int; eq: 'a -> 'a -> bool}
+  [@@deriving sexp_of]
 
   let empty threshold eq = {elts= []; n= 0; threshold; eq}
 
@@ -52,3 +17,55 @@ module Quorum = struct
 
   let satisified t = t.n >= t.threshold
 end
+
+module Batcher = struct
+  type 'a t =
+    { limit: 'a list -> bool
+    ; dispatch_timeout: Time.Span.t
+    ; callback: 'a list -> unit Deferred.t
+    ; mutable current_jobs: 'a list
+    ; mutable dispatched: bool }
+
+  let perform t =
+    let jobs = t.current_jobs in
+    t.current_jobs <- [] ;
+    t.dispatched <- false ;
+    t.callback jobs
+
+  let dispatch t v =
+    t.current_jobs <- v :: t.current_jobs ;
+    match () with
+    | () when t.limit t.current_jobs ->
+        perform t
+    | () when not t.dispatched ->
+        t.dispatched <- true ;
+        let p =
+          let%bind () = after t.dispatch_timeout in
+          perform t
+        in
+        p |> don't_wait_for |> return
+    | () ->
+        return ()
+
+  let create ~f ~dispatch_timeout ~limit =
+    {callback= f; dispatch_timeout; limit; current_jobs= []; dispatched= false}
+
+  let create_counter ~f ~dispatch_timeout ~limit =
+    create ~f ~dispatch_timeout ~limit:(fun jobs -> List.length jobs > limit)
+end
+
+let connect_persist ?(retry_delay = Time_ns.Span.of_sec 1.) name =
+  let server_address = Host_and_port.of_string name in
+  Async_rpc_kernel.Persistent_connection.Rpc.create ~retry_delay:(fun () -> retry_delay) ~server_name:name
+    ~connect:(fun host_and_port ->
+      let%bind conn =
+        Rpc.Connection.client
+          (Tcp.Where_to_connect.of_host_and_port host_and_port)
+      in
+      match conn with
+      | Ok v ->
+          Ok v |> return
+      | Error exn ->
+          Error (Error.of_exn exn) |> return)
+    (fun () -> Ok server_address |> return)
+

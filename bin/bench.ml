@@ -1,101 +1,24 @@
-open Ocamlpaxos
-open Lwt.Infix
+open! Core
+open! Async
+module O = Ocamlpaxos
 
 let log_src = Logs.Src.create "Bench"
 
 module Log = (val Logs.src_log log_src : Logs.LOG)
 
-let node_address p =
-  ( Int64.of_int 1
-  , Unix_capnp_messaging.Conn_manager.addr_of_string (Fmt.str "127.0.0.1:%d" p)
-    |> Result.get_ok )
-
-let time_it f =
-  let start = Unix.gettimeofday () in
-  f () >>= fun () -> Unix.gettimeofday () -. start |> Lwt.return
-
-let client_counter = ref 0
-let throughput n max_concurrency p =
-  Log.info (fun m -> m "Setting up throughput test") ;
-  Client.new_client ~cid:(incr client_counter; Int64.of_int !client_counter) [node_address p] ()
-  >>= fun client ->
-  let test_data = Bytes.of_string "asdf" in
-  Client.op_write client test_data test_data
-  >>= fun _ ->
-  let stream =
-    List.init n (fun _ -> Bytes.(of_string "asdf", of_string "asdf"))
-    |> Lwt_stream.of_list
-  in
-  let result_q = Queue.create () in
-  let test () =
-    Lwt_stream.iter_n ~max_concurrency
-      (fun (key, value) ->
-        let start = Unix.gettimeofday () in
-        Client.op_write client key value
-        >|= function
-        | Error (`Msg s) ->
-            Log.err (fun m -> m "Failed with %s during run" s)
-        | Ok _ ->
-            let time = Unix.gettimeofday () -. start in
-            Queue.add time result_q)
-      stream
-  in
-  Log.info (fun m -> m "Starting throughput test") ;
-  time_it test
-  >>= fun time ->
-  Log.info (fun m -> m "Closing client") ;
-  Client.close client
-  >>= fun () ->
-  Log.info (fun m -> m "Finished throughput test!") ;
-  let throughput = Base.Float.(of_int n / time) in
-  Lwt.return
-    (throughput, max_concurrency, Queue.fold (fun ls e -> e :: ls) [] result_q)
-
-type test_res = {throughput: float; concurrency: int; latencies: float array}
-
-let run (n, batch, p) =
-  Log.info (fun m -> m "Running test for batch %d" batch) ;
-  Lwt_main.run (throughput n batch p)
-
-let tests () =
-  let process (throughput, concurrency, latencies) =
-    let latencies = latencies |> Array.of_list in
-    {throughput; concurrency; latencies}
-  in
-  let batch_sizes =
-    if true then
-      [ (10000, 1, 5001)
-      ; (10000, 10, 5001)
-      ; (10000, 100, 5001)
-      ; (10000, 1000, 5001)
-      ; (10000, 10000, 5001) ]
-    else [(1, 1, 5001); (1,1,5001)]
-  in
-  List.map run batch_sizes |> List.map process |> Lwt.return
-
-let reporter =
-  let open Core in
-  let report src level ~over k msgf =
-    let k _ = over () ; k () in
-    let src = Logs.Src.name src in
-    msgf
-    @@ fun ?header ?tags:_ fmt ->
-    Fmt.kpf k Fmt.stdout
-      ("[%a] %a %a @[" ^^ fmt ^^ "@]@.")
-      Time.pp (Time.now ())
-      Fmt.(styled `Magenta string)
-      (Printf.sprintf "%14s" src)
-      Logs_fmt.pp_header (level, header)
-  in
-  {Logs.report}
+type test_res =
+  { throughput: float
+  ; starts: float array
+  ; ends: float array
+  ; latencies: float array }
+[@@deriving yojson]
 
 (* test_res Fmt.t*)
 let pp_stats =
   let open Owl.Stats in
   let open Fmt in
   let fields =
-    [ field "concurrency" (fun s -> s.concurrency) int
-    ; field "throughput" (fun s -> s.throughput) float
+    [ field "throughput" (fun s -> s.throughput) float
     ; field "mean" (fun s -> mean s.latencies) float
     ; field "p50" (fun stats -> percentile stats.latencies 50.) float
     ; field "p75" (fun stats -> percentile stats.latencies 75.) float
@@ -103,11 +26,92 @@ let pp_stats =
   in
   record fields
 
+let throughput n batch_size ps =
+  Log.info (fun m -> m "Setting up throughput test\n") ;
+  let node_list = List.map ps ~f:(fun port -> port, Fmt.str "127.0.0.1:%d" port) in
+  let client = O.Client.new_client (List.map node_list ~f:snd) in
+  let%bind servers = 
+    Deferred.List.map node_list ~how:`Parallel 
+      ~f:(fun (id, _addr) -> 
+          let datadir = Fmt.str "%d-%d.data" (List.length ps) id in
+          let%bind () = 
+            match%bind Sys.file_exists datadir with
+            | `Yes -> return () 
+            | _ -> Unix.mkdir datadir
+          in 
+          O.Infra.create ~node_id:id ~node_list ~datadir:(Fmt.str "%d-%d.data" (List.length ps) id)
+            ~listen_port:id ~election_timeout:5 ~tick_speed:(Time.Span.of_sec 1.)
+            ~batch_size ~dispatch_timeout:(Time.Span.of_ms 10.)
+        )
+  in
+  let test = Bytes.of_string "test" in
+  let%bind _ = O.Client.op_write client test test in
+  let%bind stream =
+    Deferred.Queue.init ~how:`Parallel n ~f:(fun _ -> return ())
+  in
+  let result_q = Queue.create () in
+  Log.info (fun m -> m "Starting throughput test\n") ;
+  let%bind () = Deferred.Queue.iteri stream ~how:(`Max_concurrent_jobs 1000) ~f:(fun i () ->
+      if i % 100 = 0 then print_char '.';
+      let start =
+        Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec
+      in
+      let%bind _ = O.Client.op_write client test test in
+     let ed = Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec in
+     Queue.enqueue result_q (start, ed) ;
+     return ())
+  in
+  Log.info (fun m -> m "Finished throughput test!\n") ;
+  let results = Queue.to_array result_q in
+  let min_start = Array.map ~f:fst results |> Owl_stats.min in
+  let max_end = Array.map ~f:snd results |> Owl_stats.max in
+  let throughput = Float.(of_int n / (max_end - min_start)) in
+  let starts, ends = Array.unzip results in
+  let latencies = Array.map ~f:(fun (st, ed) -> ed -. st) results in
+  let%bind () = Deferred.List.iter servers ~how:`Parallel ~f:O.Infra.close in
+  {throughput; starts; ends; latencies} |> return
+
+let reporter =
+  let report src level ~over k msgf =
+    let k _ = over () ; k () in
+    let src = Logs.Src.name src in
+    msgf
+    @@ fun ?header ?tags:_ fmt ->
+    Fmt.kpf k Fmt.stdout
+      ("%a %a @[" ^^ fmt ^^ "@]@.")
+      Fmt.(styled `Magenta string)
+      (Printf.sprintf "%14s" src)
+      Logs_fmt.pp_header (level, header)
+  in
+  {Logs.report}
+
+let main n batch_size output portss =
+  let portss = List.map portss ~f:[%of_sexp: int list] in
+  let perform () =
+    let iter ports =
+      let jsonpath =
+        match output with None -> Fmt.str "%d.json" (List.length ports) | Some s -> s
+      in
+      let%bind res = throughput n batch_size ports in
+      Log.info (fun m -> m "%a\n" pp_stats res) ;
+      let json = test_res_to_yojson res in
+      Yojson.Safe.to_file jsonpath json ;
+      return ()
+    in
+    Deferred.List.iter ~f:iter portss
+  in
+  Logs.(set_level (Some Info)) ;
+  Logs.set_reporter reporter ; perform ()
+
 let () =
-  Logs.(set_level ~all:true (Some Info)) ;
-  List.iter
-    (fun src -> Logs.Src.set_level src (Some Info))
-    [Unix_capnp_messaging.Conn_manager.src; Unix_capnp_messaging.Sockets.src] ;
-  Logs.set_reporter reporter ;
-  let res = Lwt_main.run (tests ()) in
-  Fmt.pr "%a" (Fmt.list pp_stats) res
+  Command.async_spec ~summary:"Benchmark for write ahead log"
+    Command.Spec.(
+      empty
+      +> flag "-s" ~doc:" Size of batches" (optional_with_default 1 int)
+      +> flag "-n" ~doc:" Number of requests to send"
+           (optional_with_default 10000 int)
+      +> flag "-o" ~doc:" Output file" (optional string)
+      +> flag "-p" ~doc:" ports list" (listed sexp)
+    )
+    (fun s n o ps () -> main n s o ps)
+  |> Command.run

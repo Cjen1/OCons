@@ -17,9 +17,9 @@
 (executable
  (name bench)
  (public_name ocamlpaxos-bench)
- (libraries ocamlpaxos owl core lwt lwt_ppx)
+ (libraries ocamlpaxos owl core async lwt lwt_ppx yojson)
  (preprocess
-  (pps lwt_ppx ppx_jane))
+  (pps lwt_ppx ppx_jane ppx_deriving_yojson))
  (modules bench))
 
 (env
