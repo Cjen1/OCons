@@ -42,9 +42,14 @@ let get_ok = function
   | Ok v ->
       v
 
-let print_state (t : P.t) actions =
-  print_endline @@ Fmt.str "%a" P.pp_node_state (P.Test.get_node_state t);
-  print_endline @@ Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) actions
+let print_state (t : P.t) (pre, sync, post) =
+  print_endline @@ Fmt.str "%a" P.pp_node_state (P.Test.get_node_state t) ;
+  print_endline
+  @@ Fmt.str "(%a,Sync: %b,%a)"
+       (Fmt.list ~sep:Fmt.comma P.pp_action)
+       pre sync
+       (Fmt.list ~sep:Fmt.comma P.pp_action)
+       post
 
 let%expect_test "transitions" =
   let%bind log, term = file_init 1 in
@@ -64,16 +69,16 @@ let%expect_test "transitions" =
     [%expect
       {|
     Candidate
-    SendRequestVote to 3, SendRequestVote to 2,
-    PersistantChange to Term |}]
+    (PersistantChange to Term, SendRequestVote to 3,
+    SendRequestVote to 2,Sync: false,) |}]
   in
   let t, actions = P.Test.transition_to_leader t |> get_ok in
   print_state t actions ;
   [%expect
     {|
     Leader
-    SendAppendEntries to 3,
-    SendAppendEntries to 2 |}]
+    (SendAppendEntries to 3,
+    SendAppendEntries to 2,Sync: false,) |}]
 
 let%expect_test "tick" =
   let%bind log, term = file_init 2 in
@@ -84,13 +89,14 @@ let%expect_test "tick" =
     [%expect
       {|
     Candidate
-    SendRequestVote to 3, SendRequestVote to 2,
-    PersistantChange to Term |}]
+    (PersistantChange to Term, SendRequestVote to 3,
+    SendRequestVote to 2,Sync: false,) |}]
   in
   let t, _ = P.Test.transition_to_follower t |> get_ok in
   let t, actions = P.advance t `Tick |> get_ok in
-  print_state t actions;
-  [%expect {| Follower(1) |}]
+  print_state t actions ; [%expect {|
+    Follower(1)
+    (,Sync: false,) |}]
 
 let%expect_test "loop single" =
   let%bind log, term = file_init 3 in
@@ -98,30 +104,33 @@ let%expect_test "loop single" =
   let t, actions =
     P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
   in
-  print_state t actions;
-  let%bind () = [%expect {|
+  print_state t actions ;
+  let%bind () =
+    [%expect
+      {|
     Follower(1)
-    Unapplied (((op(Read 1))(id 1))((op(Read 2))(id 2))) |}] in
+    (Unapplied (((op(Read 1))(id 1))((op(Read 2))(id 2))),Sync: false,) |}]
+  in
   let t, actions = P.advance t `Tick |> get_ok in
-  print_endline @@ Fmt.str "%a" P.pp_node_state (P.Test.get_node_state t) ;
-  print_endline @@ Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) actions ;
-  let%bind () = [%expect {|
+  print_state t actions ;
+  let%bind () =
+    [%expect {|
     Leader
-    PersistantChange to Term |}] in
+    (PersistantChange to Term,Sync: false,) |}]
+  in
   let t, actions =
     P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
   in
   (P.get_log t).store |> [%sexp_of: Types.log_entry list] |> Sexp.to_string_hum
   |> print_endline ;
-  print_endline @@ Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) actions ;
-  print_endline @@ Fmt.str "%a" Fmt.int64 (P.Test.get_commit_index t) ;
+  print_state t actions ;
   [%expect
     {|
     (((command ((op (Read 2)) (id 2))) (term 1))
      ((command ((op (Read 1)) (id 1))) (term 1)))
-    Sync, CommitIndexUpdate to 2, PersistantChange to Log,
-    PersistantChange to Log
-    2 |}]
+    Leader
+    (PersistantChange to Log,
+    PersistantChange to Log,Sync: true,CommitIndexUpdate to 2) |}]
 
 let%expect_test "loop triple" =
   let%bind log, term = file_init 4 in
@@ -130,48 +139,49 @@ let%expect_test "loop triple" =
   let t2 =
     P.create_node {three_config with other_nodes= [1; 3]; node_id= 2} log term
   in
-  let t2, actions = P.advance t2 `Tick |> get_ok in
+  let t2, ((pre, _, _) as actions) = P.advance t2 `Tick |> get_ok in
   print_state t2 actions ;
   let%bind () =
     [%expect
       {|
     Candidate
-    SendRequestVote to 3, SendRequestVote to 1,
-    PersistantChange to Term |}]
+    (PersistantChange to Term, SendRequestVote to 3,
+    SendRequestVote to 1,Sync: false,) |}]
   in
   let rv =
-    List.find_map_exn actions ~f:(function
-      | `SendRequestVote (id, rv) when id = 1 ->
+    List.find_map_exn pre ~f:(function
+      | `SendRequestVote (dst, rv) when dst = 1 ->
           Some rv
       | _ ->
           None)
   in
-  let t1, actions = P.advance t1 (`RRequestVote (2, rv)) |> get_ok in
+  let t1, ((_, _, post) as actions) =
+    P.advance t1 (`RRequestVote rv) |> get_ok
+  in
   print_state t1 actions ;
   let%bind () =
     [%expect
       {|
     Follower(0)
-    Sync, SendRequestVoteResponse to 2,
-    PersistantChange to Term |}]
+    (PersistantChange to Term,Sync: true,SendRequestVoteResponse to 2) |}]
   in
   let rvr =
-    List.find_map_exn actions ~f:(function
+    List.find_map_exn post ~f:(function
       | `SendRequestVoteResponse (id, rvr) when id = 2 ->
           Some rvr
       | _ ->
           None)
   in
-  let t2, actions = P.advance t2 (`RRequestVoteResponse (1, rvr)) |> get_ok in
+  let t2, actions = P.advance t2 (`RRequestVoteResponse rvr) |> get_ok in
   print_state t2 actions ;
   let%bind () =
     [%expect
       {|
     Leader
-    SendAppendEntries to 3,
-    SendAppendEntries to 1 |}]
+    (SendAppendEntries to 3,
+    SendAppendEntries to 1,Sync: false,) |}]
   in
-  let t2, actions =
+  let t2, ((pre, _, _) as actions) =
     P.advance t2 (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
   in
   print_state t2 actions ;
@@ -179,34 +189,36 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Leader
-    SendAppendEntries to 3, SendAppendEntries to 1, PersistantChange to Log,
-    PersistantChange to Log |}]
+    (PersistantChange to Log, PersistantChange to Log, SendAppendEntries to 1,
+    SendAppendEntries to 3,Sync: false,) |}]
   in
   let ae =
-    List.find_map_exn actions ~f:(function
+    List.find_map_exn pre ~f:(function
       | `SendAppendEntries (id, ae) when id = 1 ->
           Some ae
       | _ ->
           None)
   in
-  let t1, actions = P.advance t1 (`RAppendEntries (2, ae)) |> get_ok in
+  let t1, ((_, _, post) as actions) =
+    P.advance t1 (`RAppendEntries ae) |> get_ok
+  in
   print_state t1 actions ;
   let%bind () =
     [%expect
       {|
     Follower(0)
-    Sync, SendAppendEntriesResponse to 2, PersistantChange to Log,
-    PersistantChange to Log |}]
+    (PersistantChange to Log,
+    PersistantChange to Log,Sync: true,SendAppendEntriesResponse to 2) |}]
   in
   let aer =
-    List.find_map_exn actions ~f:(function
+    List.find_map_exn post ~f:(function
       | `SendAppendEntriesResponse (id, aer) when id = 2 ->
           Some aer
       | _ ->
           None)
   in
-  let t2, actions = P.advance t2 (`RAppendEntiresResponse (1, aer)) |> get_ok in
-  print_state t2 actions ; [%expect {|
+  let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
+  print_state t2 actions ;
+  [%expect {|
     Leader
-    Sync,
-    CommitIndexUpdate to 2 |}]
+    (,Sync: true,CommitIndexUpdate to 2) |}]

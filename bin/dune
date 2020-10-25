@@ -1,17 +1,17 @@
 (executable
  (name main)
  (public_name ocamlpaxos)
- (libraries ocamlpaxos lwt lwt_ppx core)
+ (libraries ocamlpaxos core async)
  (preprocess
-  (pps lwt_ppx ppx_jane))
+  (pps ppx_jane))
  (modules main))
 
 (executable
  (name client)
  (public_name ocamlpaxos-client)
- (libraries ocamlpaxos core lwt lwt_ppx)
+ (libraries ocamlpaxos core async)
  (preprocess
-  (pps lwt_ppx ppx_jane))
+  (pps ppx_jane))
  (modules client))
 
 (executable
@@ -19,8 +19,15 @@
  (public_name ocamlpaxos-bench)
  (libraries ocamlpaxos owl core async lwt lwt_ppx yojson)
  (preprocess
-  (pps lwt_ppx ppx_jane ppx_deriving_yojson))
+  (pps ppx_jane ppx_deriving_yojson))
  (modules bench))
+
+(executable
+ (name pcore_bench)
+ (libraries ocamlpaxos core async core_bench)
+ (preprocess
+  (pps ppx_jane -allow-unannotated-ignores))
+ (modules pcore_bench))
 
 (env
  (dev

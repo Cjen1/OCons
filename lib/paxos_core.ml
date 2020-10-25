@@ -13,45 +13,33 @@ module Log = (val Logs.src_log src : Logs.LOG)
 (* R before means receiving *)
 type event =
   [ `Tick
-  | `RRequestVote of node_id * request_vote
-  | `RRequestVoteResponse of node_id * request_vote_response
-  | `RAppendEntries of node_id * append_entries
-  | `RAppendEntiresResponse of node_id * append_entries_response
+  | `RRequestVote of request_vote
+  | `RRequestVoteResponse of request_vote_response
+  | `RAppendEntries of append_entries
+  | `RAppendEntiresResponse of append_entries_response
   | `Commands of command list ]
 
 type persistant_change = [`Log of L.op | `Term of T.op]
 
-type action =
-  [ `SendRequestVote of node_id * request_vote
-  | `SendRequestVoteResponse of node_id * request_vote_response
+type pre_sync_action =
+  [ `PersistantChange of persistant_change
+  | `SendRequestVote of node_id * request_vote
   | `SendAppendEntries of node_id * append_entries
-  | `SendAppendEntriesResponse of node_id * append_entries_response
-  | `CommitIndexUpdate of log_index
-  | `PersistantChange of persistant_change
-  | `Sync 
-  | `Unapplied of command list]
+  | `Unapplied of command list ]
 
-let compare_apply_order a b =
-  match (a, b) with
-  | `PersistantChange _, _ ->
-      -1
-  | _, `PersistantChange _ ->
-      1
-  | `Sync, _ ->
-      -1
-  | _, `Sync ->
-      1
-  | `CommitIndexUpdate _, _ ->
-      -1
-  | _, `CommitIndexUpdate _ ->
-      1
-  | _ ->
-      0
+type post_sync_action =
+  [ `SendRequestVoteResponse of node_id * request_vote_response
+  | `SendAppendEntriesResponse of node_id * append_entries_response
+  | `CommitIndexUpdate of log_index ]
+
+type do_sync = bool
+
+type action_sequence = pre_sync_action list * do_sync * post_sync_action list
 
 module Comp = struct
-  type 'a t = 'a * action list
+  type 'a t = 'a * action_sequence
 
-  let return x = (x, [])
+  let return x : 'a t = (x, ([], false, []))
 end
 
 module CompRes = struct
@@ -60,27 +48,33 @@ module CompRes = struct
   let bind : ('a, 'b) t -> ('a -> ('c, 'b) t) -> ('c, 'b) t =
    fun x f ->
     let ( let* ) x f = Result.bind x ~f in
-    let* x, acts = x in
-    match f x with Error e -> Error e | Ok (x, acts') -> Ok (x, acts' @ acts)
+    let* x, (pre, sync, post) = x in
+    match f x with
+    | Error e ->
+        Error e
+    | Ok (x, (pre', sync', post')) ->
+        Ok (x, (pre @ pre', sync || sync', post @ post'))
 
   let return v = Ok (Comp.return v)
 
   let error v = Error v
 
-  let append action : (unit, 'b) t = Ok ((), [action])
+  let append_pre action : (unit, 'b) t = Ok ((), ([action], false, []))
 
-  let appendv av : (unit, 'b) t = Ok ((), av)
+  let append_post action : (unit, 'b) t = Ok ((), ([], false, [action]))
+
+  let appendv_pre av : (unit, 'b) t = Ok ((), (av, false, []))
 end
 
 let ( let+ ) x f = CompRes.(bind) x f
 
 let ( let* ) x f = Result.bind x ~f
 
-let log_op_to_action op : action = `PersistantChange (`Log op)
+let log_op_to_action op : pre_sync_action = `PersistantChange (`Log op)
 
-let term_op_to_action op : action = `PersistantChange (`Term op)
+let term_op_to_action op : pre_sync_action = `PersistantChange (`Term op)
 
-let pp_action f (x : action) =
+let pp_action f (x : [< pre_sync_action | post_sync_action]) =
   match x with
   | `SendRequestVote (id, _rv) ->
       Fmt.pf f "SendRequestVote to %d" id
@@ -96,10 +90,8 @@ let pp_action f (x : action) =
       Fmt.pf f "PersistantChange to Log"
   | `PersistantChange (`Term _) ->
       Fmt.pf f "PersistantChange to Term"
-  | `Sync ->
-      Fmt.pf f "Sync"
   | `Unapplied cmds ->
-    Fmt.pf f "Unapplied %s" ([%sexp_of: command list] cmds |> Sexp.to_string)
+      Fmt.pf f "Unapplied %s" ([%sexp_of: command list] cmds |> Sexp.to_string)
 
 type config =
   { phase1majority: int
@@ -143,9 +135,15 @@ let make_append_entries (t : t) next_index =
   let term = t.current_term in
   let prev_log_index = Int64.(next_index - one) in
   let prev_log_term = L.get_term_exn t.log prev_log_index in
-  let entries = L.entries_after_inc t.log next_index in
+  let entries, entries_length = L.entries_after_inc_size t.log next_index in
   let leader_commit = t.commit_index in
-  {term; prev_log_index; prev_log_term; entries; leader_commit}
+  { src= t.config.node_id
+  ; term
+  ; prev_log_index
+  ; prev_log_term
+  ; entries
+  ; entries_length
+  ; leader_commit }
 
 let check_commit_index t =
   match t.node_state with
@@ -159,7 +157,7 @@ let check_commit_index t =
       in
       let+ () =
         if Int64.(commit_index <> t.commit_index) then
-          CompRes.append @@ `CommitIndexUpdate commit_index
+          CompRes.append_post @@ `CommitIndexUpdate commit_index
         else CompRes.return ()
       in
       CompRes.return {t with commit_index}
@@ -177,7 +175,7 @@ let transition_to_leader t =
       let log, actions =
         L.add_entries_remove_conflicts t.log ~start_index:s.start_index entries
       in
-      let+ () = CompRes.appendv @@ List.map ~f:log_op_to_action actions in
+      let+ () = CompRes.appendv_pre @@ List.map ~f:log_op_to_action actions in
       let match_index, next_index =
         List.fold t.config.other_nodes ~init:(IdMap.empty, IdMap.empty)
           ~f:(fun (mi, ni) id ->
@@ -194,7 +192,7 @@ let transition_to_leader t =
       in
       let+ t = check_commit_index t in
       let+ () =
-        CompRes.appendv @@ List.fold t.config.other_nodes ~init:[] ~f:fold
+        CompRes.appendv_pre @@ List.fold t.config.other_nodes ~init:[] ~f:fold
       in
       CompRes.return t
   | _ ->
@@ -204,7 +202,7 @@ let transition_to_leader t =
 let update_current_term term t =
   let current_term, ops = T.update_term t.current_term term in
   let actions = List.map ~f:term_op_to_action ops in
-  let+ () = CompRes.appendv actions in
+  let+ () = CompRes.appendv_pre actions in
   CompRes.return {t with current_term}
 
 let transition_to_candidate t =
@@ -236,12 +234,15 @@ let transition_to_candidate t =
     let actions =
       let fold actions node_id =
         `SendRequestVote
-          (node_id, {term= t.current_term; leader_commit= t.commit_index})
+          ( node_id
+          , { src= t.config.node_id
+            ; term= t.current_term
+            ; leader_commit= t.commit_index } )
         :: actions
       in
       List.fold t.config.other_nodes ~init:[] ~f:fold
     in
-    let+ () = CompRes.appendv actions in
+    let+ () = CompRes.appendv_pre actions in
     CompRes.return t
 
 let transition_to_follower t =
@@ -267,7 +268,7 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
         else actions
       in
       let+ () =
-        CompRes.appendv @@ List.fold t.config.other_nodes ~f:fold ~init:[]
+        CompRes.appendv_pre @@ List.fold t.config.other_nodes ~f:fold ~init:[]
       in
       CompRes.return {t with node_state= Leader {s with heartbeat= 0}}
   | `Tick, Leader ({heartbeat; _} as s) ->
@@ -275,35 +276,37 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
         {t with node_state= Leader {s with heartbeat= heartbeat + 1}}
   | `Tick, _ ->
       CompRes.return t
-  | (`RRequestVote (_, {term; _}) as event), _
-  | (`RRequestVoteResponse (_, {term; _}) as event), _
-  | (`RAppendEntries (_, {term; _}) as event), _
-  | (`RAppendEntiresResponse (_, {term; _}) as event), _
+  | (`RRequestVote {term; _} as event), _
+  | (`RRequestVoteResponse {term; _} as event), _
+  | (`RAppendEntries {term; _} as event), _
+  | (`RAppendEntiresResponse {term; _} as event), _
     when Int.(t.current_term < term) ->
       let+ t = update_current_term term t in
       let+ t = transition_to_follower t in
       advance_raw t event
-  | `RRequestVote (src, msg), _ when Int.(msg.term < t.current_term) ->
+  | `RRequestVote msg, _ when Int.(msg.term < t.current_term) ->
       let+ () =
-        CompRes.append
+        CompRes.append_post
         @@ `SendRequestVoteResponse
-             ( src
-             , { term= t.current_term
+             ( msg.src
+             , { src= t.config.node_id
+               ; term= t.current_term
                ; vote_granted= false
                ; entries= []
                ; start_index= Int64.(msg.leader_commit + one) } )
       in
       CompRes.return t
-  | `RRequestVote (src, msg), _ ->
+  | `RRequestVote msg, _ ->
       let+ () =
-        CompRes.append
+        CompRes.append_post
         @@
         let entries =
           L.entries_after_inc t.log Int64.(msg.leader_commit + one)
         in
         `SendRequestVoteResponse
-          ( src
-          , { term= t.current_term
+          ( msg.src
+          , { src= t.config.node_id
+            ; term= t.current_term
             ; vote_granted= true
             ; entries
             ; start_index= Int64.(msg.leader_commit + one) } )
@@ -316,9 +319,9 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
             t
       in
       CompRes.return t
-  | `RRequestVoteResponse (src_id, msg), Candidate s
+  | `RRequestVoteResponse msg, Candidate s
     when Int.(msg.term = t.current_term) && msg.vote_granted -> (
-    match U.Quorum.add src_id s.quorum with
+    match U.Quorum.add msg.src s.quorum with
     | Error `AlreadyInList ->
         CompRes.return t
     | Ok (quorum : node_id U.Quorum.t) ->
@@ -349,10 +352,12 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
         else CompRes.return t )
   | `RRequestVoteResponse _, _ ->
       CompRes.return t
-  | `RAppendEntries (src, msg), _ -> (
+  | `RAppendEntries msg, _ -> (
       let send t res =
-        CompRes.append
-        @@ `SendAppendEntriesResponse (src, {term= t.current_term; success= res})
+        CompRes.append_post
+        @@ `SendAppendEntriesResponse
+             ( msg.src
+             , {src= t.config.node_id; term= t.current_term; success= res} )
       in
       match L.get_term t.log msg.prev_log_index with
       | _ when Int.(msg.term < t.current_term) ->
@@ -371,10 +376,10 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
               msg.entries
           in
           let t = {t with log} in
-          let+ () = CompRes.appendv @@ List.map ~f:log_op_to_action log_ops in
-          let match_index =
-            Int64.(msg.prev_log_index + (of_int @@ List.length msg.entries))
+          let+ () =
+            CompRes.appendv_pre @@ List.map ~f:log_op_to_action log_ops
           in
+          let match_index = Int64.(msg.prev_log_index + msg.entries_length) in
           let commit_index =
             let last_entry =
               match List.hd msg.entries with
@@ -397,40 +402,42 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
           in
           let+ () = send t (Ok match_index) in
           CompRes.return t )
-  | `RAppendEntiresResponse (src, msg), Leader s
-    when Int.(msg.term = t.current_term) -> (
+  | `RAppendEntiresResponse msg, Leader s when Int.(msg.term = t.current_term)
+    -> (
     match msg.success with
     | Ok match_index ->
         let updated_match_index =
-          Int64.(max match_index @@ IdMap.find_exn s.match_index src)
+          Int64.(max match_index @@ IdMap.find_exn s.match_index msg.src)
         in
         let match_index =
-          Map.set s.match_index ~key:src ~data:updated_match_index
+          Map.set s.match_index ~key:msg.src ~data:updated_match_index
         in
         let next_index =
-          Map.set s.next_index ~key:src ~data:Int64.(updated_match_index + one)
+          Map.set s.next_index ~key:msg.src
+            ~data:Int64.(updated_match_index + one)
         in
         let node_state = Leader {s with match_index; next_index} in
         let t = {t with node_state} in
         check_commit_index t
     | Error prev_log_index ->
-        let next_index = Map.set s.next_index ~key:src ~data:prev_log_index in
+        let next_index =
+          Map.set s.next_index ~key:msg.src ~data:prev_log_index
+        in
         let+ () =
-          CompRes.append
+          CompRes.append_pre
           @@ `SendAppendEntries
-               (src, make_append_entries t Int64.(prev_log_index + one))
+               (msg.src, make_append_entries t Int64.(prev_log_index + one))
         in
         CompRes.return {t with node_state= Leader {s with next_index}} )
   | `RAppendEntiresResponse _, _ ->
       CompRes.return t
   | `Commands cs, Leader s ->
       let cs = List.filter cs ~f:(fun cmd -> not @@ L.id_in_log t.log cmd.id) in
+      let log, ops = L.addv cs t.log t.current_term in
       let+ t =
-        List.fold cs ~init:(CompRes.return t) ~f:(fun t command ->
-            let+ t = t in
-            let log, ops = L.add {term= t.current_term; command} t.log in
-            let+ () = CompRes.appendv @@ List.map ~f:log_op_to_action ops in
-            CompRes.return {t with log})
+        Ok
+          ( {t with log}
+          , (List.map ops ~f:(fun op -> log_op_to_action op), false, []) )
       in
       let+ t = check_commit_index t in
       let highest_index = L.get_max_index t.log in
@@ -439,7 +446,7 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
         let next_index = Map.find_exn s.next_index node_id in
         if Int64.(highest_index >= next_index) then
           let+ () =
-            CompRes.append
+            CompRes.append_pre
             @@ `SendAppendEntries (node_id, make_append_entries t next_index)
           in
           CompRes.return t
@@ -447,26 +454,20 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       in
       List.fold t.config.other_nodes ~f:fold ~init:(CompRes.return t)
   | `Commands cs, _ ->
-    let+ () = CompRes.append (`Unapplied cs) in
-    CompRes.return t
+      let+ () = CompRes.append_pre (`Unapplied cs) in
+      CompRes.return t
 
 let advance t event : (t, 'b) CompRes.t =
-  let* t, actions = advance_raw t event in
-  let sync_required =
-    List.exists actions ~f:(function
-      | `SendAppendEntriesResponse _
-      | `SendRequestVoteResponse _
-      | `CommitIndexUpdate _ ->
-          true
-      | _ ->
-          false)
+  let* t, (pre, sync, post) = advance_raw t event in
+  let actions =
+    if not @@ List.is_empty post then (pre, true, post) else (pre, sync, post)
   in
-  let actions = if sync_required then `Sync :: actions else actions in
   Ok (t, actions)
 
 let is_leader t = match t.node_state with Leader _ -> true | _ -> false
 
 let get_log (t : t) = t.log
+
 let get_term (t : t) = t.current_term
 
 let create_node config log current_term =
@@ -480,10 +481,16 @@ let create_node config log current_term =
 module Test = struct
   module Comp = Comp
   module CompRes = CompRes
+
   let transition_to_leader = transition_to_leader
+
   let transition_to_candidate = transition_to_candidate
+
   let transition_to_follower = transition_to_follower
+
   let advance = advance
+
   let get_node_state t = t.node_state
+
   let get_commit_index t = t.commit_index
 end

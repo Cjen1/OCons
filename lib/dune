@@ -3,4 +3,5 @@
  (public_name ocamlpaxos)
  (inline_tests)
  (libraries base core async logs logs.fmt fmt.tty odbutils)
- (preprocess (pps ppx_jane)))
+ (preprocess
+  (pps ppx_jane)))

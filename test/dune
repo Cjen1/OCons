@@ -1,5 +1,6 @@
 (library
  (name tests)
  (inline_tests)
- (libraries core async ocamlpaxos)
- (preprocess (pps ppx_jane)))
+ (libraries core core_bench async ocamlpaxos)
+ (preprocess
+  (pps ppx_jane -allow-unannotated-ignores)))

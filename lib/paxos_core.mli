@@ -1,38 +1,37 @@
 val src : Logs.src
 
-module L = Types.Log
-module T = Types.Term
+open Types
+open Types.MessageTypes
+module L = Log
+module T = Term
 
 type event =
   [ `Tick
-  | `RRequestVote of Types.node_id * Types.MessageTypes.request_vote
-  | `RRequestVoteResponse of
-    Types.node_id * Types.MessageTypes.request_vote_response
-  | `RAppendEntries of Types.node_id * Types.MessageTypes.append_entries
-  | `RAppendEntiresResponse of
-    Types.node_id * Types.MessageTypes.append_entries_response
+  | `RRequestVote of Types.MessageTypes.request_vote
+  | `RRequestVoteResponse of Types.MessageTypes.request_vote_response
+  | `RAppendEntries of Types.MessageTypes.append_entries
+  | `RAppendEntiresResponse of Types.MessageTypes.append_entries_response
   | `Commands of Types.command list ]
 
 type persistant_change = [`Log of L.op | `Term of T.op]
 
-type action =
-  [ `SendRequestVote of Types.node_id * Types.MessageTypes.request_vote
-  | `SendRequestVoteResponse of
-    Types.node_id * Types.MessageTypes.request_vote_response
-  | `SendAppendEntries of Types.node_id * Types.MessageTypes.append_entries
-  | `SendAppendEntriesResponse of
-    Types.node_id * Types.MessageTypes.append_entries_response
-  | `CommitIndexUpdate of Types.log_index
-  | `PersistantChange of persistant_change
-  | `Sync
-  | `Unapplied of Types.command list ]
+type pre_sync_action =
+  [ `PersistantChange of persistant_change
+  | `SendRequestVote of node_id * request_vote
+  | `SendAppendEntries of node_id * append_entries
+  | `Unapplied of command list ]
 
-val compare_apply_order :
-     [> `CommitIndexUpdate of 'a | `PersistantChange of 'b | `Sync]
-  -> [> `CommitIndexUpdate of 'c | `PersistantChange of 'd | `Sync]
-  -> int
+type post_sync_action =
+  [ `SendRequestVoteResponse of node_id * request_vote_response
+  | `SendAppendEntriesResponse of node_id * append_entries_response
+  | `CommitIndexUpdate of log_index ]
 
-val pp_action : Format.formatter -> action -> unit
+type do_sync = bool
+
+type action_sequence = pre_sync_action list * do_sync * post_sync_action list
+
+val pp_action :
+  Format.formatter -> [< pre_sync_action | post_sync_action] -> unit
 
 type config =
   { phase1majority: int
@@ -53,14 +52,15 @@ val is_leader : t -> bool
 
 val create_node : config -> L.t -> Types.Term.t -> t
 
-val advance : t -> event -> (t * action  list, [>`Msg of string]) result
+val advance : t -> event -> (t * action_sequence, [> `Msg of string]) result
 
 val get_log : t -> Types.log
+
 val get_term : t -> Types.term
 
 module Test : sig
   module Comp : sig
-    type 'a t = 'a * action list
+    type 'a t = 'a * action_sequence
   end
 
   module CompRes : sig

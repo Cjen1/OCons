@@ -11,7 +11,7 @@ type command_id = Id.t [@@deriving bin_io, sexp]
 
 type client_id = Id.t [@@deriving bin_io, sexp]
 
-type node_id = int [@@deriving sexp]
+type node_id = int [@@deriving bin_io, sexp]
 
 type key = string [@@deriving bin_io, sexp]
 
@@ -66,7 +66,8 @@ module Log = struct
   module L = struct
     module IdSet = Set.Make (Id)
 
-    type t = {store: log_entry list; command_set: IdSet.t; length: int64}[@@deriving sexp]
+    type t = {store: log_entry list; command_set: IdSet.t; length: int64}
+    [@@deriving sexp]
 
     let nth_of_index t i = Int64.(t.length - i)
 
@@ -76,24 +77,28 @@ module Log = struct
 
     type op = Add of log_entry | RemoveGEQ of log_index [@@deriving bin_io]
 
+    let add t entry =
+      let command_set = Set.add t.command_set entry.command.id in
+      {store= entry :: t.store; command_set; length= Int64.(t.length + of_int 1)}
+
+    let remove_geq t i =
+      let drop = drop_of_index t i |> Int64.(max zero) in
+      let removed, store = List.split_n t.store (Int64.to_int_exn drop) in
+      let command_set =
+        List.fold_left removed ~init:t.command_set ~f:(fun cset entry ->
+            Set.remove cset entry.command.id)
+      in
+      let length = Int64.(max zero (t.length - drop)) in
+      {store; command_set; length}
+
     let apply t = function
       | Add entry ->
-          let command_set = Set.add t.command_set entry.command.id in
-          { store= entry :: t.store
-          ; command_set
-          ; length= Int64.(t.length + of_int 1) }
+          add t entry
       | RemoveGEQ i ->
-          let drop = drop_of_index t i |> Int64.(max zero) in
-          let removed, store = List.split_n t.store (Int64.to_int_exn drop) in
-          let command_set =
-            List.fold_left removed ~init:t.command_set ~f:(fun cset entry ->
-                Set.remove cset entry.command.id)
-          in
-          let length = Int64.(max zero (t.length - drop)) in
-          {store; command_set; length}
+          remove_geq t i
   end
 
-  type t = L.t[@@deriving sexp]
+  type t = L.t [@@deriving sexp]
 
   type op = L.op
 
@@ -117,9 +122,15 @@ module Log = struct
 
   let apply_wrap t op = (L.apply t op, [op])
 
-  let add entry t = apply_wrap t (Add entry)
+  let add entry t = (L.add t entry, L.Add entry)
 
-  let removeGEQ index t = apply_wrap t (RemoveGEQ index)
+  let addv cs t term =
+    List.fold cs ~init:(t, []) ~f:(fun (t, ops) command ->
+        let t, op = add {term; command} t in
+        let ops = op :: ops in
+        (t, ops))
+
+  let removeGEQ index t = (L.remove_geq t index, L.RemoveGEQ index)
 
   let get_max_index (t : L.t) = t.length
 
@@ -128,6 +139,10 @@ module Log = struct
   let entries_after_inc t index =
     let drop = L.drop_of_index t index |> Int64.to_int_exn in
     List.split_n t.store drop |> fst
+
+  let entries_after_inc_size t index =
+    let size = Int64.(get_max_index t - index + one) in
+    (entries_after_inc t index, size)
 
   let to_string t =
     let entries = entries_after_inc t Int64.zero in
@@ -184,45 +199,54 @@ end
 type log = Log.L.t
 
 module MessageTypes = struct
-  type request_vote = {term: term; leader_commit: log_index}
+  type request_vote = {src: node_id; term: term; leader_commit: log_index}
   [@@deriving bin_io, sexp]
 
   type request_vote_response =
-    { term: term
+    { src: node_id
+    ; term: term
     ; vote_granted: bool
     ; entries: log_entry list
     ; start_index: log_index }
   [@@deriving bin_io, sexp]
 
   type append_entries =
-    { term: term
+    { src: node_id
+    ; term: term
     ; prev_log_index: log_index
     ; prev_log_term: term
     ; entries: log_entry list
+    ; entries_length: log_index
     ; leader_commit: log_index }
   [@@deriving bin_io, sexp]
 
   (* success is either the highest replicated term (match index) or prev_log_index *)
   type append_entries_response =
-    {term: term; success: (log_index, log_index) Result.t}
+    {src: node_id; term: term; success: (log_index, log_index) Result.t}
   [@@deriving bin_io, sexp]
 
   type client_request = command [@@deriving bin_io, sexp]
 
-  type client_response = op_result
-  [@@deriving bin_io, sexp]
+  type client_response = op_result [@@deriving bin_io, sexp]
 end
 
 module RPCs = struct
   open MessageTypes
 
   let request_vote =
-    Rpc.Rpc.create ~name:"request_vote" ~version:0 ~bin_query:bin_request_vote
-      ~bin_response:bin_request_vote_response
+    Rpc.One_way.create ~name:"request_vote" ~version:0 ~bin_msg:bin_request_vote
+
+  let request_vote_response =
+    Rpc.One_way.create ~name:"request_vote_response" ~version:0
+      ~bin_msg:bin_request_vote_response
 
   let append_entries =
-    Rpc.Rpc.create ~name:"append_entries" ~version:0
-      ~bin_query:bin_append_entries ~bin_response:bin_append_entries_response
+    Rpc.One_way.create ~name:"append_entries" ~version:0
+      ~bin_msg:bin_append_entries
+
+  let append_entries_response =
+    Rpc.One_way.create ~name:"append_entries_response" ~version:0
+      ~bin_msg:bin_append_entries_response
 
   let client_request =
     Rpc.Rpc.create ~name:"client_request" ~version:0

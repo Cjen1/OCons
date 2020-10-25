@@ -36,27 +36,35 @@ module Batcher = struct
     t.current_jobs <- v :: t.current_jobs ;
     match () with
     | () when t.limit t.current_jobs ->
-        perform t
+        don't_wait_for @@ perform t
     | () when not t.dispatched ->
         t.dispatched <- true ;
         let p =
           let%bind () = after t.dispatch_timeout in
           perform t
         in
-        p |> don't_wait_for |> return
+        p |> don't_wait_for
     | () ->
-        return ()
+        ()
 
   let create ~f ~dispatch_timeout ~limit =
     {callback= f; dispatch_timeout; limit; current_jobs= []; dispatched= false}
 
   let create_counter ~f ~dispatch_timeout ~limit =
-    create ~f ~dispatch_timeout ~limit:(fun jobs -> List.length jobs > limit)
+    let counter = ref 0 in
+    let f xs =
+      counter := 0 ;
+      f xs
+    in
+    create ~f ~dispatch_timeout ~limit:(fun _ ->
+        incr counter ; !counter > limit)
 end
 
 let connect_persist ?(retry_delay = Time_ns.Span.of_sec 1.) name =
   let server_address = Host_and_port.of_string name in
-  Async_rpc_kernel.Persistent_connection.Rpc.create ~retry_delay:(fun () -> retry_delay) ~server_name:name
+  Async_rpc_kernel.Persistent_connection.Rpc.create
+    ~retry_delay:(fun () -> retry_delay)
+    ~server_name:name
     ~connect:(fun host_and_port ->
       let%bind conn =
         Rpc.Connection.client
@@ -68,4 +76,3 @@ let connect_persist ?(retry_delay = Time_ns.Span.of_sec 1.) name =
       | Error exn ->
           Error (Error.of_exn exn) |> return)
     (fun () -> Ok server_address |> return)
-

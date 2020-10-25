@@ -19,9 +19,8 @@ let init_log (wal, log) =
     |> List.mapi ~f:(fun id (term, key) -> make_entry (id + 1) term key)
   in
   let fold log entry =
-    let log, ops = L.add entry log in
-    List.iter ops ~f:(L.Wal.write wal) ;
-    log
+    let log, op = L.add entry log in
+    L.Wal.write wal op ; log
   in
   let log = List.fold_left init_state ~init:log ~f:fold in
   let%bind () = L.Wal.datasync wal in

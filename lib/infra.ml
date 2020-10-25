@@ -9,11 +9,11 @@ open Types
 open Types.MessageTypes
 open! Utils
 
+let debug_do_sync = false
+
 let src = Logs.Src.create "Infra" ~doc:"Infrastructure module"
 
 module Log = (val Logs.src_log src : Logs.LOG)
-
-type actions = P.action
 
 type wal = {t: T.Wal.t; l: L.Wal.t}
 
@@ -67,60 +67,56 @@ let find_delete xs ~f =
   in
   fold xs []
 
-let find_delete_exn xs ~f =
-  match find_delete xs ~f with
-  | Some v, xs ->
-      (v, xs)
-  | None, _ ->
-      raise @@ Invalid_argument "find_delete: no matching element in list"
-
 let get_ok v =
   match v with Error (`Msg s) -> raise @@ Invalid_argument s | Ok v -> v
 
-let rec do_actions t (actions : actions list) =
-  let actions = List.sort actions ~compare:P.compare_apply_order in
-  Deferred.List.iter actions ~how:`Sequential ~f:(function
+let rec do_pre t pre =
+  List.iter pre ~f:(function
     | `PersistantChange (`Log op) ->
-        L.Wal.write t.wal.l op |> return
+        L.Wal.write t.wal.l op
     | `PersistantChange (`Term op) ->
-        T.Wal.write t.wal.t op |> return
-    | `Sync ->
-        sync t
-    | `CommitIndexUpdate index ->
-        advance_state_machine t index |> return
+        T.Wal.write t.wal.t op
     | `SendRequestVote (id, rv) ->
-        send t id Types.RPCs.request_vote rv (fun rvr ->
-            `RRequestVoteResponse (id, rvr)) ;
-        return ()
+        send t id Types.RPCs.request_vote rv
     | `SendAppendEntries (id, ae) ->
-        send t id Types.RPCs.append_entries ae (fun aer ->
-            `RAppendEntiresResponse (id, aer)) ;
-        return ()
-    | `SendRequestVoteResponse _ | `SendAppendEntriesResponse _ ->
-        raise @@ Invalid_argument "Cannot send response what is not the source"
+        send t id Types.RPCs.append_entries ae
     | `Unapplied _cmds ->
         raise @@ Invalid_argument "Cannot apply unapplied args")
 
-and send :
-    type query response.
-       t
-    -> int
-    -> (query, response) Rpc.Rpc.t
-    -> query
-    -> (response -> P.event)
-    -> unit =
- fun t target rpc msg to_event ->
-  let p =
-    let conn = H.find_exn t.conns target in
-    let%bind conn = Async_rpc_kernel.Persistent_connection.Rpc.connected conn in
-    match%bind Rpc.Rpc.dispatch' rpc conn msg with
-    | Ok v ->
-        to_event v |> handle_event t
-    | Error _ ->
-        (* TODO good errors here *)
-        assert false
+and do_post t post =
+  List.iter post ~f:(function
+    | `CommitIndexUpdate index ->
+        advance_state_machine t index
+    | `SendRequestVoteResponse (id, rvr) ->
+        send t id Types.RPCs.request_vote_response rvr
+    | `SendAppendEntriesResponse (id, aer) ->
+        send t id Types.RPCs.append_entries_response aer)
+
+and do_actions t ((pre, do_sync, post) : P.action_sequence) =
+  do_pre t pre ;
+  match do_sync && debug_do_sync with
+  | true ->
+      let%bind () = sync t in
+      do_post t post ; return ()
+  | false ->
+      do_post t post ; return ()
+
+and send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
+ fun t target rpc msg ->
+  let conn = H.find_exn t.conns target in
+  let handler conn =
+    match Rpc.One_way.dispatch' rpc conn msg with
+    | Ok () ->
+        ()
+    | Error e ->
+        Async_rpc_kernel.Rpc_error.raise e (Info.of_string "send request")
   in
-  don't_wait_for p
+  let connected = Async_rpc_kernel.Persistent_connection.Rpc.connected conn in
+  match Deferred.peek connected with
+  | Some conn ->
+      handler conn
+  | None ->
+      upon connected handler
 
 and handle_event t event =
   let core, actions = P.advance t.core event |> get_ok in
@@ -133,49 +129,36 @@ let advance_wrapper t event =
   actions
 
 let server_impls =
-  [ Rpc.Rpc.implement RPCs.request_vote (fun t rv ->
-        let actions = `RRequestVote (-1, rv) |> advance_wrapper t in
-        let resp, actions =
-          find_delete_exn actions ~f:(function
-            | `SendRequestVoteResponse (i, rvr) when i = -1 ->
-                Some rvr
-            | _ ->
-                None)
-        in
-        let%bind () = do_actions t actions in
-        return resp)
-  ; Rpc.Rpc.implement RPCs.append_entries (fun t ae ->
-        let actions = `RAppendEntries (-1, ae) |> advance_wrapper t in
-        let resp, actions =
-          find_delete_exn actions ~f:(function
-            | `SendAppendEntriesResponse (i, aer) when i = -1 ->
-                Some aer
-            | _ ->
-                None)
-        in
-        let%bind () = do_actions t actions in
-        return resp)
+  [ Rpc.One_way.implement RPCs.request_vote (fun t rv ->
+        let res = `RRequestVote rv |> advance_wrapper t in
+        don't_wait_for @@ do_actions t res)
+  ; Rpc.One_way.implement RPCs.request_vote_response (fun t rvr ->
+        let res = `RRequestVoteResponse rvr |> advance_wrapper t in
+        don't_wait_for @@ do_actions t res)
+  ; Rpc.One_way.implement RPCs.append_entries (fun t ae ->
+        let res = `RAppendEntries ae |> advance_wrapper t in
+        don't_wait_for @@ do_actions t res)
+  ; Rpc.One_way.implement RPCs.append_entries_response (fun t aer ->
+        let res = `RAppendEntiresResponse aer |> advance_wrapper t in
+        don't_wait_for @@ do_actions t res)
   ; Rpc.Rpc.implement RPCs.client_request (fun t cr ->
+        print_endline @@ Fmt.str "Received %s" (Id.to_string cr.id) ;
         match H.find t.client_results cr.id with
         | Some result ->
             return result
         | None ->
             let resp_ivar = Ivar.create () in
-            let%bind () =
-              Batcher.dispatch t.client_request_batcher (cr, resp_ivar)
-            in
+            Batcher.dispatch t.client_request_batcher (cr, resp_ivar) ;
             Ivar.read resp_ivar) ]
 
 let handle_client_requests t
     (req_ivar_list : (command, Types.op_result Ivar.t) List.Assoc.t) =
-  let actions = advance_wrapper t (`Commands (List.map req_ivar_list ~f:fst)) in
-  let actions =
+  let pre, sync, post =
+    advance_wrapper t (`Commands (List.map req_ivar_list ~f:fst))
+  in
+  let pre =
     match
-      find_delete actions ~f:(function
-        | `Unapplied _ as v ->
-            Some v
-        | _ ->
-            None)
+      find_delete pre ~f:(function `Unapplied _ as v -> Some v | _ -> None)
     with
     | None, actions ->
         actions
@@ -191,7 +174,7 @@ let handle_client_requests t
   List.iter req_ivar_list ~f:(fun (cmd, ivar) ->
       if Ivar.is_empty ivar then
         H.add_multi t.client_ivars ~key:cmd.id ~data:ivar) ;
-  do_actions t actions
+  do_actions t (pre, sync, post)
 
 let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
     ~tick_speed ~batch_size ~dispatch_timeout =
@@ -224,12 +207,15 @@ let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
   let state_machine = create_state_machine () in
   let t_ivar = Ivar.create () in
   let client_request_batcher =
-    Batcher.create
+    Batcher.create_counter
       ~f:(fun reqs ->
-          let%bind t = Ivar.read t_ivar in
-          handle_client_requests t reqs )
-      ~dispatch_timeout
-      ~limit:(fun ls -> List.length ls > batch_size)
+        match Ivar.peek t_ivar with
+        | Some t ->
+            handle_client_requests t reqs
+        | None ->
+            let%bind t = Ivar.read t_ivar in
+            handle_client_requests t reqs)
+      ~dispatch_timeout ~limit:batch_size
   in
   let server_ivar = Ivar.create () in
   let t =
@@ -243,7 +229,7 @@ let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
     ; client_request_batcher
     ; client_results= H.create (module Types.Id) }
   in
-  Ivar.fill t_ivar t;
+  Ivar.fill t_ivar t ;
   Async.every ~continue_on_error:true tick_speed (fun () ->
       handle_event t `Tick |> don't_wait_for) ;
   let implementations =
@@ -265,4 +251,4 @@ let close t =
   let%bind () = Tcp.Server.close server in
   t.conns |> H.to_alist |> List.map ~f:snd
   |> Deferred.List.iter ~how:`Parallel ~f:(fun conn ->
-      Async_rpc_kernel.Persistent_connection.Rpc.close conn)
+         Async_rpc_kernel.Persistent_connection.Rpc.close conn)
