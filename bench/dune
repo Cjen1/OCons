@@ -1,3 +1,0 @@
-(executables
- (names bench_loop)
- (libraries bos core owl ocamlpaxos))
