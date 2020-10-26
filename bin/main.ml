@@ -27,10 +27,10 @@ let command =
       +> anon ("tick_speed" %: float)
       +> flag "-s" ~doc:"Size of batches" (optional_with_default 1 int)
       +> flag "-d" ~doc:"Time before batch is dispatched in ms"
-           (optional_with_default 10. float))
+           (optional_with_default 100. float))
     (fun node_id node_list datadir listen_port election_timeout tick_speed
          batch_size dispatch_timeout () ->
-      let tick_speed = Time.Span.of_ms tick_speed in
+      let tick_speed = Time.Span.of_sec tick_speed in
       let dispatch_timeout = Time.Span.of_ms dispatch_timeout in
       let%bind () =
         match%bind Sys.file_exists_exn datadir with
@@ -62,7 +62,7 @@ let reporter =
 
 let () =
   Fmt_tty.setup_std_outputs () ;
-  Logs.(set_level (Some Info)) ;
+  Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ;
   Fmt.pr "%a" (Fmt.array ~sep:Fmt.sp Fmt.string) (Sys.get_argv ()) ;
   Command.run command

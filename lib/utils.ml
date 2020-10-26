@@ -40,7 +40,8 @@ module Batcher = struct
     | () when not t.dispatched ->
         t.dispatched <- true ;
         let p =
-          let%bind () = after t.dispatch_timeout in
+          (*schedule' ~priority:Priority.low @@ fun () ->*)
+          let%bind () = at Time.(add (now ()) t.dispatch_timeout) in
           perform t
         in
         p |> don't_wait_for

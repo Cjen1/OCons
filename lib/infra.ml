@@ -9,7 +9,7 @@ open Types
 open Types.MessageTypes
 open! Utils
 
-let debug_do_sync = false
+let debug_no_sync = false
 
 let src = Logs.Src.create "Infra" ~doc:"Infrastructure module"
 
@@ -51,57 +51,10 @@ let rec advance_state_machine t = function
   | _ ->
       ()
 
-(* For the implementations in order to have side effects other than just the simple response (see updating the term etc) 
-   need to filter out the rpc response *)
-let find_delete xs ~f =
-  let rec fold xs acc =
-    match xs with
-    | [] ->
-        (None, acc)
-    | x :: xs -> (
-      match f x with
-      | Some v ->
-          (Some v, List.rev_append acc xs)
-      | None ->
-          fold xs (x :: acc) )
-  in
-  fold xs []
-
 let get_ok v =
   match v with Error (`Msg s) -> raise @@ Invalid_argument s | Ok v -> v
 
-let rec do_pre t pre =
-  List.iter pre ~f:(function
-    | `PersistantChange (`Log op) ->
-        L.Wal.write t.wal.l op
-    | `PersistantChange (`Term op) ->
-        T.Wal.write t.wal.t op
-    | `SendRequestVote (id, rv) ->
-        send t id Types.RPCs.request_vote rv
-    | `SendAppendEntries (id, ae) ->
-        send t id Types.RPCs.append_entries ae
-    | `Unapplied _cmds ->
-        raise @@ Invalid_argument "Cannot apply unapplied args")
-
-and do_post t post =
-  List.iter post ~f:(function
-    | `CommitIndexUpdate index ->
-        advance_state_machine t index
-    | `SendRequestVoteResponse (id, rvr) ->
-        send t id Types.RPCs.request_vote_response rvr
-    | `SendAppendEntriesResponse (id, aer) ->
-        send t id Types.RPCs.append_entries_response aer)
-
-and do_actions t ((pre, do_sync, post) : P.action_sequence) =
-  do_pre t pre ;
-  match do_sync && debug_do_sync with
-  | true ->
-      let%bind () = sync t in
-      do_post t post ; return ()
-  | false ->
-      do_post t post ; return ()
-
-and send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
+let send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
  fun t target rpc msg ->
   let conn = H.find_exn t.conns target in
   let handler conn =
@@ -118,6 +71,37 @@ and send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
   | None ->
       upon connected handler
 
+let do_pre t pre =
+  List.iter pre ~f:(function
+    | `PersistantChange (`Log op) ->
+        L.Wal.write t.wal.l op
+    | `PersistantChange (`Term op) ->
+        T.Wal.write t.wal.t op
+    | `SendRequestVote (id, rv) ->
+        send t id Types.RPCs.request_vote rv
+    | `SendAppendEntries (id, ae) ->
+        send t id Types.RPCs.append_entries ae
+    | `Unapplied _cmds ->
+        ())
+
+let do_post t post =
+  List.iter post ~f:(function
+    | `CommitIndexUpdate index ->
+        advance_state_machine t index
+    | `SendRequestVoteResponse (id, rvr) ->
+        send t id Types.RPCs.request_vote_response rvr
+    | `SendAppendEntriesResponse (id, aer) ->
+        send t id Types.RPCs.append_entries_response aer)
+
+let rec do_actions t ((pre, do_sync, post) : P.action_sequence) =
+  do_pre t pre ;
+  match do_sync && not debug_no_sync with
+  | true ->
+      let%bind () = sync t in
+      do_post t post ; return ()
+  | false ->
+      do_post t post ; return ()
+
 and handle_event t event =
   let core, actions = P.advance t.core event |> get_ok in
   t.core <- core ;
@@ -128,8 +112,41 @@ let advance_wrapper t event =
   t.core <- core ;
   actions
 
+let handle_client_requests t
+    (req_ivar_list : (command, Types.op_result Ivar.t) List.Assoc.t) =
+  let pre, sync, post =
+    advance_wrapper t (`Commands (List.map req_ivar_list ~f:fst))
+  in
+  let () =
+    match List.find pre ~f:(function `Unapplied _ -> true | _ -> false) with
+    | Some (`Unapplied cmds) ->
+        let req_list = List.map req_ivar_list ~f:(fun (cr, i) -> (cr.id, i)) in
+        let ivar_lookup =
+          H.of_alist_exn ~growth_allowed:false (module Id) req_list
+        in
+        List.iter cmds ~f:(fun cmd ->
+            let ivar = H.find_exn ivar_lookup cmd.id in
+            Ivar.fill ivar Types.Failure)
+    | _ ->
+        ()
+  in
+  List.iter req_ivar_list ~f:(fun (cmd, ivar) ->
+      if Ivar.is_empty ivar then
+        H.add_multi t.client_ivars ~key:cmd.id ~data:ivar) ;
+  do_actions t (pre, sync, post)
+
 let server_impls =
-  [ Rpc.One_way.implement RPCs.request_vote (fun t rv ->
+  let dispatch_client_request t m i =
+    Batcher.dispatch t.client_request_batcher (m, i)
+  in
+  [ Rpc.Rpc.implement RPCs.client_request (fun t cr ->
+        Log.debug (fun m -> m "Received cr: %s" (Id.to_string cr.id)) ;
+        match H.find t.client_results cr.id with
+        | Some result ->
+            return result
+        | None ->
+            Deferred.create (dispatch_client_request t cr))
+  ; Rpc.One_way.implement RPCs.request_vote (fun t rv ->
         let res = `RRequestVote rv |> advance_wrapper t in
         don't_wait_for @@ do_actions t res)
   ; Rpc.One_way.implement RPCs.request_vote_response (fun t rvr ->
@@ -140,41 +157,7 @@ let server_impls =
         don't_wait_for @@ do_actions t res)
   ; Rpc.One_way.implement RPCs.append_entries_response (fun t aer ->
         let res = `RAppendEntiresResponse aer |> advance_wrapper t in
-        don't_wait_for @@ do_actions t res)
-  ; Rpc.Rpc.implement RPCs.client_request (fun t cr ->
-        print_endline @@ Fmt.str "Received %s" (Id.to_string cr.id) ;
-        match H.find t.client_results cr.id with
-        | Some result ->
-            return result
-        | None ->
-            let resp_ivar = Ivar.create () in
-            Batcher.dispatch t.client_request_batcher (cr, resp_ivar) ;
-            Ivar.read resp_ivar) ]
-
-let handle_client_requests t
-    (req_ivar_list : (command, Types.op_result Ivar.t) List.Assoc.t) =
-  let pre, sync, post =
-    advance_wrapper t (`Commands (List.map req_ivar_list ~f:fst))
-  in
-  let pre =
-    match
-      find_delete pre ~f:(function `Unapplied _ as v -> Some v | _ -> None)
-    with
-    | None, actions ->
-        actions
-    | Some (`Unapplied cmds), actions ->
-        List.iter cmds ~f:(fun cmd ->
-            let ivar =
-              List.Assoc.find_exn req_ivar_list cmd ~equal:(fun a b ->
-                  Id.(a.id = b.id))
-            in
-            Ivar.fill ivar Types.Failure) ;
-        actions
-  in
-  List.iter req_ivar_list ~f:(fun (cmd, ivar) ->
-      if Ivar.is_empty ivar then
-        H.add_multi t.client_ivars ~key:cmd.id ~data:ivar) ;
-  do_actions t (pre, sync, post)
+        don't_wait_for @@ do_actions t res) ]
 
 let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
     ~tick_speed ~batch_size ~dispatch_timeout =
@@ -236,9 +219,13 @@ let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
     Rpc.Implementations.create_exn ~implementations:server_impls
       ~on_unknown_rpc:`Continue
   in
+  let on_handler_error =
+    `Call
+      (fun _ e -> Log.err (fun m -> m "Got exn while handling: %a" Fmt.exn e))
+  in
   let server =
     Tcp.Server.create (Tcp.Where_to_listen.of_port listen_port)
-      ~on_handler_error:`Ignore (fun _addr reader writer ->
+      ~on_handler_error (fun _addr reader writer ->
         Rpc.Connection.server_with_close reader writer ~implementations
           ~connection_state:(fun _ -> t)
           ~on_handshake_error:`Ignore)
