@@ -96,7 +96,7 @@ let main target_throughput n output portss =
       let jsonpath =
         match output with
         | None ->
-            Fmt.str "%d.json" (List.length ports)
+          "data.json"
         | Some s ->
             s
       in
