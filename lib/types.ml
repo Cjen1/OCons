@@ -49,8 +49,6 @@ module Term = struct
     let apply _t op = op
   end
 
-  module Wal = Odbutils.Owal.Persistant (T)
-
   let update_term t op = (T.apply t op, [op])
 
   include T
@@ -192,11 +190,25 @@ module Log = struct
   let append t command term =
     let entry = {command; term} in
     apply_wrap t (Add entry)
-
-  module Wal = Odbutils.Owal.Persistant (L)
 end
 
 type log = Log.L.t
+
+module Wal_t = struct
+  type t = {term: Term.t; log: Log.t}
+
+  let init () = {term= Term.init (); log= Log.L.init ()}
+
+  type op = Term of Term.T.op | Log of Log.L.op [@@deriving bin_io]
+
+  let apply t = function
+    | Term op ->
+        {t with term= Term.T.apply t.term op}
+    | Log op ->
+        {t with log= Log.L.apply t.log op}
+end
+
+module Wal = Odbutils.Owal.Persistant(Wal_t)
 
 module MessageTypes = struct
   type request_vote = {src: node_id; term: term; leader_commit: log_index}
