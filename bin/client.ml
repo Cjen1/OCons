@@ -1,57 +1,34 @@
-(* main.ml *)
-open Core
-open Lwt.Infix
+open! Core
+open! Async
 open Ocamlpaxos
-open Client
-open Unix_capnp_messaging
-
-let node_list =
-  Command.Arg_type.create (fun ls ->
-      String.split ls ~on:','
-      |> List.map ~f:(String.split ~on:':')
-      |> List.map ~f:(function
-           | id :: xs -> (
-               let rest = String.concat ~sep:":" xs in
-               match Conn_manager.addr_of_string rest with
-               | Ok addr ->
-                   (Int64.of_string id, addr)
-               | Error (`Msg e) ->
-                   Fmt.failwith "Expected id:(ip:port|path) not %s" e )
-           | _ ->
-               assert false))
+module C = Client
 
 let bytes = Command.Arg_type.create @@ Bytes.of_string
 
-let print_res = function
-  | Ok `Success ->
-      Printf.printf "Success\n" |> Lwt.return
-  | Ok (`ReadSuccess s) ->
-      Printf.printf "Read Success: %s\n" s |> Lwt.return
-  | Error (`Msg s) ->
-      Printf.printf "Failure of %s\n" s |> Lwt.return
+let print_res res = res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum
 
 let put =
-  Command.basic ~summary:"Put operation"
-    Command.Let_syntax.(
-      let%map_open addresses = anon ("addresses" %: node_list)
-      and key = anon ("key" %: bytes)
-      and value = anon ("value" %: bytes) in
-      fun () ->
-        Random.self_init () ;
-        Lwt_main.run
-          ( new_client addresses ()
-          >>= fun client -> op_write client key value >>= print_res ))
+  Command.async_spec ~summary:"Put request"
+    Command.Spec.(
+      empty
+      +> flag "-p" ~doc:"ports list" (listed string)
+      +> anon ("key" %: bytes)
+      +> anon ("value" %: bytes))
+    (fun ps k v () ->
+      let c = C.new_client ps in
+      let%map res = C.op_write c k v in
+      res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum |> print_endline)
 
 let get =
-  Command.basic ~summary:"Get operation"
-    Command.Let_syntax.(
-      let%map_open addresses = anon ("addresses" %: node_list)
-      and key = anon ("key" %: bytes) in
-      fun () ->
-        Random.self_init () ;
-        Lwt_main.run
-          ( new_client addresses ()
-          >>= fun client -> op_read client key >>= print_res ))
+  Command.async_spec ~summary:"Get request"
+    Command.Spec.(
+      empty
+      +> flag "-p" ~doc:"ports list" (listed string)
+      +> anon ("key" %: bytes))
+    (fun ps k () ->
+      let c = C.new_client ps in
+      let%map res = C.op_read c k in
+      res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum |> print_endline)
 
 let reporter =
   let report src level ~over k msgf =
@@ -74,9 +51,6 @@ let cmd =
     [("put", put); ("get", get)]
 
 let () =
-  Stdlib.Random.self_init () ;
-  Random.self_init () ;
-  Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
   Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run cmd

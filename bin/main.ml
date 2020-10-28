@@ -1,52 +1,49 @@
+open! Core
+open! Async
 open Ocamlpaxos
-open Core
-open Unix_capnp_messaging
 
 let network_address =
   let parse s =
-    match Conn_manager.addr_of_string s with
-    | Ok addr ->
-        addr
-    | Error (`Msg e) ->
-        Fmt.failwith "Expected ip:port | path rather than %s " e
+    match String.split ~on:':' s with
+    | [id; addr; port] ->
+        (Int.of_string id, Fmt.str "%s:%s" addr port)
+    | _ ->
+        Fmt.failwith "Expected ip:port | path rather than %s " s
   in
   Command.Arg_type.create parse
 
 let node_list =
-  Command.Arg_type.create (fun ls ->
-      String.split ls ~on:','
-      |> List.map ~f:(String.split ~on:':')
-      |> List.map ~f:(function
-           | id :: xs -> (
-               let rest = String.concat ~sep:":" xs in
-               match Conn_manager.addr_of_string rest with
-               | Ok addr ->
-                   (Int64.of_string id, addr)
-               | Error (`Msg e) ->
-                   Fmt.failwith "Expected id:(ip:port|path) not %s" e )
-           | _ ->
-               assert false))
+  Command.Arg_type.comma_separated ~allow_empty:false network_address
 
 let command =
-  Core.Command.basic ~summary:"Ocaml_paxos"
-    Core.Command.Let_syntax.(
-      let%map_open listen_address = anon ("listen_address" %: network_address)
-      and data_path = anon ("data_path" %: string)
-      and node_id = anon ("node_id" %: int)
-      and node_list = anon ("node_list" %: node_list)
-      and election_timeout = anon ("election_timeout" %: int)
-      and tick_time = anon ("tick_time" %: float) in
-      fun () ->
-        let node_id = Int64.of_int node_id in
-        let log_path = data_path ^ ".log" in
-        let term_path = data_path ^ ".term" in
-        let main =
-          let open Lwt.Infix in
-          Infra.create ~listen_address ~node_list ~election_timeout ~tick_time
-            ~log_path ~term_path node_id
-          >>= fun _node -> Lwt.task () |> fst
-        in
-        Lwt_main.run main)
+  Command.async_spec ~summary:"A Paxos implementation in OCaml"
+    Command.Spec.(
+      empty
+      +> anon ("node_id" %: int)
+      +> anon ("node_list" %: node_list)
+      +> anon ("datadir" %: string)
+      +> anon ("listen_address" %: int)
+      +> anon ("election_timeout" %: int)
+      +> anon ("tick_speed" %: float)
+      +> flag "-s" ~doc:"Size of batches" (optional_with_default 1 int)
+      +> flag "-d" ~doc:"Time before batch is dispatched in ms"
+           (optional_with_default 100. float))
+    (fun node_id node_list datadir listen_port election_timeout tick_speed
+         batch_size dispatch_timeout () ->
+      let tick_speed = Time.Span.of_sec tick_speed in
+      let dispatch_timeout = Time.Span.of_ms dispatch_timeout in
+      let%bind () =
+        match%bind Sys.file_exists_exn datadir with
+        | true ->
+            return ()
+        | false ->
+            Unix.mkdir datadir
+      in
+      let%bind (_ : Infra.t) =
+        Infra.create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
+          ~tick_speed ~batch_size ~dispatch_timeout
+      in
+      Deferred.never ())
 
 let reporter =
   let report src level ~over k msgf =
@@ -64,10 +61,8 @@ let reporter =
   {Logs.report}
 
 let () =
-  Lwt_engine.set (new Lwt_engine.libev ()) ;
   Fmt_tty.setup_std_outputs () ;
-  Logs.Src.list () |> List.iter ~f:(fun e -> Format.printf "%a\n" Logs.Src.pp e) ;
   Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ;
-  Fmt.pr "%a" (Fmt.array ~sep:Fmt.sp Fmt.string) (Sys.get_argv ());
-  Core.Command.run command
+  Fmt.pr "%a" (Fmt.array ~sep:Fmt.sp Fmt.string) (Sys.get_argv ()) ;
+  Command.run command
