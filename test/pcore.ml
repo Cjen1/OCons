@@ -25,9 +25,7 @@ let three_config =
 
 let file_init n =
   let log_path = Fmt.str "%d.log" n in
-  let term_path = Fmt.str "%d.term" n in
-  let%bind _, log = Types.Log.Wal.of_path log_path in
-  let%bind _, term = Types.Term.Wal.of_path term_path in
+  let%bind _, Types.Wal_t.{log; term} = Types.Wal.of_path log_path in
   return (log, term)
 
 let pr_err = function

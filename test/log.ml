@@ -1,12 +1,13 @@
 open! Core
 open! Async
 open! Ocamlpaxos
+open Types
 module L = Types.Log
 
 let with_file f path =
-  let%bind log = L.Wal.of_path path in
-  let%bind () = f log in
-  L.Wal.close (fst log)
+  let%bind wal, Wal_t.{log; _} = Wal.of_path path in
+  let%bind () = f (wal, log) in
+  Wal.close wal
 
 let make_entry id term key =
   let id = Types.Id.of_int_exn id in
@@ -20,10 +21,10 @@ let init_log (wal, log) =
   in
   let fold log entry =
     let log, op = L.add entry log in
-    L.Wal.write wal op ; log
+    Wal.write wal (Log op) ; log
   in
   let log = List.fold_left init_state ~init:log ~f:fold in
-  let%bind () = L.Wal.datasync wal in
+  let%bind () = Wal.datasync wal in
   return log
 
 let%expect_test "id_in_log" =
