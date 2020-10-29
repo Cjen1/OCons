@@ -15,12 +15,10 @@ let src = Logs.Src.create "Infra" ~doc:"Infrastructure module"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-type wal = {t: T.Wal.t; l: L.Wal.t}
-
 type t =
   { mutable core: P.t
   ; mutable server: (Socket.Address.Inet.t, int) Tcp.Server.t Ivar.t
-  ; wal: wal
+  ; wal: Wal.t
   ; mutable last_applied: log_index
   ; conns: (int, Async_rpc_kernel.Persistent_connection.Rpc.t) H.t
   ; state_machine: state_machine
@@ -28,10 +26,7 @@ type t =
   ; client_request_batcher: (client_request * client_response Ivar.t) Batcher.t
   ; client_results: (command_id, op_result) H.t }
 
-let sync t =
-  let l_p = L.Wal.datasync t.wal.l in
-  let t_p = T.Wal.datasync t.wal.t in
-  Deferred.all_unit [l_p; t_p]
+let sync t = Wal.datasync t.wal
 
 let rec advance_state_machine t = function
   | commit_index when Int64.(t.last_applied < commit_index) ->
@@ -74,9 +69,9 @@ let send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
 let do_pre t pre =
   List.iter pre ~f:(function
     | `PersistantChange (`Log op) ->
-        L.Wal.write t.wal.l op
+        Wal.write t.wal (Log op)
     | `PersistantChange (`Term op) ->
-        T.Wal.write t.wal.t op
+        Wal.write t.wal (Term op)
     | `SendRequestVote (id, rv) ->
         send t id Types.RPCs.request_vote rv
     | `SendAppendEntries (id, ae) ->
@@ -178,10 +173,8 @@ let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
       ; node_id
       ; election_timeout }
   in
-  let%bind lwal, log = L.Wal.of_path (Fmt.str "%s/log.wal" datadir) in
-  let%bind twal, term = T.Wal.of_path (Fmt.str "%s/term.wal" datadir) in
+  let%bind wal, {term; log} = Wal.of_path datadir in
   let core = P.create_node config log term in
-  let wal = {t= twal; l= lwal} in
   let conns =
     node_list
     |> List.map ~f:(fun (id, addr) -> (id, connect_persist addr))
