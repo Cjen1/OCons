@@ -13,15 +13,12 @@
   (synopsis "An ocaml implementation of the Paxos protocol")
   (depends 
     (ocaml (>= 4.08.0))
-    base
-    (core (<= v0.13.0))
+    core
+    async
     ppx_jane
     dune
-    lwt
-    ppx_deriving_protobuf
-    conf-libev
     logs
     fmt
-    capnp
     owl
+    core_bench
     ))
