@@ -464,7 +464,7 @@ let advance t event : (t, 'b) CompRes.t =
   in
   Ok (t, actions)
 
-let is_leader t = match t.node_state with Leader _ -> true | _ -> false
+let is_leader t = match t.node_state with Leader _ -> Some t.current_term | _ -> None
 
 let get_log (t : t) = t.log
 

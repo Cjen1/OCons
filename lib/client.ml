@@ -3,9 +3,9 @@ open! Async
 open! Utils
 module PC = Async_rpc_kernel.Persistent_connection
 
-let client = Logs.Src.create "Client" ~doc:"Client module"
+let src = Logs.Src.create "Client" ~doc:"Client module"
 
-module Log = (val Logs.src_log client : Logs.LOG)
+module Log = (val Logs.src_log src : Logs.LOG)
 
 type t =
   {conns: PC.Rpc.t list; connection_retry: Time.Span.t; retry_delay: Time.Span.t}
@@ -44,7 +44,7 @@ let send =
 
 let op_read t k = send t Types.{op= Read (Bytes.to_string k); id= Id.create ()}
 
-let op_write t k v =
+let op_write t ~k ~v =
   send t
     Types.{op= Write (Bytes.to_string k, Bytes.to_string v); id= Id.create ()}
 
