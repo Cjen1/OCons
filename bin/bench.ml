@@ -112,7 +112,7 @@ let main target_throughput n output portss =
   Logs.set_reporter reporter ; perform ()
 
 let () =
-  Command.async_spec ~summary:"Benchmark for write ahead log"
+  Command.async_spec ~summary:"Benchmark for main.ml"
     Command.Spec.(
       empty
       +> flag "-n" ~doc:" Number of requests to send"
