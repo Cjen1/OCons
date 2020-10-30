@@ -1,7 +1,5 @@
 open Types
 open Types.MessageTypes
-module L = Log
-module T = Term
 
 val logger : Async.Log.t
 
@@ -17,7 +15,7 @@ type event =
 
 (** Actions which can be emitted by the state machine *)
 
-type persistant_change = [`Log of L.op | `Term of T.op]
+type persistant_change = [`Log of Wal.Log.op | `Term of Wal.Term.op]
 
 type pre_sync_action =
   [ `PersistantChange of persistant_change
@@ -56,8 +54,8 @@ type t [@@deriving sexp_of]
 (** Returns the term that the node thinks it is the leader of *)
 val is_leader : t -> term option
 
+val create_node : config -> Wal.Log.t -> term -> t
 (** [create_node config log term] returns the initialised state machine. It is initially a follower one tick away from calling an election*)
-val create_node : config -> L.t -> Types.Term.t -> t
 
 (** [advance t event] applies the event to the state machine and returns the updated state machine and any actions to take. If this fails it returns an error message *)
 val advance : t -> event -> (t * action_sequence, [> `Msg of string]) result

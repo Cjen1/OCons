@@ -2,10 +2,10 @@ open! Core
 open! Async
 open! Ocamlpaxos
 open Types
-module L = Types.Log
+module L = Types.Wal.Log
 
 let with_file f path =
-  let%bind wal, Wal_t.{log; _} = Wal.of_path path in
+  let%bind wal, Wal.P.{log; _} = Wal.of_path path in
   let%bind () = f (wal, log) in
   Wal.close wal
 
