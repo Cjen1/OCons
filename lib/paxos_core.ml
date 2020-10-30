@@ -2,8 +2,8 @@ open! Core
 open! Types
 open Ppx_log_async
 open Types.MessageTypes
-module L = Types.Log
-module T = Types.Term
+module L = Types.Wal.Log
+module T = Types.Wal.Term
 module U = Utils
 module IdMap = Map.Make (Int)
 
@@ -128,7 +128,7 @@ let pp_node_state f (x : node_state) =
 
 type t =
   { config: config
-  ; current_term: Term.t
+  ; current_term: term
   ; log: L.t
   ; commit_index: log_index
   ; node_state: node_state }

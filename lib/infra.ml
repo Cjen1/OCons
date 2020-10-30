@@ -4,8 +4,8 @@ open! Ppx_log_async
 module P = Paxos_core
 module O = Odbutils.Owal
 module H = Hashtbl
-module L = Types.Log
-module T = Types.Term
+module L = Types.Wal.Log
+module T = Types.Wal.Term
 open Types
 open Types.MessageTypes
 open! Utils
@@ -28,8 +28,6 @@ type t =
   ; client_ivars: (command_id, client_response Ivar.t list) H.t
   ; client_request_batcher: (client_request * client_response Ivar.t) Batcher.t
   ; client_results: (command_id, op_result) H.t }
-
-let sync t = Wal.datasync t.wal
 
 let rec advance_state_machine t = function
   | commit_index when Int64.(t.last_applied < commit_index) ->
@@ -93,10 +91,10 @@ let rec do_actions t ((pre, do_sync, post) : P.action_sequence) =
   do_pre t pre ;
   match do_sync && not debug_no_sync with
   | true ->
-      let%bind () = sync t in
-      do_post t post ; return ()
+      let%map () = Wal.datasync t.wal in
+      do_post t post
   | false ->
-      do_post t post ; return ()
+      do_post t post |> return
 
 and handle_event t event =
   let core, actions = P.advance t.core event |> get_ok in
