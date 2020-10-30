@@ -16,7 +16,7 @@ let put =
       +> anon ("value" %: bytes))
     (fun ps k v () ->
       let c = C.new_client ps in
-      let%map res = C.op_write c k v in
+      let%map res = C.op_write c ~k ~v in
       res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum |> print_endline)
 
 let get =

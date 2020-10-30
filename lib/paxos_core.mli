@@ -1,23 +1,23 @@
 open Types
 open Types.MessageTypes
-module L = Log
-module T = Term
 
 val logger : Async.Log.t
 
 (** All the events incomming into the advance function *)
 type event =
   [ `Tick
-  | `RRequestVote of Types.MessageTypes.request_vote (** Request Vote msg *)
-  | `RRequestVoteResponse of Types.MessageTypes.request_vote_response(** Request Vote response msg *)
-  | `RAppendEntries of Types.MessageTypes.append_entries(** Append Entries msg *)
-  | `RAppendEntiresResponse of Types.MessageTypes.append_entries_response(** Append Entries Response msg*)
-  | `Commands of Types.command list (** Commands received from clients *)
-  ]
+  | `RRequestVote of Types.MessageTypes.request_vote  (** Request Vote msg *)
+  | `RRequestVoteResponse of Types.MessageTypes.request_vote_response
+    (** Request Vote response msg *)
+  | `RAppendEntries of Types.MessageTypes.append_entries
+    (** Append Entries msg *)
+  | `RAppendEntiresResponse of Types.MessageTypes.append_entries_response
+    (** Append Entries Response msg*)
+  | `Commands of Types.command list  (** Commands received from clients *) ]
 
 (** Actions which can be emitted by the state machine *)
 
-type persistant_change = [`Log of L.op | `Term of T.op]
+type persistant_change = [`Log of Wal.Log.op | `Term of Wal.Term.op]
 
 type pre_sync_action =
   [ `PersistantChange of persistant_change
@@ -53,14 +53,14 @@ val pp_node_state : Format.formatter -> node_state -> unit
 
 type t [@@deriving sexp_of]
 
-(** Returns the term that the node thinks it is the leader of *)
 val is_leader : t -> term option
+(** Returns the term that the node thinks it is the leader of *)
 
+val create_node : config -> Wal.Log.t -> term -> t
 (** [create_node config log term] returns the initialised state machine. It is initially a follower one tick away from calling an election*)
-val create_node : config -> L.t -> Types.Term.t -> t
 
-(** [advance t event] applies the event to the state machine and returns the updated state machine and any actions to take. If this fails it returns an error message *)
 val advance : t -> event -> (t * action_sequence, [> `Msg of string]) result
+(** [advance t event] applies the event to the state machine and returns the updated state machine and any actions to take. If this fails it returns an error message *)
 
 val get_log : t -> Types.log
 
