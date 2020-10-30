@@ -1,7 +1,7 @@
 (executable
  (name main)
  (public_name ocamlpaxos)
- (libraries ocamlpaxos core async)
+ (libraries ocamlpaxos core async async.log_extended)
  (preprocess
   (pps ppx_jane))
  (modules main))
