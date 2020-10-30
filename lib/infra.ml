@@ -1,5 +1,6 @@
 open! Core
 open! Async
+open! Ppx_log_async
 module P = Paxos_core
 module O = Odbutils.Owal
 module H = Hashtbl
@@ -11,9 +12,11 @@ open! Utils
 
 let debug_no_sync = false
 
-let src = Logs.Src.create "Infra" ~doc:"Infrastructure module"
-
-module Log = (val Logs.src_log src : Logs.LOG)
+let logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Infra")])
+    ()
 
 type t =
   { mutable core: P.t
@@ -37,10 +40,8 @@ let rec advance_state_machine t = function
       H.set t.client_results ~key:entry.command.id ~data:result ;
       let ivars = H.find_multi t.client_ivars entry.command.id in
       List.iter ivars ~f:(fun ivar ->
-          Log.debug (fun m ->
-              m "Resolving (cid=%s, idx=%a"
-                (Id.to_string entry.command.id)
-                Fmt.int64 index) ;
+          [%log.debug
+            logger "Resolving" ((entry.command.id, index) : Id.t * int64)] ;
           Ivar.fill ivar result) ;
       advance_state_machine t commit_index
   | _ ->
@@ -128,14 +129,14 @@ let handle_client_requests t
   List.iter req_ivar_list ~f:(fun (cmd, ivar) ->
       if Ivar.is_empty ivar then
         H.add_multi t.client_ivars ~key:cmd.id ~data:ivar) ;
-  do_actions t (pre, sync, post)
+  do_actions t (pre,sync,post)
 
 let server_impls =
   let dispatch_client_request t m i =
     Batcher.dispatch t.client_request_batcher (m, i)
   in
   [ Rpc.Rpc.implement RPCs.client_request (fun t cr ->
-        Log.debug (fun m -> m "Received cr: %s" (Id.to_string cr.id)) ;
+        [%log.debug logger "Received" (cr.id : Id.t)] ;
         match H.find t.client_results cr.id with
         | Some result ->
             return result
@@ -156,6 +157,16 @@ let server_impls =
 
 let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
     ~tick_speed ~batch_size ~dispatch_timeout =
+  [%log.debug
+    logger "Input parameters"
+      (node_id : int)
+      (node_list : (int * string) list)
+      (datadir : string)
+      (listen_port : int)
+      (election_timeout : int)
+      (tick_speed : Time.Span.t)
+      (batch_size : int)
+      (dispatch_timeout : Time.Span.t)] ;
   let other_node_list =
     List.filter_map node_list ~f:(fun ((i, _) as x) ->
         if Int.(i <> node_id) then Some x else None)
@@ -213,8 +224,7 @@ let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
       ~on_unknown_rpc:`Continue
   in
   let on_handler_error =
-    `Call
-      (fun _ e -> Log.err (fun m -> m "Got exn while handling: %a" Fmt.exn e))
+    `Call (fun _ e -> [%log.error logger "Error while handling msg" (e : exn)])
   in
   let server =
     Tcp.Server.create (Tcp.Where_to_listen.of_port listen_port)

@@ -1,9 +1,12 @@
 open! Core
 open! Async
+open! Ppx_log_async
 
-let src = Logs.Src.create "Utils" ~doc:"Utils"
-
-module Log = (val Logs.src_log src : Logs.LOG)
+let logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Utils")])
+    ()
 
 module Quorum = struct
   type 'a t = {elts: 'a list; n: int; threshold: int; eq: 'a -> 'a -> bool}

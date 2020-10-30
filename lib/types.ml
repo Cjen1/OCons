@@ -1,5 +1,12 @@
 open! Core
 open! Async
+open! Ppx_log_async
+
+let logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Types")])
+    ()
 
 type time = float
 
