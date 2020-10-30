@@ -1,9 +1,9 @@
-val src : Logs.src
-
 open Types
 open Types.MessageTypes
 module L = Log
 module T = Term
+
+val logger : Async.Log.t
 
 (** All the events incomming into the advance function *)
 type event =

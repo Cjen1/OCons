@@ -3,7 +3,7 @@ open! Async
 open Types
 
 (** Logging source *)
-val src : Logs.src
+val logger : Async_unix.Log.t
 
 type t
 

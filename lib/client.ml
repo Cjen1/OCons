@@ -1,11 +1,14 @@
 open! Core
 open! Async
 open! Utils
+open! Ppx_log_async
 module PC = Async_rpc_kernel.Persistent_connection
 
-let src = Logs.Src.create "Client" ~doc:"Client module"
-
-module Log = (val Logs.src_log src : Logs.LOG)
+let logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Client")])
+    ()
 
 type t =
   {conns: PC.Rpc.t list; connection_retry: Time.Span.t; retry_delay: Time.Span.t}
@@ -29,15 +32,13 @@ let send =
           decr ongoing ;
           if !ongoing <= 0 then Ivar.fill_if_empty ivar (`Repeat (op, t))
       | Error e ->
-          Log.err (fun m ->
-              m "Err while dispatching request: %s" (Error.to_string_hum e)) ;
+          [%log.error logger "Error while dispatching request" (e : Error.t)] ;
           decr ongoing ;
           if !ongoing <= 0 then Ivar.fill_if_empty ivar (`Repeat (op, t)))
   in
   let handle_ivar op t i =
     let ongoing = ref @@ List.length t.conns in
     List.iter t.conns ~f:(dispatch op i t ongoing)
-
   in
   let repeater (op, t) = Deferred.create (handle_ivar op t) in
   fun t op -> Deferred.repeat_until_finished (op, t) repeater

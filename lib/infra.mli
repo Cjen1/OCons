@@ -3,6 +3,8 @@ open! Async
 
 type t
 
+val logger : Log.t
+
 (** [create] returns a new node after it has loaded its state from file.
     [node_list] is a list of pairs of node_ids and addresses (eg 127.0.0.1:5001)
     [datadir] is the location of the persistant data

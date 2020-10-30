@@ -1,14 +1,17 @@
 open! Core
 open! Types
+open Ppx_log_async
 open Types.MessageTypes
 module L = Types.Log
 module T = Types.Term
 module U = Utils
 module IdMap = Map.Make (Int)
 
-let src = Logs.Src.create "Paxos" ~doc:"Paxos core algorithm"
-
-module Log = (val Logs.src_log src : Logs.LOG)
+let logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core")])
+    ()
 
 (* R before means receiving *)
 type event =
@@ -167,7 +170,7 @@ let check_commit_index t =
 let transition_to_leader t =
   match t.node_state with
   | Candidate s ->
-      Log.info (fun m -> m "Transition to leader") ;
+      [%log.info logger "Transition to leader"] ;
       let entries =
         List.map s.entries ~f:(fun entry -> {entry with term= t.current_term})
       in
@@ -214,7 +217,7 @@ let transition_to_candidate t =
       id_in_current_epoch + t.config.num_nodes
     else id_in_current_epoch
   in
-  Log.info (fun m -> m "Transition to candidate term = %d" updated_term) ;
+  [%log.info logger "Transition to candidate" (updated_term : term)] ;
   let quorum = U.Quorum.empty t.config.phase1majority Int.equal in
   let* quorum =
     match U.Quorum.add t.config.node_id quorum with
@@ -246,18 +249,18 @@ let transition_to_candidate t =
     CompRes.return t
 
 let transition_to_follower t =
-  Log.info (fun m -> m "Transition to Follower") ;
+  [%log.info logger "Transition to Follower"] ;
   CompRes.return {t with node_state= Follower {heartbeat= 0}}
 
 let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
   match (event, t.node_state) with
   | `Tick, Follower {heartbeat} when heartbeat >= t.config.election_timeout ->
-      Log.debug (fun m -> m "transition to candidate") ;
-      transition_to_candidate t
+      [%log.debug logger "Election timeout"] ; transition_to_candidate t
   | `Tick, Follower {heartbeat} ->
-      Log.debug (fun m ->
-          m "Tick: increment %d to %d" heartbeat (heartbeat + 1)) ;
-      CompRes.return {t with node_state= Follower {heartbeat= heartbeat + 1}}
+      let new_heartbeat = heartbeat + 1 in
+      [%log.debug
+        logger "Tick" ~pre:(heartbeat : int) ~post:(new_heartbeat : int)] ;
+      CompRes.return {t with node_state= Follower {heartbeat= new_heartbeat}}
   | `Tick, Leader ({heartbeat; _} as s) when heartbeat > 0 ->
       let highest_index = L.get_max_index t.log in
       let fold actions node_id =
@@ -327,8 +330,10 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
     | Ok (quorum : node_id U.Quorum.t) ->
         let merge x sx y sy =
           if not Int64.(sx = sy) then (
-            Log.err (fun m ->
-                m "RRequestVoteResponse %a != %a" Fmt.int64 sx Fmt.int64 sy) ;
+            [%log.error
+              logger "Error while merging"
+                ~start_x:(sx : log_index)
+                ~start_y:(sy : log_index)] ;
             CompRes.error
             @@ `Msg "Can't merge entries not starting at same point" )
           else
@@ -464,14 +469,16 @@ let advance t event : (t, 'b) CompRes.t =
   in
   Ok (t, actions)
 
-let is_leader t = match t.node_state with Leader _ -> Some t.current_term | _ -> None
+let is_leader t =
+  match t.node_state with Leader _ -> Some t.current_term | _ -> None
 
 let get_log (t : t) = t.log
 
 let get_term (t : t) = t.current_term
 
 let create_node config log current_term =
-  Log.info (fun m -> m "Creating new node with id %d" config.node_id) ;
+  [%log.info
+    logger "Creating new node" ~config:(config : config) (current_term : term)] ;
   { config
   ; log
   ; current_term
