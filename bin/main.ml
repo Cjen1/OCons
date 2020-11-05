@@ -38,7 +38,7 @@ let command =
          batch_size dispatch_timeout () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
-      List.iter [Infra.logger; Utils.logger; Owal.logger] ~f:(fun log ->
+      List.iter [Infra.logger; Utils.logger; Owal.logger; Paxos_core.logger] ~f:(fun log ->
           Async.Log.set_level log global_level ;
           Async.Log.set_output log global_output) ;
       let tick_speed = Time.Span.of_sec tick_speed in
@@ -54,26 +54,11 @@ let command =
         Infra.create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
           ~tick_speed ~batch_size ~dispatch_timeout
       in
-      Deferred.never ())
-
-let reporter =
-  let report src level ~over k msgf =
-    let k _ = over () ; k () in
-    let src = Logs.Src.name src in
-    msgf
-    @@ fun ?header ?tags:_ fmt ->
-    Fmt.kpf k Fmt.stdout
-      ("[%a] %a %a @[" ^^ fmt ^^ "@]@.")
-      Time.pp (Time.now ())
-      Fmt.(styled `Magenta string)
-      (Printf.sprintf "%14s" src)
-      Logs_fmt.pp_header (level, header)
-  in
-  {Logs.report}
+      let%bind () = after (Time.Span.of_sec 20.) in
+      return ()
+    )
 
 let () =
   Fmt_tty.setup_std_outputs () ;
-  Logs.(set_level (Some Debug)) ;
-  Logs.set_reporter reporter ;
   Fmt.pr "%a" (Fmt.array ~sep:Fmt.sp Fmt.string) (Sys.get_argv ()) ;
   Command.run command
