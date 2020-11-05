@@ -11,7 +11,7 @@ let with_file f path =
 
 let make_entry id term key =
   let id = Types.Id.of_int_exn id in
-  let command = Types.{op= Read (Int.to_string key); id} in
+  let command = Types.Command.{op= Read (Int.to_string key); id} in
   Types.{command; term}
 
 let init_log (wal, log) =
