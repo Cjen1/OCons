@@ -9,6 +9,7 @@ module T = Types.Wal.Term
 open Types
 open Types.MessageTypes
 open! Utils
+open Core_profiler.Std_offline
 
 let debug_no_sync = false
 
@@ -18,29 +19,40 @@ let logger =
     ~transform:(fun m -> Message.add_tags m [("src", "Infra")])
     ()
 
+type ev_q =
+  { client_reqs: (client_request * Types.op_result Ivar.t) Queue.t
+  ; server_reqs: P.event Queue.t
+  ; server_resp: P.event Queue.t }
+
 type t =
   { mutable core: P.t
+  ; ev_q: ev_q
+  ; event_queue_bvar: (unit, read_write) Bvar.t
+  ; client_batch_size: int
   ; mutable server: (Socket.Address.Inet.t, int) Tcp.Server.t Ivar.t
   ; wal: Wal.t
   ; mutable last_applied: log_index
   ; conns: (int, Async_rpc_kernel.Persistent_connection.Rpc.t) H.t
   ; state_machine: state_machine
-  ; client_ivars: (command_id, client_response Ivar.t list) H.t
-  ; client_request_batcher: (client_request * client_response Ivar.t) Batcher.t
+  ; client_ivars: (command, client_response Ivar.t list) H.t
   ; client_results: (command_id, op_result) H.t }
 
 let rec advance_state_machine t = function
   | commit_index when Int64.(t.last_applied < commit_index) ->
+      [%log.debug
+        logger "Advancing state machine"
+          ~from:(t.last_applied : log_index)
+          ~to_:(commit_index : log_index)] ;
       let index = Int64.(t.last_applied + one) in
       t.last_applied <- index ;
       let entry = L.get_exn (P.get_log t.core) index in
       let result = update_state_machine t.state_machine entry.command in
       H.set t.client_results ~key:entry.command.id ~data:result ;
-      let ivars = H.find_multi t.client_ivars entry.command.id in
+      let ivars = H.find_multi t.client_ivars entry.command in
       List.iter ivars ~f:(fun ivar ->
           [%log.debug
             logger "Resolving" ((entry.command.id, index) : Id.t * int64)] ;
-          Ivar.fill ivar result) ;
+          Ivar.fill_if_empty ivar result) ;
       advance_state_machine t commit_index
   | _ ->
       ()
@@ -87,71 +99,131 @@ let do_post t post =
     | `SendAppendEntriesResponse (id, aer) ->
         send t id Types.RPCs.append_entries_response aer)
 
-let rec do_actions t ((pre, do_sync, post) : P.action_sequence) =
+let probe = Delta_timer.create ~name:"datasync"
+
+let do_actions t ((pre, do_sync, post) : P.action_sequence) =
   do_pre t pre ;
   match do_sync && not debug_no_sync with
   | true ->
+      let st = Delta_timer.stateless_start probe in
       let%map () = Wal.datasync t.wal in
+      Delta_timer.stateless_stop probe st ;
       do_post t post
   | false ->
       do_post t post |> return
-
-and handle_event t event =
-  let core, actions = P.advance t.core event |> get_ok in
-  t.core <- core ;
-  do_actions t actions
 
 let advance_wrapper t event =
   let core, actions = P.advance t.core event |> get_ok in
   t.core <- core ;
   actions
 
-let handle_client_requests t
-    (req_ivar_list : (command, Types.op_result Ivar.t) List.Assoc.t) =
-  let pre, sync, post =
-    advance_wrapper t (`Commands (List.map req_ivar_list ~f:fst))
-  in
-  let () =
-    match List.find pre ~f:(function `Unapplied _ -> true | _ -> false) with
-    | Some (`Unapplied cmds) ->
-        let req_list = List.map req_ivar_list ~f:(fun (cr, i) -> (cr.id, i)) in
-        let ivar_lookup =
-          H.of_alist_exn ~growth_allowed:false (module Id) req_list
-        in
-        List.iter cmds ~f:(fun cmd ->
-            let ivar = H.find_exn ivar_lookup cmd.id in
-            Ivar.fill ivar Types.Failure)
-    | _ ->
-        ()
-  in
-  List.iter req_ivar_list ~f:(fun (cmd, ivar) ->
-      if Ivar.is_empty ivar then
-        H.add_multi t.client_ivars ~key:cmd.id ~data:ivar) ;
-  do_actions t (pre, sync, post)
+let enqueue t q v =
+  Queue.enqueue q v ;
+  Bvar.broadcast t.event_queue_bvar ()
 
 let server_impls =
-  let dispatch_client_request t m i =
-    Batcher.dispatch t.client_request_batcher (m, i)
-  in
   [ Rpc.Rpc.implement RPCs.client_request (fun t cr ->
         [%log.debug logger "Received" (cr.id : Id.t)] ;
         match H.find t.client_results cr.id with
         | Some result ->
             return result
         | None ->
-            Deferred.create (dispatch_client_request t cr))
+            Deferred.create (fun i -> enqueue t t.ev_q.client_reqs (cr, i)))
   ; Rpc.One_way.implement RPCs.request_vote (fun t rv ->
-        let res = `RRequestVote rv |> advance_wrapper t in
-        don't_wait_for @@ do_actions t res)
+        enqueue t t.ev_q.server_reqs (`RRequestVote rv))
   ; Rpc.One_way.implement RPCs.request_vote_response (fun t rvr ->
-        let res = `RRequestVoteResponse rvr |> advance_wrapper t in
-        don't_wait_for @@ do_actions t res)
+        enqueue t t.ev_q.server_resp (`RRequestVoteResponse rvr))
   ; Rpc.One_way.implement RPCs.append_entries (fun t ae ->
-        let res = `RAppendEntries ae |> advance_wrapper t in
-        don't_wait_for @@ do_actions t res)
+        enqueue t t.ev_q.server_reqs (`RAppendEntries ae))
   ; Rpc.One_way.implement RPCs.append_entries_response (fun t aer ->
-        let res = `RAppendEntiresResponse aer |> advance_wrapper t in
-        don't_wait_for @@ do_actions t res) ]
+        enqueue t t.ev_q.server_resp (`RAppendEntiresResponse aer)) ]
+
+let deque_n q n =
+  let rec loop (acc, i) n =
+    match n with
+    | 0 ->
+        (acc, i)
+    | _ when Queue.length q = 0 ->
+        (acc, i)
+    | n ->
+        loop (Queue.dequeue_exn q :: acc, i + 1) (n - 1)
+  in
+  let xs, l = loop ([], 0) n in
+  List.rev xs, l
+
+let%expect_test "dequeue_n" =
+  let q = Queue.of_list [1; 2; 3; 4] in
+  deque_n q 3 |> [%sexp_of: int list * int] |> Sexp.to_string_hum |> print_endline ;
+  [%expect {| (1 2 3) |}]
+
+let batch_probe = Probe.create ~name:"Batch_size" ~units:Profiler_units.Int
+
+let handle_ev_q t =
+  let batch_counter = ref 0 in
+  let batching_freq = 2 in
+  let rec loop () =
+    let run_queues () =
+      match () with
+      | () when Queue.length t.ev_q.server_resp > 0 ->
+          let event = Queue.dequeue_exn t.ev_q.server_resp in
+          event |> advance_wrapper t |> do_actions t
+      | () when Queue.length t.ev_q.server_reqs > 0 ->
+          let event = Queue.dequeue_exn t.ev_q.server_reqs in
+          event |> advance_wrapper t |> do_actions t
+      | ()
+        when Queue.length t.ev_q.client_reqs >= t.client_batch_size
+             || !batch_counter >= batching_freq ->
+          if !batch_counter >= batching_freq then
+          batch_counter := 0 ;
+          let batch, batch_size =
+            deque_n t.ev_q.client_reqs t.client_batch_size
+          in
+          Probe.record batch_probe batch_size;
+          [%log.debug logger (batch_size : int)] ;
+          let htbl = H.of_alist_exn (module Types.Command) batch in
+          let ((pre, _, _) as actions) =
+            advance_wrapper t (`Commands (List.map batch ~f:fst))
+          in
+          let () =
+            match
+              List.find_map pre ~f:(function
+                | `Unapplied _ as v ->
+                    Some v
+                | _ ->
+                    None)
+            with
+            | Some (`Unapplied cmds) ->
+                List.iter cmds ~f:(fun cmd ->
+                    let ivar = H.find_exn htbl cmd in
+                    Ivar.fill ivar Types.Failure)
+            | None ->
+                ()
+          in
+          List.iter batch ~f:(fun (cmd, ivar) ->
+              if Ivar.is_empty ivar then
+                H.add_multi t.client_ivars ~key:cmd ~data:ivar) ;
+          do_actions t actions
+      | () ->
+          incr batch_counter ; return ()
+    in
+    let%bind () =
+      match
+        Queue.length t.ev_q.server_resp
+        + Queue.length t.ev_q.server_reqs
+        + Queue.length t.ev_q.client_reqs
+      with
+      | 0 ->
+          Bvar.wait t.event_queue_bvar
+      | _ ->
+          return ()
+    in
+    let%bind () = run_queues () in
+    let%bind () =
+      Scheduler.yield_until_no_jobs_remain ~may_return_immediately:true ()
+    in
+    loop ()
+  in
+  loop ()
 
 let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
     ~tick_speed ~batch_size ~dispatch_timeout =
@@ -191,32 +263,27 @@ let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
   in
   let state_machine = create_state_machine () in
   let t_ivar = Ivar.create () in
-  let client_request_batcher =
-    Batcher.create_counter
-      ~f:(fun reqs ->
-        match Ivar.peek t_ivar with
-        | Some t ->
-            handle_client_requests t reqs
-        | None ->
-            let%bind t = Ivar.read t_ivar in
-            handle_client_requests t reqs)
-      ~dispatch_timeout ~limit:batch_size
-  in
   let server_ivar = Ivar.create () in
   let t =
     { core
+    ; ev_q=
+        { client_reqs= Queue.create ()
+        ; server_reqs= Queue.create ()
+        ; server_resp= Queue.create () }
+    ; event_queue_bvar= Bvar.create ()
+    ; client_batch_size= batch_size
     ; server= server_ivar
     ; wal
     ; last_applied= Int64.zero
     ; conns
     ; state_machine
-    ; client_ivars= H.create (module Types.Id)
-    ; client_request_batcher
+    ; client_ivars= H.create (module Types.Command)
     ; client_results= H.create (module Types.Id) }
   in
   Ivar.fill t_ivar t ;
+  don't_wait_for (handle_ev_q t) ;
   Async.every ~continue_on_error:true tick_speed (fun () ->
-      handle_event t `Tick |> don't_wait_for) ;
+      advance_wrapper t `Tick |> do_actions t |> don't_wait_for) ;
   let implementations =
     Rpc.Implementations.create_exn ~implementations:server_impls
       ~on_unknown_rpc:`Continue

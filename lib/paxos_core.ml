@@ -96,6 +96,21 @@ let pp_action f (x : [< pre_sync_action | post_sync_action]) =
   | `Unapplied cmds ->
       Fmt.pf f "Unapplied %s" ([%sexp_of: command list] cmds |> Sexp.to_string)
 
+let pp_event f (e : event) =
+  match e with
+  | `Tick ->
+      Fmt.pf f "Tick"
+  | `RRequestVote _ ->
+      Fmt.pf f "RRequestVote"
+  | `RRequestVoteResponse _ ->
+      Fmt.pf f "RRequestVoteResponse"
+  | `RAppendEntries _ ->
+      Fmt.pf f "RAppendEntries"
+  | `RAppendEntiresResponse _ ->
+      Fmt.pf f "RAppendEntiresResponse"
+  | `Commands _ ->
+      Fmt.pf f "Commands"
+
 type config =
   { phase1majority: int
   ; phase2majority: int
@@ -463,10 +478,17 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       CompRes.return t
 
 let advance t event : (t, 'b) CompRes.t =
+  [%log.debug logger "Advancing" ~event:(Fmt.str "%a" pp_event event)] ;
   let* t, (pre, sync, post) = advance_raw t event in
   let actions =
     if not @@ List.is_empty post then (pre, true, post) else (pre, sync, post)
   in
+  let pre, do_sync, post = actions in
+  [%log.debug
+    logger "Returning actions:"
+      ~pre:(Fmt.str "%a" (Fmt.list pp_action) pre : string)
+      (do_sync : bool)
+      ~post:(Fmt.str "%a" (Fmt.list pp_action) post : string)] ;
   Ok (t, actions)
 
 let is_leader t =

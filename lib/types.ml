@@ -28,7 +28,15 @@ type state_machine = (key, value) Hashtbl.t
 
 type op = Read of key | Write of key * value [@@deriving bin_io, sexp]
 
-type command = {op: op; id: command_id} [@@deriving bin_io, sexp]
+module Command = struct
+  type t = {op: op; id: command_id} [@@deriving bin_io, sexp]
+
+  let compare a b = Id.compare a.id b.id
+
+  let hash t = Id.hash t.id
+end
+
+type command = Command.t [@@deriving bin_io, sexp]
 
 type op_result = Success | Failure | ReadSuccess of key
 [@@deriving bin_io, sexp]

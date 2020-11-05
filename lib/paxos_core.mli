@@ -38,6 +38,9 @@ type action_sequence = pre_sync_action list * do_sync * post_sync_action list
 val pp_action :
   Format.formatter -> [< pre_sync_action | post_sync_action] -> unit
 
+val pp_event :
+  Format.formatter -> event -> unit
+
 type config =
   { phase1majority: int
   ; phase2majority: int
