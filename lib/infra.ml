@@ -2,7 +2,7 @@ open! Core
 open! Async
 open! Ppx_log_async
 module P = Paxos_core
-module O = Odbutils.Owal
+module O = Owal
 module H = Hashtbl
 module L = Types.Wal.Log
 module T = Types.Wal.Term
