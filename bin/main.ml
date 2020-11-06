@@ -38,11 +38,9 @@ let command =
          batch_size dispatch_timeout () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
-      List.iter [Infra.logger; Utils.logger; Owal.logger]
-        ~f:(fun log ->
+      List.iter [Infra.logger; Utils.logger; Owal.logger] ~f:(fun log ->
           Async.Log.set_level log global_level ;
-          Async.Log.set_output log global_output ;
-          );
+          Async.Log.set_output log global_output) ;
       let tick_speed = Time.Span.of_sec tick_speed in
       let dispatch_timeout = Time.Span.of_ms dispatch_timeout in
       let%bind () =
