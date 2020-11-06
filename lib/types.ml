@@ -218,7 +218,7 @@ module Wal = struct
           {t with log= Log.L.apply t.log op}
   end
 
-  include Odbutils.Owal.Persistant (P)
+  include Owal.Persistant (P)
 end
 
 type log = Wal.Log.L.t

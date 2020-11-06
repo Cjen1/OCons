@@ -38,7 +38,7 @@ let command =
          batch_size dispatch_timeout () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
-      List.iter [Infra.logger; Utils.logger; Odbutils.Owal.logger]
+      List.iter [Infra.logger; Utils.logger; Owal.logger]
         ~f:(fun log ->
           Async.Log.set_level log global_level ;
           Async.Log.set_output log global_output ;
