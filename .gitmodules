@@ -1,9 +1,0 @@
-[submodule "unix_capnp_messaging"]
-	path = unix_capnp_messaging
-	url = https://github.com/cjen1/unix_capnp_messaging
-[submodule "odbutils"]
-	path = odbutils
-	url = git@github.com:cjen1/odbutils
-[submodule "ocamlpaxos_api"]
-	path = ocamlpaxos_api
-	url = git@github.com:cjen1/ocamlpaxos_api

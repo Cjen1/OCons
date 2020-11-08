@@ -2,7 +2,7 @@ open! Core
 open! Async
 open! Ppx_log_async
 module P = Paxos_core
-module O = Odbutils.Owal
+module O = Owal
 module H = Hashtbl
 module L = Types.Wal.Log
 module T = Types.Wal.Term
@@ -127,7 +127,7 @@ let handle_client_requests t
   List.iter req_ivar_list ~f:(fun (cmd, ivar) ->
       if Ivar.is_empty ivar then
         H.add_multi t.client_ivars ~key:cmd.id ~data:ivar) ;
-  do_actions t (pre,sync,post)
+  do_actions t (pre, sync, post)
 
 let server_impls =
   let dispatch_client_request t m i =

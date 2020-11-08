@@ -16,6 +16,8 @@
     core
     async
     ppx_jane
+    ppx_log
+    ppx_deriving_yojson
     dune
     logs
     fmt

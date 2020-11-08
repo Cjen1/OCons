@@ -93,13 +93,7 @@ let main target_throughput n output portss =
   let portss = List.map portss ~f:[%of_sexp: int list] in
   let perform () =
     let iter ports =
-      let jsonpath =
-        match output with
-        | None ->
-          "data.json"
-        | Some s ->
-            s
-      in
+      let jsonpath = match output with None -> "data.json" | Some s -> s in
       let%bind res = run_latencies target_throughput n ports in
       Log.info (fun m -> m "%a\n" pp_stats res) ;
       let json = test_res_to_yojson res in
