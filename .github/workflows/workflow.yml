@@ -28,19 +28,19 @@ jobs:
         with:
           ocaml-version: ${{ matrix.ocaml-version }}
 
-      - name: Opam setup
+      - name: Opam setup (install dependencies)
         run: |
           opam pin add ocamlpaxos.dev . --no-action
           opam depext ocamlpaxos --yes --with-doc --with-test
           opam install . --deps-only --with-doc --with-test
 
-      - name: Dune build
+      - name: Test that it builds
         run: opam exec -- dune build
 
-      - name: Dune runtest
+      - name: Run any tests in the directory
         run: opam exec -- dune runtest
         
-      - name: Format
+      - name: Ensure code is formatted
         run: |
           opam install ocamlformat --yes --with-doc --with-test
           opam exec -- dune build @fmt
