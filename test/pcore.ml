@@ -3,7 +3,8 @@ open! Async
 open! Ocamlpaxos
 module P = Paxos_core
 
-let cmd_of_int i = Types.Command.{op= Read (Int.to_string i); id= Types.Id.of_int_exn i}
+let cmd_of_int i =
+  Types.Command.{op= Read (Int.to_string i); id= Types.Id.of_int_exn i}
 
 let single_config =
   P.

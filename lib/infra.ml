@@ -149,11 +149,12 @@ let deque_n q n =
         loop (Queue.dequeue_exn q :: acc, i + 1) (n - 1)
   in
   let xs, l = loop ([], 0) n in
-  List.rev xs, l
+  (List.rev xs, l)
 
 let%expect_test "dequeue_n" =
   let q = Queue.of_list [1; 2; 3; 4] in
-  deque_n q 3 |> [%sexp_of: int list * int] |> Sexp.to_string_hum |> print_endline ;
+  deque_n q 3 |> [%sexp_of: int list * int] |> Sexp.to_string_hum
+  |> print_endline ;
   [%expect {| (1 2 3) |}]
 
 let batch_probe = Probe.create ~name:"Batch_size" ~units:Profiler_units.Int
@@ -173,12 +174,11 @@ let handle_ev_q t =
       | ()
         when Queue.length t.ev_q.client_reqs >= t.client_batch_size
              || !batch_counter >= batching_freq ->
-          if !batch_counter >= batching_freq then
-          batch_counter := 0 ;
+          if !batch_counter >= batching_freq then batch_counter := 0 ;
           let batch, batch_size =
             deque_n t.ev_q.client_reqs t.client_batch_size
           in
-          Probe.record batch_probe batch_size;
+          Probe.record batch_probe batch_size ;
           [%log.debug logger (batch_size : int)] ;
           let htbl = H.of_alist_exn (module Types.Command) batch in
           let ((pre, _, _) as actions) =
