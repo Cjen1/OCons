@@ -5,9 +5,9 @@ open Types
 module L = Types.Wal.Log
 
 let with_file f path =
-  let%bind wal, Wal.P.{log; _} = Wal.of_path path in
+  let%bind wal, Wal.P.{log; _} = Wal.of_path_async path in
   let%bind () = f (wal, log) in
-  Wal.close wal
+  Wal.close wal |> return
 
 let make_entry id term key =
   let id = Types.Id.of_int_exn id in
@@ -24,7 +24,7 @@ let init_log (wal, log) =
     Wal.write wal (Log op) ; log
   in
   let log = List.fold_left init_state ~init:log ~f:fold in
-  let%bind () = Wal.datasync wal in
+  let () = Wal.datasync wal in
   return log
 
 let%expect_test "id_in_log" =

@@ -1,5 +1,4 @@
 open! Core
-open! Async
 open! Ppx_log_async
 
 let logger =
@@ -267,21 +266,21 @@ module RPCs = struct
   open MessageTypes
 
   let request_vote =
-    Rpc.One_way.create ~name:"request_vote" ~version:0 ~bin_msg:bin_request_vote
+    Async.Rpc.One_way.create ~name:"request_vote" ~version:0 ~bin_msg:bin_request_vote
 
   let request_vote_response =
-    Rpc.One_way.create ~name:"request_vote_response" ~version:0
+    Async.Rpc.One_way.create ~name:"request_vote_response" ~version:0
       ~bin_msg:bin_request_vote_response
 
   let append_entries =
-    Rpc.One_way.create ~name:"append_entries" ~version:0
+    Async.Rpc.One_way.create ~name:"append_entries" ~version:0
       ~bin_msg:bin_append_entries
 
   let append_entries_response =
-    Rpc.One_way.create ~name:"append_entries_response" ~version:0
+    Async.Rpc.One_way.create ~name:"append_entries_response" ~version:0
       ~bin_msg:bin_append_entries_response
 
   let client_request =
-    Rpc.Rpc.create ~name:"client_request" ~version:0
+    Async.Rpc.Rpc.create ~name:"client_request" ~version:0
       ~bin_query:bin_client_request ~bin_response:bin_client_response
 end

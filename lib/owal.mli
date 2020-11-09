@@ -16,11 +16,13 @@ end
 module Persistant (P : Persistable) : sig
   type t
 
-  val of_path : ?file_size:int64 -> string -> (t * P.t) Deferred.t
+  val of_path_async : ?file_size:int -> string -> (t * P.t) Deferred.t
 
   val write : t -> P.op -> unit
 
-  val datasync : t -> unit Deferred.t
+  val datasync : t -> unit 
 
-  val close : t -> unit Deferred.t
+  val flush : t -> unit
+
+  val close : t -> unit
 end

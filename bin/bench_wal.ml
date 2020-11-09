@@ -35,37 +35,25 @@ module T_p = struct
   let apply t (Write b) = b :: t
 end
 
-module T = Odbutils.Owal.Persistant (T_p)
+module T = Ocamlpaxos.Owal.Persistant (T_p)
 
 let throughput file n write_size =
   Log.info (fun m -> m "Setting up throughput test\n") ;
   let%bind wal, _t =
-    T.of_path file ~file_size:Int64.(of_int Int.(1024 * 1024 * 128))
-  in
-  let stream =
-    List.init n ~f:(fun _ -> Bytes.init write_size ~f:(fun _ -> 'c'))
-    |> Async.Stream.of_list
+    T.of_path_async file ~file_size:Int.(1024 * 1024 * 128)
   in
   let result_q = Queue.create () in
   Log.info (fun m -> m "Starting throughput test\n") ;
-  let i = ref 0 in
-  let%bind () =
-    Stream.iter'
-      ~f:(fun v ->
-        let () =
-          incr i ;
-          if !i % 100 = 0 then print_char '.'
-        in
-        let start =
-          Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec
-        in
-        T.write wal (T_p.Write v) ;
-        let%bind () = T.datasync wal in
-        let ed = Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec in
-        Queue.enqueue result_q (start, ed) ;
-        return ())
-      stream
-  in
+  for i = 0 to (n-1) do
+    if i %100 = 0 then print_char '.';
+    let start =
+      Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec
+    in
+    T.write wal (T_p.Write (Bytes.init write_size ~f:(fun _ -> 'c'))) ;
+    T.datasync wal;
+    let ed = Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec in
+    Queue.enqueue result_q (start, ed) ;
+  done ;
   Log.info (fun m -> m "Finished throughput test!\n") ;
   let results = Queue.to_array result_q in
   let min_start = Array.map ~f:fst results |> Owl_stats.min in

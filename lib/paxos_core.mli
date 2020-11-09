@@ -17,23 +17,26 @@ type event =
 
 (** Actions which can be emitted by the state machine *)
 
-type persistant_change = [`Log of Wal.Log.op | `Term of Wal.Term.op]
+type persistant_change = Wal.P.op
 
 type pre_sync_action =
-  [ `PersistantChange of persistant_change
-  | `SendRequestVote of node_id * request_vote
-  | `SendAppendEntries of node_id * append_entries
-  | `Unapplied of command list ]
+  [ `SendRequestVote of node_id * request_vote
+  | `SendAppendEntries of node_id * append_entries ]
 
 type post_sync_action =
   [ `SendRequestVoteResponse of node_id * request_vote_response
-  | `SendAppendEntriesResponse of node_id * append_entries_response
-  | `CommitIndexUpdate of log_index ]
+  | `SendAppendEntriesResponse of node_id * append_entries_response ]
 
 type do_sync = bool
 
 (** Return type of advance, post_sync actions must be done after the persistant state is stored to disk *)
-type action_sequence = pre_sync_action list * do_sync * post_sync_action list
+type action_sequence =
+  { wal: persistant_change list
+  ; pre: pre_sync_action list
+  ; unapplied: command_id list
+  ; do_sync: do_sync
+  ; commit_idx: log_index option
+  ; post: post_sync_action list }
 
 val pp_action :
   Format.formatter -> [< pre_sync_action | post_sync_action] -> unit
