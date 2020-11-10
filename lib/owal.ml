@@ -38,11 +38,13 @@ module BufferedFile = struct
     in
     let iovecs = Array.create ~len:n_iovecs dummy_iovec in
     let iovecs_len = ref 0 in
-    let i = ref 0 in
-    Deque.iter t.scheduled ~f:(fun iovec ->
-        iovecs_len := !iovecs_len + iovec.Unix.IOVec.len ;
-        iovecs.(!i) <- iovec ;
-        incr i) ;
+    with_return (fun r ->
+        let i = ref 0 in
+        Deque.iter t.scheduled ~f:(fun iovec ->
+            if !i >= n_iovecs then r.return ();
+            iovecs_len := !iovecs_len + iovec.Unix.IOVec.len ;
+            iovecs.(!i) <- iovec ;
+            incr i));
     (iovecs, !iovecs_len)
 
   let rec dequeue_iovecs t bytes_written =
