@@ -41,10 +41,10 @@ module BufferedFile = struct
     with_return (fun r ->
         let i = ref 0 in
         Deque.iter t.scheduled ~f:(fun iovec ->
-            if !i >= n_iovecs then r.return ();
+            if !i >= n_iovecs then r.return () ;
             iovecs_len := !iovecs_len + iovec.Unix.IOVec.len ;
             iovecs.(!i) <- iovec ;
-            incr i));
+            incr i)) ;
     (iovecs, !iovecs_len)
 
   let rec dequeue_iovecs t bytes_written =

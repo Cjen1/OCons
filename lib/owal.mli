@@ -20,7 +20,7 @@ module Persistant (P : Persistable) : sig
 
   val write : t -> P.op -> unit
 
-  val datasync : t -> unit 
+  val datasync : t -> unit
 
   val flush : t -> unit
 

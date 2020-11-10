@@ -51,8 +51,7 @@ let print_state (t : P.t)
         (commit_idx : int64 option)
         ~unapplied:(unapplied : Types.Id.t list)
         (sync : bool)
-        ~post:(Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) post : string)
-    ]
+        ~post:(Fmt.str "%a" (Fmt.list ~sep:Fmt.comma P.pp_action) post : string)]
   in
   print_endline @@ Sexp.to_string_hum s
 
@@ -102,7 +101,9 @@ let%expect_test "tick" =
   in
   let t, _ = P.Test.transition_to_follower t |> get_ok in
   let t, actions = P.advance t `Tick |> get_ok in
-  print_state t actions ; [%expect {|
+  print_state t actions ;
+  [%expect
+    {|
     Follower(1)
     (state: (pre "") (commit_idx ()) (unapplied ()) (sync false) (post "")) |}]
 
@@ -122,7 +123,8 @@ let%expect_test "loop single" =
   let t, actions = P.advance t `Tick |> get_ok in
   print_state t actions ;
   let%bind () =
-    [%expect {|
+    [%expect
+      {|
     Leader
     (state: (pre "") (commit_idx ()) (unapplied ()) (sync false) (post "")) |}]
   in
@@ -226,6 +228,7 @@ let%expect_test "loop triple" =
   in
   let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
   print_state t2 actions ;
-  [%expect {|
+  [%expect
+    {|
     Leader
     (state: (pre "") (commit_idx (2)) (unapplied ()) (sync true) (post "")) |}]

@@ -29,7 +29,6 @@
   (pps ppx_jane ppx_deriving_yojson))
  (modules bench_wal))
 
-
 (executable
  (name pcore_bench)
  (libraries ocamlpaxos core async core_bench)

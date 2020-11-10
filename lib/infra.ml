@@ -59,8 +59,8 @@ module Threaded = struct
         ()
 
   let handle_rx_q t ~(rx : rx) ~(tx : tx) =
-    print_endline "Running rx_thread";
-    [%log.debug logger "starting threaded handler"];
+    print_endline "Running rx_thread" ;
+    [%log.debug logger "starting threaded handler"] ;
     let signal_tx () =
       Async.Thread_safe.run_in_async_exn
         (fun () -> Async.Condition.signal tx.cond)
@@ -83,12 +83,12 @@ module Threaded = struct
           Q.length rx.q.tick + Q.length rx.q.client_reqs
           + Q.length rx.q.server_reqs + Q.length rx.q.server_resp
         in
-       [%log.debug logger "Waiting on cond"];
+        [%log.debug logger "Waiting on cond"] ;
         while len_qs () <= 0 || rx.q.close do
           Async.Thread_safe.run_in_async_wait_exn (fun () ->
               Async.Condition.wait rx.cond)
         done ;
-       [%log.debug logger "Reading from queues"];
+        [%log.debug logger "Reading from queues"] ;
         let actions =
           match rx.q with
           | {close; _} when close ->
@@ -332,8 +332,9 @@ let create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
       ; last_applied= Int64.zero }
   in
   let _sm_thread : Thread.t =
-    Thread.create ~on_uncaught_exn:`Kill_whole_process (fun () ->
-    Threaded.handle_rx_q sm_state ~tx:t.tx ~rx:t.rx) ()
+    Thread.create ~on_uncaught_exn:`Kill_whole_process
+      (fun () -> Threaded.handle_rx_q sm_state ~tx:t.tx ~rx:t.rx)
+      ()
   in
   Async.every ~continue_on_error:true tick_speed (tick t) ;
   do_actions t |> don't_wait_for ;

@@ -39,20 +39,16 @@ module T = Ocamlpaxos.Owal.Persistant (T_p)
 
 let throughput file n write_size =
   Log.info (fun m -> m "Setting up throughput test\n") ;
-  let%bind wal, _t =
-    T.of_path_async file ~file_size:Int.(1024 * 1024 * 128)
-  in
+  let%bind wal, _t = T.of_path_async file ~file_size:Int.(1024 * 1024 * 128) in
   let result_q = Queue.create () in
   Log.info (fun m -> m "Starting throughput test\n") ;
-  for i = 0 to (n-1) do
-    if i %100 = 0 then print_char '.';
-    let start =
-      Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec
-    in
+  for i = 0 to n - 1 do
+    if i % 100 = 0 then print_char '.' ;
+    let start = Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec in
     T.write wal (T_p.Write (Bytes.init write_size ~f:(fun _ -> 'c'))) ;
-    T.datasync wal;
+    T.datasync wal ;
     let ed = Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec in
-    Queue.enqueue result_q (start, ed) ;
+    Queue.enqueue result_q (start, ed)
   done ;
   Log.info (fun m -> m "Finished throughput test!\n") ;
   let results = Queue.to_array result_q in

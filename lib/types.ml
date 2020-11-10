@@ -266,7 +266,8 @@ module RPCs = struct
   open MessageTypes
 
   let request_vote =
-    Async.Rpc.One_way.create ~name:"request_vote" ~version:0 ~bin_msg:bin_request_vote
+    Async.Rpc.One_way.create ~name:"request_vote" ~version:0
+      ~bin_msg:bin_request_vote
 
   let request_vote_response =
     Async.Rpc.One_way.create ~name:"request_vote_response" ~version:0

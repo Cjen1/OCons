@@ -501,9 +501,13 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
 
 let advance t event : (t, 'b) CompRes.t =
   [%log.debug logger "Advancing" ~event:(Fmt.str "%a" pp_event event)] ;
-  let* t, ({pre; do_sync; post; commit_idx; _} as actions) = advance_raw t event in
+  let* t, ({pre; do_sync; post; commit_idx; _} as actions) =
+    advance_raw t event
+  in
   let actions =
-    if not @@ List.is_empty post || Option.is_some commit_idx then {actions with do_sync= true} else actions
+    if (not @@ List.is_empty post) || Option.is_some commit_idx then
+      {actions with do_sync= true}
+    else actions
   in
   [%log.debug
     logger "Returning actions:"
