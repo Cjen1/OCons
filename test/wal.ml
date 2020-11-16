@@ -28,9 +28,9 @@ let%expect_test "persist data" =
   with_timeout
   @@ fun () ->
   let open T in
-  let file_size = Int64.of_int 16 in
+  let file_size = 16 in
   let path = "test.wal" in
-  let%bind wal, t = of_path ~file_size path in
+  let%bind wal, t = of_path_async ~file_size path in
   [%sexp_of: int list] t |> Sexp.to_string_hum |> print_endline ;
   let%bind () = [%expect {| () |}] in
   let t =
@@ -38,12 +38,12 @@ let%expect_test "persist data" =
         let op = T_p.Write i in
         write wal op ; T_p.apply t op)
   in
-  let%bind () = datasync wal in
+  let () = datasync wal in
   [%sexp_of: int list] t |> Sexp.to_string_hum |> print_endline ;
   let%bind () = [%expect {| (4 3 2 1) |}] in
-  let%bind () = close wal in
-  let%bind wal, t = of_path ~file_size path in
+  let () = close wal in
+  let%bind wal, t = of_path_async ~file_size path in
   [%sexp_of: int list] t |> Sexp.to_string_hum |> print_endline ;
   let%bind () = [%expect {| (4 3 2 1) |}] in
-  let%bind () = close wal in
+  let () = close wal in
   return ()

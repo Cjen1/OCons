@@ -1,5 +1,4 @@
 open! Core
-open! Async
 open! Ppx_log_async
 
 let logger =
@@ -28,7 +27,15 @@ type state_machine = (key, value) Hashtbl.t
 
 type op = Read of key | Write of key * value [@@deriving bin_io, sexp]
 
-type command = {op: op; id: command_id} [@@deriving bin_io, sexp]
+module Command = struct
+  type t = {op: op; id: command_id} [@@deriving bin_io, sexp]
+
+  let compare a b = Id.compare a.id b.id
+
+  let hash t = Id.hash t.id
+end
+
+type command = Command.t [@@deriving bin_io, sexp]
 
 type op_result = Success | Failure | ReadSuccess of key
 [@@deriving bin_io, sexp]
@@ -259,21 +266,22 @@ module RPCs = struct
   open MessageTypes
 
   let request_vote =
-    Rpc.One_way.create ~name:"request_vote" ~version:0 ~bin_msg:bin_request_vote
+    Async.Rpc.One_way.create ~name:"request_vote" ~version:0
+      ~bin_msg:bin_request_vote
 
   let request_vote_response =
-    Rpc.One_way.create ~name:"request_vote_response" ~version:0
+    Async.Rpc.One_way.create ~name:"request_vote_response" ~version:0
       ~bin_msg:bin_request_vote_response
 
   let append_entries =
-    Rpc.One_way.create ~name:"append_entries" ~version:0
+    Async.Rpc.One_way.create ~name:"append_entries" ~version:0
       ~bin_msg:bin_append_entries
 
   let append_entries_response =
-    Rpc.One_way.create ~name:"append_entries_response" ~version:0
+    Async.Rpc.One_way.create ~name:"append_entries_response" ~version:0
       ~bin_msg:bin_append_entries_response
 
   let client_request =
-    Rpc.Rpc.create ~name:"client_request" ~version:0
+    Async.Rpc.Rpc.create ~name:"client_request" ~version:0
       ~bin_query:bin_client_request ~bin_response:bin_client_response
 end

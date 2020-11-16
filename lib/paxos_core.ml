@@ -22,27 +22,33 @@ type event =
   | `RAppendEntiresResponse of append_entries_response
   | `Commands of command list ]
 
-type persistant_change = [`Log of L.op | `Term of T.op]
+type persistant_change = Types.Wal.P.op
 
 type pre_sync_action =
-  [ `PersistantChange of persistant_change
-  | `SendRequestVote of node_id * request_vote
-  | `SendAppendEntries of node_id * append_entries
-  | `Unapplied of command list ]
+  [ `SendRequestVote of node_id * request_vote
+  | `SendAppendEntries of node_id * append_entries ]
 
 type post_sync_action =
   [ `SendRequestVoteResponse of node_id * request_vote_response
-  | `SendAppendEntriesResponse of node_id * append_entries_response
-  | `CommitIndexUpdate of log_index ]
+  | `SendAppendEntriesResponse of node_id * append_entries_response ]
 
 type do_sync = bool
 
-type action_sequence = pre_sync_action list * do_sync * post_sync_action list
+type action_sequence =
+  { wal: persistant_change list
+  ; pre: pre_sync_action list
+  ; unapplied: command_id list
+  ; do_sync: do_sync
+  ; commit_idx: log_index option
+  ; post: post_sync_action list }
 
 module Comp = struct
   type 'a t = 'a * action_sequence
 
-  let return x : 'a t = (x, ([], false, []))
+  let empty =
+    {wal= []; pre= []; unapplied= []; do_sync= false; commit_idx= None; post= []}
+
+  let return x : 'a t = (x, empty)
 end
 
 module CompRes = struct
@@ -51,31 +57,56 @@ module CompRes = struct
   let bind : ('a, 'b) t -> ('a -> ('c, 'b) t) -> ('c, 'b) t =
    fun x f ->
     let ( let* ) x f = Result.bind x ~f in
-    let* x, (pre, sync, post) = x in
+    let* x, t = x in
     match f x with
     | Error e ->
         Error e
-    | Ok (x, (pre', sync', post')) ->
-        Ok (x, (pre @ pre', sync || sync', post @ post'))
+    | Ok (x, t') ->
+        Ok
+          ( x
+          , { wal= t.wal @ t'.wal
+            ; pre= t.pre @ t'.pre
+            ; unapplied= t.unapplied @ t'.unapplied
+            ; do_sync= t.do_sync || t'.do_sync
+            ; commit_idx=
+                ( match (t.commit_idx, t'.commit_idx) with
+                | None, None ->
+                    None
+                | Some v, None ->
+                    Some v
+                | None, Some v ->
+                    Some v
+                | Some v, Some v' ->
+                    Some (Int64.max v v') )
+            ; post= t.post @ t'.post } )
 
   let return v = Ok (Comp.return v)
 
   let error v = Error v
 
-  let append_pre action : (unit, 'b) t = Ok ((), ([action], false, []))
+  let appendv_wal wal : (unit, 'b) t = Ok ((), {Comp.empty with wal})
 
-  let append_post action : (unit, 'b) t = Ok ((), ([], false, [action]))
+  let append_pre action : (unit, 'b) t = Ok ((), {Comp.empty with pre= [action]})
 
-  let appendv_pre av : (unit, 'b) t = Ok ((), (av, false, []))
+  let append_unapplied commands : (unit, 'b) t =
+    Ok ((), {Comp.empty with unapplied= commands})
+
+  let append_commit_index i : (unit, 'b) t =
+    Ok ((), {Comp.empty with commit_idx= Some i})
+
+  let append_post action : (unit, 'b) t =
+    Ok ((), {Comp.empty with post= [action]})
+
+  let appendv_pre av : (unit, 'b) t = Ok ((), {Comp.empty with pre= av})
 end
+
+let log_op_to_action op : persistant_change = Log op
+
+let term_op_to_action op : persistant_change = Term op
 
 let ( let+ ) x f = CompRes.(bind) x f
 
 let ( let* ) x f = Result.bind x ~f
-
-let log_op_to_action op : pre_sync_action = `PersistantChange (`Log op)
-
-let term_op_to_action op : pre_sync_action = `PersistantChange (`Term op)
 
 let pp_action f (x : [< pre_sync_action | post_sync_action]) =
   match x with
@@ -87,14 +118,21 @@ let pp_action f (x : [< pre_sync_action | post_sync_action]) =
       Fmt.pf f "SendAppendEntries to %d" id
   | `SendAppendEntriesResponse (id, _) ->
       Fmt.pf f "SendAppendEntriesResponse to %d" id
-  | `CommitIndexUpdate i ->
-      Fmt.pf f "CommitIndexUpdate to %a" Fmt.int64 i
-  | `PersistantChange (`Log _) ->
-      Fmt.pf f "PersistantChange to Log"
-  | `PersistantChange (`Term _) ->
-      Fmt.pf f "PersistantChange to Term"
-  | `Unapplied cmds ->
-      Fmt.pf f "Unapplied %s" ([%sexp_of: command list] cmds |> Sexp.to_string)
+
+let pp_event f (e : event) =
+  match e with
+  | `Tick ->
+      Fmt.pf f "Tick"
+  | `RRequestVote _ ->
+      Fmt.pf f "RRequestVote"
+  | `RRequestVoteResponse _ ->
+      Fmt.pf f "RRequestVoteResponse"
+  | `RAppendEntries _ ->
+      Fmt.pf f "RAppendEntries"
+  | `RAppendEntiresResponse _ ->
+      Fmt.pf f "RAppendEntiresResponse"
+  | `Commands _ ->
+      Fmt.pf f "Commands"
 
 type config =
   { phase1majority: int
@@ -160,7 +198,7 @@ let check_commit_index t =
       in
       let+ () =
         if Int64.(commit_index <> t.commit_index) then
-          CompRes.append_post @@ `CommitIndexUpdate commit_index
+          CompRes.append_commit_index commit_index
         else CompRes.return ()
       in
       CompRes.return {t with commit_index}
@@ -178,7 +216,7 @@ let transition_to_leader t =
       let log, actions =
         L.add_entries_remove_conflicts t.log ~start_index:s.start_index entries
       in
-      let+ () = CompRes.appendv_pre @@ List.map ~f:log_op_to_action actions in
+      let+ () = CompRes.appendv_wal @@ List.map ~f:log_op_to_action actions in
       let match_index, next_index =
         List.fold t.config.other_nodes ~init:(IdMap.empty, IdMap.empty)
           ~f:(fun (mi, ni) id ->
@@ -205,7 +243,7 @@ let transition_to_leader t =
 let update_current_term term t =
   let current_term, ops = T.update_term t.current_term term in
   let actions = List.map ~f:term_op_to_action ops in
-  let+ () = CompRes.appendv_pre actions in
+  let+ () = CompRes.appendv_wal actions in
   CompRes.return {t with current_term}
 
 let transition_to_candidate t =
@@ -382,7 +420,7 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
           in
           let t = {t with log} in
           let+ () =
-            CompRes.appendv_pre @@ List.map ~f:log_op_to_action log_ops
+            CompRes.appendv_wal @@ List.map ~f:log_op_to_action log_ops
           in
           let match_index = Int64.(msg.prev_log_index + msg.entries_length) in
           let commit_index =
@@ -439,10 +477,9 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
   | `Commands cs, Leader s ->
       let cs = List.filter cs ~f:(fun cmd -> not @@ L.id_in_log t.log cmd.id) in
       let log, ops = L.addv cs t.log t.current_term in
-      let+ t =
-        Ok
-          ( {t with log}
-          , (List.map ops ~f:(fun op -> log_op_to_action op), false, []) )
+      let t = {t with log} in
+      let+ () =
+        CompRes.appendv_wal @@ List.map ops ~f:(fun op -> log_op_to_action op)
       in
       let+ t = check_commit_index t in
       let highest_index = L.get_max_index t.log in
@@ -459,14 +496,24 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       in
       List.fold t.config.other_nodes ~f:fold ~init:(CompRes.return t)
   | `Commands cs, _ ->
-      let+ () = CompRes.append_pre (`Unapplied cs) in
+      let+ () = CompRes.append_unapplied (List.map cs ~f:(fun c -> c.id)) in
       CompRes.return t
 
 let advance t event : (t, 'b) CompRes.t =
-  let* t, (pre, sync, post) = advance_raw t event in
-  let actions =
-    if not @@ List.is_empty post then (pre, true, post) else (pre, sync, post)
+  [%log.debug logger "Advancing" ~event:(Fmt.str "%a" pp_event event)] ;
+  let* t, ({pre; do_sync; post; commit_idx; _} as actions) =
+    advance_raw t event
   in
+  let actions =
+    if (not @@ List.is_empty post) || Option.is_some commit_idx then
+      {actions with do_sync= true}
+    else actions
+  in
+  [%log.debug
+    logger "Returning actions:"
+      ~pre:(Fmt.str "%a" (Fmt.list pp_action) pre : string)
+      (do_sync : bool)
+      ~post:(Fmt.str "%a" (Fmt.list pp_action) post : string)] ;
   Ok (t, actions)
 
 let is_leader t =
