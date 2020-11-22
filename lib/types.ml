@@ -260,7 +260,8 @@ module MessageTypes = struct
 
   type client_request = command [@@deriving bin_io, sexp]
 
-  type client_response = op_result [@@deriving bin_io, sexp]
+  type client_response = (op_result, [`Unapplied]) Result.t
+  [@@deriving bin_io, sexp]
 end
 
 module RPCs = struct
