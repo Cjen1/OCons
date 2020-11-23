@@ -15,6 +15,7 @@
     (ocaml (>= 4.08.0))
     core
     async
+    rpc_parallel
     ppx_jane
     ppx_log
     ppx_deriving_yojson
