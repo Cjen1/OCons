@@ -80,3 +80,5 @@ let connect_persist ?(retry_delay = Time_ns.Span.of_sec 1.) name =
       | Error exn ->
           Error (Error.of_exn exn) |> return)
     (fun () -> Ok server_address |> return)
+
+type 'a rd_wr_pipe = {rd: 'a Pipe.Reader.t; wr: 'a Pipe.Writer.t}

@@ -24,11 +24,13 @@ let send =
           Rpc.Rpc.dispatch Types.RPCs.client_request conn op
     in
     upon req (function
-      | Ok (Types.Success as v) ->
+      | Ok (Ok (Types.Success as v)) ->
           Ivar.fill_if_empty ivar (`Finished v)
-      | Ok (Types.ReadSuccess _ as v) ->
+      | Ok (Ok (Types.ReadSuccess _ as v)) ->
           Ivar.fill_if_empty ivar (`Finished v)
-      | Ok Types.Failure ->
+      | Ok (Ok (Types.Failure as v)) ->
+          Ivar.fill_if_empty ivar (`Finished v)
+      | Ok (Error `Unapplied) ->
           decr ongoing ;
           if !ongoing <= 0 then Ivar.fill_if_empty ivar (`Repeat (op, t))
       | Error e ->

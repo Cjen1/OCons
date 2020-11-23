@@ -496,6 +496,8 @@ let is_leader t =
 
 let get_log (t : t) = t.log
 
+let get_max_index (t : t) = L.get_max_index t.log
+
 let get_term (t : t) = t.current_term
 
 let create_node config log current_term =

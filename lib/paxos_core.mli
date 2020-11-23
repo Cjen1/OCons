@@ -66,6 +66,8 @@ val advance : t -> event -> (t * action_sequence, [> `Msg of string]) result
 
 val get_log : t -> Types.log
 
+val get_max_index : t -> log_index
+
 val get_term : t -> Types.term
 
 (** Module for testing internal state *)
