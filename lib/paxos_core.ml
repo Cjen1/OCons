@@ -412,6 +412,11 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
               Int64.(min msg.leader_commit last_entry)
             else t.commit_index
           in
+          let+ () =
+            if Int64.(t.commit_index <> commit_index) then
+              CompRes.append_post @@ `CommitIndexUpdate commit_index
+            else CompRes.return ()
+          in
           let t = {t with commit_index} in
           let t =
             match t.node_state with
@@ -440,6 +445,10 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
         let t = {t with node_state} in
         check_commit_index t
     | Error prev_log_index ->
+        [%log.error
+          logger "RappendEntiresResponse: not valid append entries"
+            (prev_log_index : log_index)
+            ~next_index:(Map.find_exn s.next_index msg.src : log_index)] ;
         let next_index =
           Map.set s.next_index ~key:msg.src ~data:prev_log_index
         in
