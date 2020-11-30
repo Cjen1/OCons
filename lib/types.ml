@@ -62,11 +62,11 @@ type log_entry = {command: command; term: term} [@@deriving bin_io, sexp]
 module Wal = struct
   module Term = struct
     module T = struct
-      type t = term [@@deriving bin_io]
+      type t = term [@@deriving bin_io, sexp]
 
       let init () = 0
 
-      type op = t [@@deriving bin_io]
+      type op = t [@@deriving bin_io, sexp]
 
       let apply _t op = op
     end
@@ -89,7 +89,7 @@ module Wal = struct
 
       let init () = {store= []; command_set= IdSet.empty; length= Int64.zero}
 
-      type op = Add of log_entry | RemoveGEQ of log_index [@@deriving bin_io]
+      type op = Add of log_entry | RemoveGEQ of log_index [@@deriving bin_io, sexp]
 
       let add t entry =
         let command_set = Set.add t.command_set entry.command.id in
@@ -116,7 +116,7 @@ module Wal = struct
 
     type t = L.t [@@deriving sexp]
 
-    type op = L.op
+    type op = L.op [@@deriving bin_io,sexp]
 
     let get (t : L.t) index =
       let nth = L.nth_of_index t index |> Int64.to_int_exn in
@@ -217,7 +217,7 @@ module Wal = struct
 
     let init () = {term= Term.init (); log= Log.L.init ()}
 
-    type op = Term of Term.T.op | Log of Log.L.op [@@deriving bin_io]
+    type op = Term of Term.T.op | Log of Log.L.op [@@deriving bin_io, sexp]
 
     let apply t = function
       | Term op ->

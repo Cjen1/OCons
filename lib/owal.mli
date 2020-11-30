@@ -8,7 +8,7 @@ module type Persistable = sig
 
   val init : unit -> t
 
-  type op [@@deriving bin_io]
+  type op [@@deriving bin_io,sexp]
 
   val apply : t -> op -> t
 end

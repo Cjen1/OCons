@@ -8,7 +8,7 @@ module T_p = struct
 
   let init () = []
 
-  type op = Write of int [@@deriving bin_io]
+  type op = Write of int [@@deriving bin_io, sexp]
 
   let apply t (Write i) = i :: t
 end

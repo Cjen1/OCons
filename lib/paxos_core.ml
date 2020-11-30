@@ -22,22 +22,22 @@ type event =
   | `RAppendEntiresResponse of append_entries_response
   | `Commands of command list ]
 
-type persistant_change = [`Log of L.op | `Term of T.op]
+type persistant_change = [`Log of L.op | `Term of T.op] [@@deriving sexp]
 
 type pre_sync_action =
   [ `PersistantChange of persistant_change
   | `SendRequestVote of node_id * request_vote
   | `SendAppendEntries of node_id * append_entries
-  | `Unapplied of command list ]
+  | `Unapplied of command list ] [@@deriving sexp]
 
 type post_sync_action =
   [ `SendRequestVoteResponse of node_id * request_vote_response
   | `SendAppendEntriesResponse of node_id * append_entries_response
-  | `CommitIndexUpdate of log_index ]
+  | `CommitIndexUpdate of log_index ] [@@deriving sexp]
 
-type do_sync = bool
+type do_sync = bool [@@deriving sexp]
 
-type action_sequence = pre_sync_action list * do_sync * post_sync_action list
+type action_sequence = pre_sync_action list * do_sync * post_sync_action list [@@deriving sexp]
 
 module Comp = struct
   type 'a t = 'a * action_sequence
@@ -67,6 +67,16 @@ module CompRes = struct
   let append_post action : (unit, 'b) t = Ok ((), ([], false, [action]))
 
   let appendv_pre av : (unit, 'b) t = Ok ((), (av, false, []))
+
+  let ( let+ ) x f = bind x f
+
+  let list_fold ls ~init ~f : ('a, 'b) t =
+    List.fold ls ~init:(return init) ~f:(fun acc v ->
+        let+ acc = acc in
+        f acc v)
+
+  let list_iter ls ~f : (unit, 'a) t =
+    list_fold ls ~init:() ~f:(fun () v -> f v)
 end
 
 let ( let+ ) x f = CompRes.(bind) x f
@@ -149,20 +159,6 @@ type t =
   ; node_state: node_state }
 [@@deriving sexp_of]
 
-let make_append_entries (t : t) next_index =
-  let term = t.current_term in
-  let prev_log_index = Int64.(next_index - one) in
-  let prev_log_term = L.get_term_exn t.log prev_log_index in
-  let entries, entries_length = L.entries_after_inc_size t.log next_index in
-  let leader_commit = t.commit_index in
-  { src= t.config.node_id
-  ; term
-  ; prev_log_index
-  ; prev_log_term
-  ; entries
-  ; entries_length
-  ; leader_commit }
-
 let check_commit_index t =
   match t.node_state with
   | Leader s ->
@@ -181,6 +177,142 @@ let check_commit_index t =
       CompRes.return {t with commit_index}
   | _ ->
       CompRes.return t
+
+module ReplicationSM = struct
+  (* We use the next_index to figure out what to send.
+     When we receive a append_entries_response case switch on success:
+      - Success -> Update match_index
+      - Failure (error_point) -> update next_index to error_point
+     In both cases try to send directly after
+
+     When we try to send an append_entries message we send a window of
+     the entries available, or nothing if nothing needs to be sent
+
+     ==> In case of missing log entry a failure will be sent
+  *)
+
+  let recv_append_entries (t : t) (msg : append_entries) =
+    (* If we fail we return the latest point an error occurred (that we can tell) *)
+    let send t success =
+      CompRes.append_post
+      @@ `SendAppendEntriesResponse
+           (msg.src, {src= t.config.node_id; term= t.current_term; success})
+    in
+    match L.get_term t.log msg.prev_log_index with
+    | _ when Int.(msg.term < t.current_term) ->
+      (* May want better error reporting here *)
+        let+ () = send t (Error msg.prev_log_index) in
+        CompRes.return t
+    | Error _ ->
+      (* The entries that got sent were greater than the entirety of the log *)
+        let+ () = send t (Error (L.get_max_index t.log)) in
+        CompRes.return t
+    | Ok log_term when Int.(log_term <> msg.prev_log_term) ->
+        let+ () = send t (Error msg.prev_log_index) in
+        CompRes.return t
+    | Ok _ ->
+        let log, log_ops =
+          L.add_entries_remove_conflicts t.log
+            ~start_index:Int64.(msg.prev_log_index + one)
+            msg.entries
+        in
+        let t = {t with log} in
+        let+ () = CompRes.appendv_pre @@ List.map ~f:log_op_to_action log_ops in
+        let match_index = Int64.(msg.prev_log_index + msg.entries_length) in
+        let commit_index =
+          let last_entry =
+            match List.hd msg.entries with
+            | None ->
+                msg.prev_log_index
+            | Some _ ->
+                match_index
+          in
+          if Int64.(msg.leader_commit > t.commit_index) then
+            Int64.(min msg.leader_commit last_entry)
+          else t.commit_index
+        in
+        let+ () =
+          if Int64.(t.commit_index <> commit_index) then
+            CompRes.append_post @@ `CommitIndexUpdate commit_index
+          else CompRes.return ()
+        in
+        let t = {t with commit_index} in
+        let t =
+          match t.node_state with
+          | Follower _s ->
+              {t with node_state= Follower {heartbeat= 0}}
+          | _ ->
+              t
+        in
+        let+ () = send t (Ok match_index) in
+        CompRes.return t
+
+  let send_append_entries ?(force = false) (t : t) dst =
+    match t.node_state with
+    | Leader s -> (
+        let next_index = Map.find_exn s.next_index dst in
+        let prev_log_index = Int64.(next_index - one) in
+        let entries, entries_length =
+          L.entries_after_inc_size t.log next_index
+        in
+        match entries with
+        | [] when not force ->
+            CompRes.return ()
+        | _ ->
+            let term = t.current_term in
+            let prev_log_term = L.get_term_exn t.log prev_log_index in
+            let leader_commit = t.commit_index in
+            let res =
+              { src= t.config.node_id
+              ; term
+              ; prev_log_index
+              ; prev_log_term
+              ; entries
+              ; entries_length
+              ; leader_commit }
+            in
+            CompRes.append_pre (`SendAppendEntries (dst, res)) )
+    | _ ->
+        CompRes.return ()
+
+  let recv_append_entries_response (t : t) msg =
+    let+ t =
+      match (t.node_state, msg.success) with
+      | Leader s, Ok remote_match_index when Int.(msg.term = t.current_term) ->
+          let match_index =
+            Map.update s.match_index msg.src ~f:(function
+              | None ->
+                  remote_match_index
+              | Some mi ->
+                  Int64.max mi remote_match_index)
+          in
+          let updated_match_index = Map.find_exn match_index msg.src in
+          let next_index =
+            Map.update s.next_index msg.src ~f:(function
+              | None ->
+                  Int64.(updated_match_index + one)
+              | Some ni ->
+                  Int64.(max ni (updated_match_index + one)))
+          in
+          let node_state = Leader {s with match_index; next_index} in
+          CompRes.return {t with node_state}
+      | Leader s, Error prev_log_index ->
+          [%log.error
+            logger "RappendEntiresResponse: not valid append entries"
+              (prev_log_index : log_index)
+              ~next_index:(Map.find_exn s.next_index msg.src : log_index)] ;
+          let next_index =
+            Map.set s.next_index ~key:msg.src ~data:prev_log_index
+          in
+          let node_state = Leader {s with next_index} in
+          CompRes.return {t with node_state}
+      | _ ->
+          CompRes.return t
+    in
+    (* Send any remaining entries / Fixed entries *)
+    let+ () = send_append_entries t msg.src in
+    CompRes.return t
+end
 
 let transition_to_leader t =
   match t.node_state with
@@ -203,15 +335,11 @@ let transition_to_leader t =
       in
       let node_state = Leader {match_index; next_index; heartbeat= 0} in
       let t = {t with node_state; log} in
-      let fold actions node_id =
-        let next_index = Map.find_exn next_index node_id in
-        `SendAppendEntries (node_id, make_append_entries t next_index)
-        :: actions
+      let iter node_id =
+        ReplicationSM.send_append_entries ~force:true t node_id
       in
       let+ t = check_commit_index t in
-      let+ () =
-        CompRes.appendv_pre @@ List.fold t.config.other_nodes ~init:[] ~f:fold
-      in
+      let+ () = CompRes.list_iter t.config.other_nodes ~f:iter in
       CompRes.return t
   | _ ->
       CompRes.error
@@ -250,15 +378,12 @@ let transition_to_candidate t =
   if U.Quorum.satisified quorum then transition_to_leader t
   else
     let actions =
-      let fold actions node_id =
-        `SendRequestVote
-          ( node_id
-          , { src= t.config.node_id
-            ; term= t.current_term
-            ; leader_commit= t.commit_index } )
-        :: actions
-      in
-      List.fold t.config.other_nodes ~init:[] ~f:fold
+      List.map t.config.other_nodes ~f:(fun node_id ->
+          `SendRequestVote
+            ( node_id
+            , { src= t.config.node_id
+              ; term= t.current_term
+              ; leader_commit= t.commit_index } ))
     in
     let+ () = CompRes.appendv_pre actions in
     CompRes.return t
@@ -277,16 +402,9 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
         logger "Tick" ~pre:(heartbeat : int) ~post:(new_heartbeat : int)] ;
       CompRes.return {t with node_state= Follower {heartbeat= new_heartbeat}}
   | `Tick, Leader ({heartbeat; _} as s) when heartbeat > 0 ->
-      let highest_index = L.get_max_index t.log in
-      let fold actions node_id =
-        let next_index = Map.find_exn s.next_index node_id in
-        if Int64.(next_index >= highest_index) then
-          `SendAppendEntries (node_id, make_append_entries t next_index)
-          :: actions
-        else actions
-      in
       let+ () =
-        CompRes.appendv_pre @@ List.fold t.config.other_nodes ~f:fold ~init:[]
+        CompRes.list_iter t.config.other_nodes
+          ~f:(ReplicationSM.send_append_entries ~force:true t)
       in
       CompRes.return {t with node_state= Leader {s with heartbeat= 0}}
   | `Tick, Leader ({heartbeat; _} as s) ->
@@ -372,95 +490,12 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
         else CompRes.return t )
   | `RRequestVoteResponse _, _ ->
       CompRes.return t
-  | `RAppendEntries msg, _ -> (
-      let send t res =
-        CompRes.append_post
-        @@ `SendAppendEntriesResponse
-             ( msg.src
-             , {src= t.config.node_id; term= t.current_term; success= res} )
-      in
-      match L.get_term t.log msg.prev_log_index with
-      | _ when Int.(msg.term < t.current_term) ->
-          let+ () = send t (Error msg.prev_log_index) in
-          CompRes.return t
-      | Error _ ->
-          let+ () = send t (Error msg.prev_log_index) in
-          CompRes.return t
-      | Ok log_term when Int.(log_term <> msg.prev_log_term) ->
-          let+ () = send t (Error msg.prev_log_index) in
-          CompRes.return t
-      | Ok _ ->
-          let log, log_ops =
-            L.add_entries_remove_conflicts t.log
-              ~start_index:Int64.(msg.prev_log_index + one)
-              msg.entries
-          in
-          let t = {t with log} in
-          let+ () =
-            CompRes.appendv_pre @@ List.map ~f:log_op_to_action log_ops
-          in
-          let match_index = Int64.(msg.prev_log_index + msg.entries_length) in
-          let commit_index =
-            let last_entry =
-              match List.hd msg.entries with
-              | None ->
-                  msg.prev_log_index
-              | Some _ ->
-                  match_index
-            in
-            if Int64.(msg.leader_commit > t.commit_index) then
-              Int64.(min msg.leader_commit last_entry)
-            else t.commit_index
-          in
-          let+ () =
-            if Int64.(t.commit_index <> commit_index) then
-              CompRes.append_post @@ `CommitIndexUpdate commit_index
-            else CompRes.return ()
-          in
-          let t = {t with commit_index} in
-          let t =
-            match t.node_state with
-            | Follower _s ->
-                {t with node_state= Follower {heartbeat= 0}}
-            | _ ->
-                t
-          in
-          let+ () = send t (Ok match_index) in
-          CompRes.return t )
-  | `RAppendEntiresResponse msg, Leader s when Int.(msg.term = t.current_term)
-    -> (
-    match msg.success with
-    | Ok match_index ->
-        let updated_match_index =
-          Int64.(max match_index @@ IdMap.find_exn s.match_index msg.src)
-        in
-        let match_index =
-          Map.set s.match_index ~key:msg.src ~data:updated_match_index
-        in
-        let next_index =
-          Map.set s.next_index ~key:msg.src
-            ~data:Int64.(updated_match_index + one)
-        in
-        let node_state = Leader {s with match_index; next_index} in
-        let t = {t with node_state} in
-        check_commit_index t
-    | Error prev_log_index ->
-        [%log.error
-          logger "RappendEntiresResponse: not valid append entries"
-            (prev_log_index : log_index)
-            ~next_index:(Map.find_exn s.next_index msg.src : log_index)] ;
-        let next_index =
-          Map.set s.next_index ~key:msg.src ~data:prev_log_index
-        in
-        let+ () =
-          CompRes.append_pre
-          @@ `SendAppendEntries
-               (msg.src, make_append_entries t Int64.(prev_log_index + one))
-        in
-        CompRes.return {t with node_state= Leader {s with next_index}} )
-  | `RAppendEntiresResponse _, _ ->
-      CompRes.return t
-  | `Commands cs, Leader s ->
+  | `RAppendEntries msg, _ ->
+      ReplicationSM.recv_append_entries t msg
+  | `RAppendEntiresResponse msg, _ ->
+      let+ t = ReplicationSM.recv_append_entries_response t msg in
+      check_commit_index t
+  | `Commands cs, Leader _ ->
       let cs = List.filter cs ~f:(fun cmd -> not @@ L.id_in_log t.log cmd.id) in
       let log, ops = L.addv cs t.log t.current_term in
       let+ t =
@@ -469,19 +504,11 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
           , (List.map ops ~f:(fun op -> log_op_to_action op), false, []) )
       in
       let+ t = check_commit_index t in
-      let highest_index = L.get_max_index t.log in
-      let fold t_comp node_id =
-        let+ t = t_comp in
-        let next_index = Map.find_exn s.next_index node_id in
-        if Int64.(highest_index >= next_index) then
-          let+ () =
-            CompRes.append_pre
-            @@ `SendAppendEntries (node_id, make_append_entries t next_index)
-          in
-          CompRes.return t
-        else CompRes.return t
+      let+ () =
+        CompRes.list_iter t.config.other_nodes
+          ~f:(ReplicationSM.send_append_entries t)
       in
-      List.fold t.config.other_nodes ~f:fold ~init:(CompRes.return t)
+      CompRes.return t
   | `Commands cs, _ ->
       let+ () = CompRes.append_pre (`Unapplied cs) in
       CompRes.return t

@@ -41,14 +41,10 @@ let get_ok = function
   | Ok v ->
       v
 
-let print_state (t : P.t) (pre, sync, post) =
+let print_state (t : P.t) actions =
   print_endline @@ Fmt.str "%a" P.pp_node_state (P.Test.get_node_state t) ;
-  print_endline
-  @@ Fmt.str "(%a,Sync: %b,%a)"
-       (Fmt.list ~sep:Fmt.comma P.pp_action)
-       pre sync
-       (Fmt.list ~sep:Fmt.comma P.pp_action)
-       post
+  [%message (actions : P.action_sequence)]
+  |> Sexp.to_string_hum |> print_endline
 
 let%expect_test "transitions" =
   let%bind log, term = file_init 1 in
@@ -68,16 +64,27 @@ let%expect_test "transitions" =
     [%expect
       {|
     Candidate
-    (PersistantChange to Term, SendRequestVote to 3,
-    SendRequestVote to 2,Sync: false,) |}]
+    (actions
+     (((PersistantChange (Term 1))
+       (SendRequestVote (2 ((src 1) (term 1) (leader_commit 0))))
+       (SendRequestVote (3 ((src 1) (term 1) (leader_commit 0)))))
+      false ())) |}]
   in
   let t, actions = P.Test.transition_to_leader t |> get_ok in
   print_state t actions ;
   [%expect
     {|
     Leader
-    (SendAppendEntries to 3,
-    SendAppendEntries to 2,Sync: false,) |}]
+    (actions
+     (((SendAppendEntries
+        (2
+         ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
+          (entries_length 0) (leader_commit 0))))
+       (SendAppendEntries
+        (3
+         ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
+          (entries_length 0) (leader_commit 0)))))
+      false ())) |}]
 
 let%expect_test "tick" =
   let%bind log, term = file_init 2 in
@@ -88,14 +95,18 @@ let%expect_test "tick" =
     [%expect
       {|
     Candidate
-    (PersistantChange to Term, SendRequestVote to 3,
-    SendRequestVote to 2,Sync: false,) |}]
+    (actions
+     (((PersistantChange (Term 1))
+       (SendRequestVote (2 ((src 1) (term 1) (leader_commit 0))))
+       (SendRequestVote (3 ((src 1) (term 1) (leader_commit 0)))))
+      false ())) |}]
   in
   let t, _ = P.Test.transition_to_follower t |> get_ok in
   let t, actions = P.advance t `Tick |> get_ok in
-  print_state t actions ; [%expect {|
+  print_state t actions ;
+  [%expect {|
     Follower(1)
-    (,Sync: false,) |}]
+    (actions (() false ())) |}]
 
 let%expect_test "loop single" =
   let%bind log, term = file_init 3 in
@@ -108,14 +119,16 @@ let%expect_test "loop single" =
     [%expect
       {|
     Follower(1)
-    (Unapplied (((op(Read 1))(id 1))((op(Read 2))(id 2))),Sync: false,) |}]
+    (actions
+     (((Unapplied (((op (Read 1)) (id 1)) ((op (Read 2)) (id 2))))) false ())) |}]
   in
   let t, actions = P.advance t `Tick |> get_ok in
   print_state t actions ;
   let%bind () =
-    [%expect {|
+    [%expect
+      {|
     Leader
-    (PersistantChange to Term,Sync: false,) |}]
+    (actions (((PersistantChange (Term 1))) false ())) |}]
   in
   let t, actions =
     P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
@@ -128,8 +141,10 @@ let%expect_test "loop single" =
     (((command ((op (Read 2)) (id 2))) (term 1))
      ((command ((op (Read 1)) (id 1))) (term 1)))
     Leader
-    (PersistantChange to Log,
-    PersistantChange to Log,Sync: true,CommitIndexUpdate to 2) |}]
+    (actions
+     (((PersistantChange (Log (Add ((command ((op (Read 2)) (id 2))) (term 1)))))
+       (PersistantChange (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))))
+      true ((CommitIndexUpdate 2)))) |}]
 
 let%expect_test "loop triple" =
   let%bind log, term = file_init 4 in
@@ -144,8 +159,11 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Candidate
-    (PersistantChange to Term, SendRequestVote to 3,
-    SendRequestVote to 1,Sync: false,) |}]
+    (actions
+     (((PersistantChange (Term 2))
+       (SendRequestVote (1 ((src 2) (term 2) (leader_commit 0))))
+       (SendRequestVote (3 ((src 2) (term 2) (leader_commit 0)))))
+      false ())) |}]
   in
   let rv =
     List.find_map_exn pre ~f:(function
@@ -162,7 +180,10 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Follower(0)
-    (PersistantChange to Term,Sync: true,SendRequestVoteResponse to 2) |}]
+    (actions
+     (((PersistantChange (Term 2))) true
+      ((SendRequestVoteResponse
+        (2 ((src 1) (term 2) (vote_granted true) (entries ()) (start_index 1))))))) |}]
   in
   let rvr =
     List.find_map_exn post ~f:(function
@@ -177,8 +198,16 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Leader
-    (SendAppendEntries to 3,
-    SendAppendEntries to 1,Sync: false,) |}]
+    (actions
+     (((SendAppendEntries
+        (1
+         ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
+          (entries_length 0) (leader_commit 0))))
+       (SendAppendEntries
+        (3
+         ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
+          (entries_length 0) (leader_commit 0)))))
+      false ())) |}]
   in
   let t2, ((pre, _, _) as actions) =
     P.advance t2 (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
@@ -188,8 +217,24 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Leader
-    (PersistantChange to Log, PersistantChange to Log, SendAppendEntries to 1,
-    SendAppendEntries to 3,Sync: false,) |}]
+    (actions
+     (((PersistantChange (Log (Add ((command ((op (Read 2)) (id 2))) (term 2)))))
+       (PersistantChange (Log (Add ((command ((op (Read 1)) (id 1))) (term 2)))))
+       (SendAppendEntries
+        (1
+         ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+          (entries
+           (((command ((op (Read 2)) (id 2))) (term 2))
+            ((command ((op (Read 1)) (id 1))) (term 2))))
+          (entries_length 2) (leader_commit 0))))
+       (SendAppendEntries
+        (3
+         ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+          (entries
+           (((command ((op (Read 2)) (id 2))) (term 2))
+            ((command ((op (Read 1)) (id 1))) (term 2))))
+          (entries_length 2) (leader_commit 0)))))
+      false ())) |}]
   in
   let ae =
     List.find_map_exn pre ~f:(function
@@ -206,8 +251,10 @@ let%expect_test "loop triple" =
     [%expect
       {|
     Follower(0)
-    (PersistantChange to Log,
-    PersistantChange to Log,Sync: true,SendAppendEntriesResponse to 2) |}]
+    (actions
+     (((PersistantChange (Log (Add ((command ((op (Read 1)) (id 1))) (term 2)))))
+       (PersistantChange (Log (Add ((command ((op (Read 2)) (id 2))) (term 2))))))
+      true ((SendAppendEntriesResponse (2 ((src 1) (term 2) (success (Ok 2)))))))) |}]
   in
   let aer =
     List.find_map_exn post ~f:(function
@@ -216,8 +263,50 @@ let%expect_test "loop triple" =
       | _ ->
           None)
   in
-  let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
-  print_state t2 actions ;
-  [%expect {|
+  (* In case of full update *)
+  let%bind () =
+    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
+    print_state t2 actions ;
+    [%expect {|
     Leader
-    (,Sync: true,CommitIndexUpdate to 2) |}]
+    (actions (() true ((CommitIndexUpdate 2)))) |}]
+  in
+  (* In case of partial update *)
+  let%bind () = 
+    let aer =
+      match aer with
+      | {success= Ok v; _} ->
+        {aer with success= Ok Int64.(v - one)}
+      | _ ->
+        assert false
+    in
+    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
+    print_state t2 actions ;
+    [%expect {|
+      Leader
+      (actions
+       (((SendAppendEntries
+          (1
+           ((src 2) (term 2) (prev_log_index 1) (prev_log_term 2)
+            (entries (((command ((op (Read 2)) (id 2))) (term 2))))
+            (entries_length 1) (leader_commit 0)))))
+        true ((CommitIndexUpdate 1))))|}]
+  in 
+  (* In case of a failed update *)
+  let%bind () = 
+    let aer =
+        {aer with success= Error Int64.(of_int 2)}
+    in
+    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
+    print_state t2 actions ;
+    [%expect {|
+      Leader
+      (actions
+       (((SendAppendEntries
+          (1
+           ((src 2) (term 2) (prev_log_index 1) (prev_log_term 2)
+            (entries (((command ((op (Read 2)) (id 2))) (term 2))))
+            (entries_length 1) (leader_commit 0)))))
+        false ()))|}]
+  in 
+  Deferred.unit

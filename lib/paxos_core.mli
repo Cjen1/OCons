@@ -23,17 +23,17 @@ type pre_sync_action =
   [ `PersistantChange of persistant_change
   | `SendRequestVote of node_id * request_vote
   | `SendAppendEntries of node_id * append_entries
-  | `Unapplied of command list ]
+  | `Unapplied of command list ] [@@deriving sexp]
 
 type post_sync_action =
   [ `SendRequestVoteResponse of node_id * request_vote_response
   | `SendAppendEntriesResponse of node_id * append_entries_response
-  | `CommitIndexUpdate of log_index ]
+  | `CommitIndexUpdate of log_index ][@@deriving sexp]
 
-type do_sync = bool
+type do_sync = bool [@@deriving sexp]
 
 (** Return type of advance, post_sync actions must be done after the persistant state is stored to disk *)
-type action_sequence = pre_sync_action list * do_sync * post_sync_action list
+type action_sequence = pre_sync_action list * do_sync * post_sync_action list [@@deriving sexp]
 
 val pp_action :
   Format.formatter -> [< pre_sync_action | post_sync_action] -> unit
