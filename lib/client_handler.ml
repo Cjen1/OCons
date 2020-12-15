@@ -101,25 +101,29 @@ module T = struct
       [%log.global.debug "Getting batch"] ;
       match%bind Pipe.read t.cr_pipe.rd with
       | `Eof ->
-          [%log.global.debug "Getting batch"] ;
+          [%log.global.debug "Empty batch"] ;
           assert false
       | `Ok fst ->
           [%log.global.debug "Got first element, attempting to get more"] ;
           let batch = ref [fst] in
           let cutoff = ref false in
-          let rec loop rem =
-            let%bind (_ : [`Eof | `Ok]) = Pipe.values_available t.cr_pipe.rd in
-            match () with
-            | () when !cutoff ->
+          let rec loop = function
+            | 0 ->
                 Deferred.unit
-            | () -> (
-              match Pipe.read_now' ~max_queue_length:rem t.cr_pipe.rd with
-              | `Eof | `Nothing_available ->
-                  assert false
-              | `Ok q ->
-                  Queue.iter q ~f:(fun v -> batch := v :: !batch) ;
-                  if Queue.length q = rem then Deferred.unit
-                  else loop (rem - Queue.length q) )
+            | rem -> (
+                let%bind (_ : [`Eof | `Ok]) =
+                  Pipe.values_available t.cr_pipe.rd
+                in
+                match () with
+                | () when !cutoff ->
+                    Deferred.unit
+                | () -> (
+                  match Pipe.read_now' ~max_queue_length:rem t.cr_pipe.rd with
+                  | `Eof | `Nothing_available ->
+                      assert false
+                  | `Ok q ->
+                      Queue.iter q ~f:(fun v -> batch := v :: !batch) ;
+                      loop (rem - Queue.length q) ) )
           in
           let batch_gather = loop (t.batch_size - 1) in
           let batch_timout = after t.batch_timeout in
