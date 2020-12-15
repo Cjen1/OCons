@@ -175,9 +175,12 @@ module T = struct
       Deferred.unit
 
     let get_batch =
-      C.create_rpc ~name:"get_batch"
-        ~f:(fun ~worker_state:t ~conn_state:() () -> get_batch_fn t)
-        ~bin_input:bin_unit ~bin_output:bin_request_batch ()
+      let sequencer = Sequencer.create () in
+      let f ~worker_state:t ~conn_state:() () =
+        Throttle.enqueue sequencer (fun () -> get_batch_fn t)
+      in
+      C.create_rpc ~name:"get_batch" ~f ~bin_input:bin_unit
+        ~bin_output:bin_request_batch ()
 
     let return_result =
       C.create_one_way ~name:"return_results"
