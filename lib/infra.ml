@@ -96,7 +96,7 @@ let do_post t post =
 
 let do_actions t ((pre, do_sync, post) : P.action_sequence) =
   do_pre t pre ;
-  match do_sync && not debug_no_sync with
+  match do_sync with
   | true ->
       let%map () = Wal.datasync t.wal in
       do_post t post
@@ -127,35 +127,23 @@ let handle_ev_q t window_size =
         return (Some (batch, ())))
   in
   let construct_choices () =
-    let ( let+ ) v f = v @ f () in
-    let+ (_tickq : unit) =
+    let tickc = 
       let read = Pipe.read_choice_single_consumer_exn t.tick_queue.rd [%here] in
-      let f = function `Eof -> assert false | `Ok `Tick -> `Event `Tick in
-      [Deferred.Choice.map read ~f]
-    in
-    let+ (_evq : unit) =
+      Deferred.Choice.map read ~f:(function `Eof -> `Eof | `Ok `Tick -> `Tick)
+    in 
+    let evc = 
       let read =
         Pipe.read_choice_single_consumer_exn t.event_queue.rd [%here]
       in
-      let f = function `Eof -> assert false | `Ok v -> `Event v in
-      [Deferred.Choice.map read ~f]
-    in
-    let+ (_batchq : unit) =
-      match () with
-      | ()
-        when Int64.(to_int_exn @@ (P.get_max_index t.core - t.last_applied))
-             > window_size ->
-          (* Don't read from external pipe if there are many outstanding requests *)
-          []
-      | () ->
-          let read =
-            Pipe.read_choice_single_consumer_exn request_batch_pipe [%here]
-          in
-          let f = function `Eof -> assert false | `Ok v -> `Batch v in
-          [Deferred.Choice.map read ~f]
-    in
-    (* Return [] in order to build up list from this *)
-    []
+      Deferred.Choice.map read ~f:(function `Eof -> `Eof | `Ok v -> `Event v)
+    in 
+    let batchc = 
+      let read =
+        Pipe.read_choice_single_consumer_exn request_batch_pipe [%here]
+      in
+      Deferred.Choice.map read ~f:(function `Eof -> `Eof | `Ok v -> `Batch v)
+    in 
+    [tickc; evc; batchc]
   in
   let rec loop () =
     let run_queues () =

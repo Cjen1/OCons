@@ -185,12 +185,11 @@ module Wal = struct
         | _ :: xs, _ :: ys ->
             merge_y_into_x Int64.(succ idx) (xs, ys)
       in
+      (* entries_to_add is in oldest first order *)
       let removeGEQ_o, entries_to_add =
         merge_y_into_x start_index
           (List.rev relevant_entries, List.rev new_entries)
       in
-      (* entries_to_add is in oldest first order *)
-      let entries_to_add = entries_to_add in
       let ops = [] in
       let t, ops =
         match removeGEQ_o with
