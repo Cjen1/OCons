@@ -44,6 +44,7 @@ let%expect_test "persist data" =
   let%bind () = close wal in
   let%bind wal, t = of_path ~file_size path in
   [%sexp_of: int list] t |> Sexp.to_string_hum |> print_endline ;
-  let%bind () = [%expect {| (4 3 2 1) |}] in
+  let%bind () = [%expect {|
+    (4 3 2 1) |}] in
   let%bind () = close wal in
   return ()

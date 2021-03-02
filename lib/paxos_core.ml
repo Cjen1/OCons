@@ -2,8 +2,7 @@ open! Core
 open! Types
 open Ppx_log_async
 open Types.MessageTypes
-module L = Types.Wal.Log
-module T = Types.Wal.Term
+module S = IStorage
 module U = Utils
 module IdMap = Map.Make (Int)
 
@@ -13,36 +12,34 @@ let logger =
     ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core")])
     ()
 
-(* R before means receiving *)
+(* R means receiving *)
 type event =
   [ `Tick
+  | `Syncd of log_index
   | `RRequestVote of request_vote
   | `RRequestVoteResponse of request_vote_response
   | `RAppendEntries of append_entries
   | `RAppendEntiresResponse of append_entries_response
   | `Commands of command list ]
 
-type persistant_change = [`Log of L.op | `Term of T.op] [@@deriving sexp]
-
-type pre_sync_action =
-  [ `PersistantChange of persistant_change
+type action =
+  [ `Unapplied of command list
   | `SendRequestVote of node_id * request_vote
   | `SendAppendEntries of node_id * append_entries
-  | `Unapplied of command list ] [@@deriving sexp]
-
-type post_sync_action =
-  [ `SendRequestVoteResponse of node_id * request_vote_response
+  | `SendRequestVoteResponse of node_id * request_vote_response
   | `SendAppendEntriesResponse of node_id * append_entries_response
-  | `CommitIndexUpdate of log_index ] [@@deriving sexp]
+  | `CommitIndexUpdate of log_index ]
+[@@deriving sexp]
 
-type do_sync = bool [@@deriving sexp]
+type actions = {acts: action list; nonblock_sync: bool}
+[@@deriving sexp, accessors]
 
-type action_sequence = pre_sync_action list * do_sync * post_sync_action list [@@deriving sexp]
+let empty = {acts= []; nonblock_sync= false}
 
 module Comp = struct
-  type 'a t = 'a * action_sequence
+  type 'a t = 'a * actions
 
-  let return x : 'a t = (x, ([], false, []))
+  let return x : 'a t = (x, empty)
 end
 
 module CompRes = struct
@@ -51,22 +48,23 @@ module CompRes = struct
   let bind : ('a, 'b) t -> ('a -> ('c, 'b) t) -> ('c, 'b) t =
    fun x f ->
     let ( let* ) x f = Result.bind x ~f in
-    let* x, (pre, sync, post) = x in
+    let* x, t = x in
     match f x with
     | Error e ->
         Error e
-    | Ok (x, (pre', sync', post')) ->
-        Ok (x, (pre @ pre', sync || sync', post @ post'))
+    | Ok (x, t') ->
+        Ok
+          ( x
+          , { acts= t.acts @ t'.acts
+            ; nonblock_sync= t.nonblock_sync || t'.nonblock_sync } )
 
   let return v = Ok (Comp.return v)
 
   let error v = Error v
 
-  let append_pre action : (unit, 'b) t = Ok ((), ([action], false, []))
+  let append action : (unit, 'b) t = Ok ((), {empty with acts= [action]})
 
-  let append_post action : (unit, 'b) t = Ok ((), ([], false, [action]))
-
-  let appendv_pre av : (unit, 'b) t = Ok ((), (av, false, []))
+  let appendv acts : (unit, 'b) t = Ok ((), {empty with acts})
 
   let ( let+ ) x f = bind x f
 
@@ -83,12 +81,10 @@ let ( let+ ) x f = CompRes.(bind) x f
 
 let ( let* ) x f = Result.bind x ~f
 
-let log_op_to_action op : pre_sync_action = `PersistantChange (`Log op)
-
-let term_op_to_action op : pre_sync_action = `PersistantChange (`Term op)
-
-let pp_action f (x : [< pre_sync_action | post_sync_action]) =
+let pp_action f (x : action) =
   match x with
+  | `Unapplied cmds ->
+      Fmt.pf f "Unapplied %s" ([%sexp_of: command list] cmds |> Sexp.to_string)
   | `SendRequestVote (id, _rv) ->
       Fmt.pf f "SendRequestVote to %d" id
   | `SendRequestVoteResponse (id, _) ->
@@ -99,17 +95,13 @@ let pp_action f (x : [< pre_sync_action | post_sync_action]) =
       Fmt.pf f "SendAppendEntriesResponse to %d" id
   | `CommitIndexUpdate i ->
       Fmt.pf f "CommitIndexUpdate to %a" Fmt.int64 i
-  | `PersistantChange (`Log _) ->
-      Fmt.pf f "PersistantChange to Log"
-  | `PersistantChange (`Term _) ->
-      Fmt.pf f "PersistantChange to Term"
-  | `Unapplied cmds ->
-      Fmt.pf f "Unapplied %s" ([%sexp_of: command list] cmds |> Sexp.to_string)
 
 let pp_event f (e : event) =
   match e with
   | `Tick ->
       Fmt.pf f "Tick"
+  | `Syncd i ->
+      Fmt.pf f "Sync'd up to %a" Fmt.int64 i
   | `RRequestVote _ ->
       Fmt.pf f "RRequestVote"
   | `RRequestVoteResponse _ ->
@@ -122,8 +114,8 @@ let pp_event f (e : event) =
       Fmt.pf f "Commands"
 
 type config =
-  { phase1majority: int
-  ; phase2majority: int
+  { phase1quorum: int
+  ; phase2quorum: int
   ; other_nodes: node_id list
   ; num_nodes: int
   ; node_id: node_id
@@ -152,26 +144,22 @@ let pp_node_state f (x : node_state) =
       Fmt.pf f "Leader"
 
 type t =
-  { config: config
-  ; current_term: term
-  ; log: L.t
-  ; commit_index: log_index
-  ; node_state: node_state }
-[@@deriving sexp_of]
+  {config: config; store: S.t; commit_index: log_index; node_state: node_state}
+[@@deriving sexp_of, accessors]
 
 let check_commit_index t =
   match t.node_state with
   | Leader s ->
       let commit_index =
-        Map.fold s.match_index ~init:[L.get_max_index t.log]
+        Map.fold s.match_index ~init:[S.get_max_index t.store]
           ~f:(fun ~key:_ ~data acc -> data :: acc)
         |> List.sort ~compare:Int64.compare
         |> List.rev
-        |> fun ls -> List.nth_exn ls (t.config.phase2majority - 1)
+        |> fun ls -> List.nth_exn ls t.config.phase2quorum
       in
       let+ () =
         if Int64.(commit_index <> t.commit_index) then
-          CompRes.append_post @@ `CommitIndexUpdate commit_index
+          CompRes.append @@ `CommitIndexUpdate commit_index
         else CompRes.return ()
       in
       CompRes.return {t with commit_index}
@@ -194,30 +182,32 @@ module ReplicationSM = struct
   let recv_append_entries (t : t) (msg : append_entries) =
     (* If we fail we return the latest point an error occurred (that we can tell) *)
     let send t success =
-      CompRes.append_post
+      CompRes.append
       @@ `SendAppendEntriesResponse
-           (msg.src, {src= t.config.node_id; term= t.current_term; success})
+           ( msg.src
+           , {src= t.config.node_id; term= S.get_current_term t.store; success}
+           )
     in
-    match L.get_term t.log msg.prev_log_index with
-    | _ when Int.(msg.term < t.current_term) ->
-      (* May want better error reporting here *)
+    match S.get_term t.store msg.prev_log_index with
+    | _ when Int.(msg.term < S.get_current_term t.store) ->
+        (* May want better error reporting here *)
         let+ () = send t (Error msg.prev_log_index) in
         CompRes.return t
     | Error _ ->
-      (* The entries that got sent were greater than the entirety of the log *)
-        let+ () = send t (Error (L.get_max_index t.log)) in
+        (* The entries that got sent were greater than the entirety of the log *)
+        let+ () = send t (Error (S.get_max_index t.store)) in
         CompRes.return t
-    | Ok log_term when Int.(log_term <> msg.prev_log_term) ->
+    | Ok term when Int.(term <> msg.prev_log_term) ->
         let+ () = send t (Error msg.prev_log_index) in
         CompRes.return t
     | Ok _ ->
-        let log, log_ops =
-          L.add_entries_remove_conflicts t.log
-            ~start_index:Int64.(msg.prev_log_index + one)
-            msg.entries
+        let t =
+          A.map store t
+            ~f:
+              (S.add_entries_remove_conflicts
+                 ~start_index:Int64.(msg.prev_log_index + one)
+                 ~entries:msg.entries)
         in
-        let t = {t with log} in
-        let+ () = CompRes.appendv_pre @@ List.map ~f:log_op_to_action log_ops in
         let match_index = Int64.(msg.prev_log_index + msg.entries_length) in
         let commit_index =
           let last_entry =
@@ -233,7 +223,7 @@ module ReplicationSM = struct
         in
         let+ () =
           if Int64.(t.commit_index <> commit_index) then
-            CompRes.append_post @@ `CommitIndexUpdate commit_index
+            CompRes.append @@ `CommitIndexUpdate commit_index
           else CompRes.return ()
         in
         let t = {t with commit_index} in
@@ -253,14 +243,14 @@ module ReplicationSM = struct
         let next_index = Map.find_exn s.next_index dst in
         let prev_log_index = Int64.(next_index - one) in
         let entries, entries_length =
-          L.entries_after_inc_size t.log next_index
+          S.entries_after_inc_size t.store next_index
         in
         match entries with
         | [] when not force ->
             CompRes.return ()
         | _ ->
-            let term = t.current_term in
-            let prev_log_term = L.get_term_exn t.log prev_log_index in
+            let term = S.get_current_term t.store in
+            let prev_log_term = S.get_term_exn t.store prev_log_index in
             let leader_commit = t.commit_index in
             let res =
               { src= t.config.node_id
@@ -271,14 +261,15 @@ module ReplicationSM = struct
               ; entries_length
               ; leader_commit }
             in
-            CompRes.append_pre (`SendAppendEntries (dst, res)) )
+            CompRes.append (`SendAppendEntries (dst, res)) )
     | _ ->
         CompRes.return ()
 
   let recv_append_entries_response (t : t) msg =
     let+ t =
       match (t.node_state, msg.success) with
-      | Leader s, Ok remote_match_index when Int.(msg.term = t.current_term) ->
+      | Leader s, Ok remote_match_index
+        when Int.(msg.term = S.get_current_term t.store) ->
           let match_index =
             Map.update s.match_index msg.src ~f:(function
               | None ->
@@ -312,29 +303,45 @@ module ReplicationSM = struct
     (* Send any remaining entries / Fixed entries *)
     let+ () = send_append_entries t msg.src in
     CompRes.return t
+
+  let recv_syncd (t : t) index =
+    match t.node_state with
+    | Leader s ->
+        let match_index =
+          Map.update s.match_index t.config.node_id ~f:(function
+            | None ->
+                index
+            | Some mi ->
+                Int64.max mi index)
+        in
+        let node_state = Leader {s with match_index} in
+        CompRes.return {t with node_state}
+    | _ ->
+        CompRes.return t
 end
 
 let transition_to_leader t =
   match t.node_state with
   | Candidate s ->
       [%log.info logger "Transition to leader"] ;
+      let current_term = S.get_current_term t.store in
       let entries =
-        List.map s.entries ~f:(fun entry -> {entry with term= t.current_term})
+        List.map s.entries ~f:(fun entry -> {entry with term= current_term})
       in
-      (* If the node has the highest node_id then it will write its entire log back to disk with a higher term ... This feels like a bug but is in the protocol *)
-      let log, actions =
-        L.add_entries_remove_conflicts t.log ~start_index:s.start_index entries
+      let t =
+        A.map store t
+          ~f:
+            (S.add_entries_remove_conflicts ~start_index:s.start_index ~entries)
       in
-      let+ () = CompRes.appendv_pre @@ List.map ~f:log_op_to_action actions in
       let match_index, next_index =
-        List.fold t.config.other_nodes ~init:(IdMap.empty, IdMap.empty)
-          ~f:(fun (mi, ni) id ->
+        List.fold (t.config.node_id :: t.config.other_nodes)
+          ~init:(IdMap.empty, IdMap.empty) ~f:(fun (mi, ni) id ->
             let mi = Map.set mi ~key:id ~data:Int64.zero in
             let ni = Map.set ni ~key:id ~data:Int64.(t.commit_index + one) in
             (mi, ni))
       in
       let node_state = Leader {match_index; next_index; heartbeat= 0} in
-      let t = {t with node_state; log} in
+      let t = {t with node_state} in
       let iter node_id =
         ReplicationSM.send_append_entries ~force:true t node_id
       in
@@ -345,23 +352,18 @@ let transition_to_leader t =
       CompRes.error
       @@ `Msg "Cannot transition to leader from states other than candidate"
 
-let update_current_term term t =
-  let current_term, ops = T.update_term t.current_term term in
-  let actions = List.map ~f:term_op_to_action ops in
-  let+ () = CompRes.appendv_pre actions in
-  CompRes.return {t with current_term}
-
 let transition_to_candidate t =
   let updated_term : term =
+    let current_term = S.get_current_term t.store in
     let id_in_current_epoch =
-      t.current_term - (t.current_term % t.config.num_nodes) + t.config.node_id
+      current_term - (current_term % t.config.num_nodes) + t.config.node_id
     in
-    if id_in_current_epoch <= t.current_term then
+    if id_in_current_epoch <= current_term then
       id_in_current_epoch + t.config.num_nodes
     else id_in_current_epoch
   in
   [%log.info logger "Transition to candidate" (updated_term : term)] ;
-  let quorum = U.Quorum.empty t.config.phase1majority Int.equal in
+  let quorum = U.Quorum.empty t.config.phase1quorum Int.equal in
   let* quorum =
     match U.Quorum.add t.config.node_id quorum with
     | Ok quorum ->
@@ -369,12 +371,12 @@ let transition_to_candidate t =
     | Error _ ->
         CompRes.error @@ `Msg "Tried to add element to empty quorum and failed"
   in
-  let entries = L.entries_after_inc t.log Int64.(t.commit_index + one) in
+  let entries = S.entries_after_inc t.store Int64.(t.commit_index + one) in
   let node_state =
     Candidate {quorum; entries; start_index= Int64.(t.commit_index + one)}
   in
   let t = {t with node_state} in
-  let+ t = update_current_term updated_term t in
+  let t = A.map store t ~f:(S.update_term ~term:updated_term) in
   if U.Quorum.satisified quorum then transition_to_leader t
   else
     let actions =
@@ -382,10 +384,10 @@ let transition_to_candidate t =
           `SendRequestVote
             ( node_id
             , { src= t.config.node_id
-              ; term= t.current_term
+              ; term= S.get_current_term t.store
               ; leader_commit= t.commit_index } ))
     in
-    let+ () = CompRes.appendv_pre actions in
+    let+ () = CompRes.appendv actions in
     CompRes.return t
 
 let transition_to_follower t =
@@ -416,17 +418,17 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
   | (`RRequestVoteResponse {term; _} as event), _
   | (`RAppendEntries {term; _} as event), _
   | (`RAppendEntiresResponse {term; _} as event), _
-    when Int.(t.current_term < term) ->
-      let+ t = update_current_term term t in
+    when Int.(S.get_current_term t.store < term) ->
+      let t = A.map store t ~f:(S.update_term ~term) in
       let+ t = transition_to_follower t in
       advance_raw t event
-  | `RRequestVote msg, _ when Int.(msg.term < t.current_term) ->
+  | `RRequestVote msg, _ when Int.(msg.term < S.get_current_term t.store) ->
       let+ () =
-        CompRes.append_post
+        CompRes.append
         @@ `SendRequestVoteResponse
              ( msg.src
              , { src= t.config.node_id
-               ; term= t.current_term
+               ; term= S.get_current_term t.store
                ; vote_granted= false
                ; entries= []
                ; start_index= Int64.(msg.leader_commit + one) } )
@@ -434,15 +436,15 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       CompRes.return t
   | `RRequestVote msg, _ ->
       let+ () =
-        CompRes.append_post
+        CompRes.append
         @@
         let entries =
-          L.entries_after_inc t.log Int64.(msg.leader_commit + one)
+          S.entries_after_inc t.store Int64.(msg.leader_commit + one)
         in
         `SendRequestVoteResponse
           ( msg.src
           , { src= t.config.node_id
-            ; term= t.current_term
+            ; term= S.get_current_term t.store
             ; vote_granted= true
             ; entries
             ; start_index= Int64.(msg.leader_commit + one) } )
@@ -456,7 +458,7 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       in
       CompRes.return t
   | `RRequestVoteResponse msg, Candidate s
-    when Int.(msg.term = t.current_term) && msg.vote_granted -> (
+    when Int.(msg.term = S.get_current_term t.store) && msg.vote_granted -> (
     match U.Quorum.add msg.src s.quorum with
     | Error `AlreadyInList ->
         CompRes.return t
@@ -496,12 +498,11 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       let+ t = ReplicationSM.recv_append_entries_response t msg in
       check_commit_index t
   | `Commands cs, Leader _ ->
-      let cs = List.filter cs ~f:(fun cmd -> not @@ L.id_in_log t.log cmd.id) in
-      let log, ops = L.addv cs t.log t.current_term in
-      let+ t =
-        Ok
-          ( {t with log}
-          , (List.map ops ~f:(fun op -> log_op_to_action op), false, []) )
+      let cmds =
+        List.filter cs ~f:(fun cmd -> not @@ S.mem_id t.store cmd.id)
+      in
+      let t =
+        A.map store t ~f:(S.add_cmds ~cmds ~term:(S.get_current_term t.store))
       in
       let+ t = check_commit_index t in
       let+ () =
@@ -510,38 +511,39 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       in
       CompRes.return t
   | `Commands cs, _ ->
-      let+ () = CompRes.append_pre (`Unapplied cs) in
+      let+ () = CompRes.append (`Unapplied cs) in
       CompRes.return t
+  | `Syncd index, _ ->
+      let+ t = ReplicationSM.recv_syncd t index in
+      check_commit_index t
+
+let is_leader (t : t) =
+  match t.node_state with
+  | Leader _ ->
+      Some (S.get_current_term t.store)
+  | _ ->
+      None
+
+let get_max_index (t : t) = S.get_max_index t.store
+
+let get_term (t : t) = S.get_current_term t.store
+
+let pop_store (t : t) = ({t with store= S.reset_ops t.store}, t.store)
 
 let advance t event : (t, 'b) CompRes.t =
   [%log.debug logger "Advancing" ~event:(Fmt.str "%a" pp_event event)] ;
-  let* t, (pre, sync, post) = advance_raw t event in
-  let actions =
-    if not @@ List.is_empty post then (pre, true, post) else (pre, sync, post)
-  in
-  let pre, do_sync, post = actions in
-  [%log.debug
-    logger "Returning actions:"
-      ~pre:(Fmt.str "%a" (Fmt.list pp_action) pre : string)
-      (do_sync : bool)
-      ~post:(Fmt.str "%a" (Fmt.list pp_action) post : string)] ;
-  Ok (t, actions)
+  let* t, actions = advance_raw t event in
+  [%log.debug logger "Returning actions:" (actions : actions)] ;
+  let is_leader = Option.is_some (is_leader t) in
+  Ok (t, {actions with nonblock_sync= actions.nonblock_sync || is_leader})
 
-let is_leader t =
-  match t.node_state with Leader _ -> Some t.current_term | _ -> None
-
-let get_log (t : t) = t.log
-
-let get_max_index (t : t) = L.get_max_index t.log
-
-let get_term (t : t) = t.current_term
-
-let create_node config log current_term =
+let create_node config store =
   [%log.info
-    logger "Creating new node" ~config:(config : config) (current_term : term)] ;
+    logger "Creating new node"
+      ~config:(config : config)
+      (S.get_current_term store : term)] ;
   { config
-  ; log
-  ; current_term
+  ; store
   ; commit_index= Int64.zero
   ; node_state= Follower {heartbeat= config.election_timeout} }
 
@@ -555,9 +557,9 @@ module Test = struct
 
   let transition_to_follower = transition_to_follower
 
-  let advance = advance
-
   let get_node_state t = t.node_state
 
   let get_commit_index t = t.commit_index
+
+  let get_store t = t.store
 end

@@ -4,13 +4,11 @@ open! Ppx_log_async
 module P = Paxos_core
 module O = Owal
 module H = Hashtbl
-module L = Types.Wal.Log
-module T = Types.Wal.Term
+module IS = Types.IStorage
+module MS = Types.MutableStorage (IS)
 module CH = Client_handler
 open Types
 open Utils
-
-let debug_no_sync = false
 
 let logger =
   let open Async_unix.Log in
@@ -22,9 +20,10 @@ type t =
   { mutable core: P.t
   ; event_queue: P.event rd_wr_pipe
   ; tick_queue: [`Tick] rd_wr_pipe
+  ; datasync_queue: log_index rd_wr_pipe
   ; external_server: CH.Connection.t
   ; internal_server: (Socket.Address.Inet.t, term) Tcp.Server.t
-  ; wal: Wal.t
+  ; store: MS.t
   ; mutable last_applied: log_index
   ; conns: (int, Async_rpc_kernel.Persistent_connection.Rpc.t) H.t
   ; state_machine: state_machine }
@@ -45,7 +44,8 @@ let rec advance_state_machine t = function
           ~to_:(commit_index : log_index)] ;
       let index = Int64.(t.last_applied + one) in
       t.last_applied <- index ;
-      let entry = L.get_exn (P.get_log t.core) index in
+      (* This can't throw an error since there are no holes in the log (<= commit index) *)
+      let entry = IS.get_index (MS.get_state t.store) index |> Result.ok_exn in
       let result = update_state_machine t.state_machine entry.command in
       return_result t entry.command.id (Ok result) ;
       advance_state_machine t commit_index
@@ -72,41 +72,44 @@ let send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
   | None ->
       upon connected handler
 
-let do_pre t pre =
-  List.iter pre ~f:(function
-    | `PersistantChange (`Log op) ->
-        Wal.write t.wal (Log op)
-    | `PersistantChange (`Term op) ->
-        Wal.write t.wal (Term op)
-    | `SendRequestVote (id, rv) ->
-        send t id Types.RPCs.request_vote rv
-    | `SendAppendEntries (id, ae) ->
-        send t id Types.RPCs.append_entries ae
-    | `Unapplied _cmds ->
-        ())
+let do_action t (act : P.action) =
+  match act with
+  | `SendRequestVote (id, rv) ->
+      send t id Types.RPCs.request_vote rv
+  | `SendAppendEntries (id, ae) ->
+      send t id Types.RPCs.append_entries ae
+  | `Unapplied cmds ->
+      List.iter cmds ~f:(fun cmd -> return_result t cmd.id (Error `Unapplied))
+  | `CommitIndexUpdate index ->
+      advance_state_machine t index
+  | `SendRequestVoteResponse (id, rvr) ->
+      send t id Types.RPCs.request_vote_response rvr
+  | `SendAppendEntriesResponse (id, aer) ->
+      send t id Types.RPCs.append_entries_response aer
 
-let do_post t post =
-  List.iter post ~f:(function
-    | `CommitIndexUpdate index ->
-        advance_state_machine t index
-    | `SendRequestVoteResponse (id, rvr) ->
-        send t id Types.RPCs.request_vote_response rvr
-    | `SendAppendEntriesResponse (id, aer) ->
-        send t id Types.RPCs.append_entries_response aer)
+let datasync =
+  let sequencer = Throttle.Sequencer.create () in
+  fun t ->
+    Throttle.enqueue sequencer (fun () ->
+        let%bind sync_index = MS.datasync t.store in
+        Pipe.write t.datasync_queue.wr sync_index)
 
-let do_actions t ((pre, do_sync, post) : P.action_sequence) =
-  do_pre t pre ;
-  match do_sync with
-  | true ->
-      let%map () = Wal.datasync t.wal in
-      do_post t post
-  | false ->
-      do_post t post |> return
-
-let advance_wrapper t event =
+let do_advance t event =
   let core, actions = P.advance t.core event |> get_ok in
+  let core, store = P.pop_store core in
   t.core <- core ;
-  actions
+  match MS.update t.store store with
+  | `SyncPossible when actions.nonblock_sync ->
+      datasync t |> Deferred.don't_wait_for ;
+      List.iter actions.acts ~f:(do_action t) ;
+      Deferred.unit
+  | `SyncPossible ->
+      let%bind () = datasync t in
+      List.iter actions.acts ~f:(do_action t) ;
+      Deferred.unit
+  | `NoSync ->
+      List.iter actions.acts ~f:(do_action t) ;
+      Deferred.unit
 
 let server_impls =
   Rpc.Implementations.create_exn ~on_unknown_rpc:`Continue
@@ -120,51 +123,66 @@ let server_impls =
       ; Rpc.One_way.implement RPCs.append_entries_response (fun q aer ->
             Pipe.write_without_pushback q (`RAppendEntiresResponse aer)) ]
 
-let handle_ev_q t window_size =
+let handle_ev_q t _window_size =
   let request_batch_pipe =
     Pipe.unfold ~init:() ~f:(fun () ->
         let%bind batch = get_request_batch t in
         return (Some (batch, ())))
   in
-  let construct_choices () =
-    let tickc = 
+  let construct_choices () :
+      [`Event of P.event | `Eof of string] Deferred.Choice.t list =
+    let datasync_queue =
+      let read =
+        Pipe.read_choice_single_consumer_exn t.datasync_queue.rd [%here]
+      in
+      Deferred.Choice.map read ~f:(function
+        | `Eof ->
+            `Eof "datasync"
+        | `Ok idx ->
+            `Event (`Syncd idx))
+    in
+    let tickc =
       let read = Pipe.read_choice_single_consumer_exn t.tick_queue.rd [%here] in
-      Deferred.Choice.map read ~f:(function `Eof -> `Eof | `Ok `Tick -> `Tick)
-    in 
-    let evc = 
+      Deferred.Choice.map read ~f:(function
+        | `Eof ->
+            `Eof "tick"
+        | `Ok `Tick ->
+            `Event `Tick)
+    in
+    let evc =
       let read =
         Pipe.read_choice_single_consumer_exn t.event_queue.rd [%here]
       in
-      Deferred.Choice.map read ~f:(function `Eof -> `Eof | `Ok v -> `Event v)
-    in 
-    let batchc = 
+      Deferred.Choice.map read ~f:(function
+        | `Eof ->
+            `Eof "event"
+        | `Ok v ->
+            `Event v)
+    in
+    let batchc =
       let read =
         Pipe.read_choice_single_consumer_exn request_batch_pipe [%here]
       in
-      Deferred.Choice.map read ~f:(function `Eof -> `Eof | `Ok v -> `Batch v)
-    in 
-    [tickc; evc; batchc]
+      Deferred.Choice.map read ~f:(function
+        | `Eof ->
+            `Eof "client-batching"
+        | `Ok v ->
+            `Event (`Commands v))
+    in
+    [datasync_queue; tickc; evc; batchc]
   in
   let rec loop () =
     let run_queues () =
       match%bind choose @@ construct_choices () with
       | `Event e ->
-          e |> advance_wrapper t |> do_actions t
-      | `Batch batch ->
-          let batch_size = List.length batch in
-          [%log.debug logger (batch_size : int)] ;
-          let ((pre, _, _) as actions) = advance_wrapper t (`Commands batch) in
-          let unapplied =
-            List.filter_map pre ~f:(function
-              | `Unapplied _ as v ->
-                  Some v
-              | _ ->
-                  None)
+          do_advance t e
+      | `Eof queue ->
+          let message =
+            [%message "A queue unexpectedly closed" (queue : string)]
+            |> Sexp.to_string_hum
           in
-          List.iter unapplied ~f:(fun (`Unapplied cmds) ->
-              List.iter cmds ~f:(fun cmd ->
-                  return_result t cmd.id (Error `Unapplied))) ;
-          do_actions t actions
+          [%log.error logger message] ;
+          raise (Invalid_argument message)
     in
     let%bind () = run_queues () in
     loop ()
@@ -190,23 +208,28 @@ let create ~node_id ~node_list ~datadir ~external_port ~internal_port
   in
   let config =
     let num_nodes = List.length node_list in
-    let phase1majority = (num_nodes / 2) + 1 in
-    let phase2majority = (num_nodes / 2) + 1 in
+    let phase1quorum = (num_nodes / 2) + 1 in
+    let phase2quorum = (num_nodes / 2) + 1 in
     let other_nodes = other_node_list |> List.map ~f:fst in
     P.
-      { phase1majority
-      ; phase2majority
+      { phase1quorum
+      ; phase2quorum
       ; num_nodes
       ; other_nodes
       ; node_id
       ; election_timeout }
   in
-  let%bind wal, {term; log} = Wal.of_path datadir in
-  let core = P.create_node config log term in
+  let%bind store = MS.of_path datadir in
+  let core = P.create_node config (MS.get_state store) in
   let conns =
     node_list
     |> List.map ~f:(fun (id, addr) -> (id, connect_persist addr))
     |> H.of_alist_exn (module Int)
+  in
+  let _conn_state =
+    H.iteri conns ~f:(fun ~key:id ~data:conn ->
+        upon (Async_rpc_kernel.Persistent_connection.Rpc.connected conn)
+          (fun _ -> [%log.info logger "Connected to other node" (id : int)]))
   in
   let state_machine = create_state_machine () in
   let event_queue =
@@ -214,6 +237,10 @@ let create ~node_id ~node_list ~datadir ~external_port ~internal_port
     {rd; wr}
   in
   let tick_queue =
+    let rd, wr = Pipe.create () in
+    {rd; wr}
+  in
+  let datasync_queue =
     let rd, wr = Pipe.create () in
     {rd; wr}
   in
@@ -236,9 +263,10 @@ let create ~node_id ~node_list ~datadir ~external_port ~internal_port
     { core
     ; event_queue
     ; tick_queue
+    ; datasync_queue
     ; external_server
     ; internal_server
-    ; wal
+    ; store
     ; last_applied= Int64.zero
     ; conns
     ; state_machine }
