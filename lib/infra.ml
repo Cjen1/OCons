@@ -55,20 +55,16 @@ let rec advance_state_machine t = function
 let get_ok v =
   match v with Error (`Msg s) -> raise @@ Invalid_argument s | Ok v -> v
 
-let short_circuit f p =
-  match Deferred.peek p with Some v -> f v | None -> upon p f
-
 let send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
  fun t target rpc msg ->
   let conn = H.find_exn t.conns target in
-  let handler conn =
+  match Async_rpc_kernel.Persistent_connection.Rpc.current_connection conn with
+  | None -> ()
+  | Some conn -> 
     match Rpc.One_way.dispatch' rpc conn msg with
     | Ok () -> ()
     | Error e ->
         Async_rpc_kernel.Rpc_error.raise e (Info.of_string "send request")
-  in
-  short_circuit handler
-    (Async_rpc_kernel.Persistent_connection.Rpc.connected conn)
 
 let do_action t (act : P.action) =
   match act with
