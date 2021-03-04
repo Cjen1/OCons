@@ -39,6 +39,10 @@ let run_ts ts =
   let%bind res = res |> List.rev |> Deferred.List.all in
   return res
 
+let get_not_failure r = match%map r with
+  | O.Types.Failure -> raise @@ Failure "Got failure from operation"
+  | _ -> r
+
 let run_latencies throughput n ps =
   Log.info (fun m -> m "Setting up latency test\n") ;
   let node_list =
@@ -46,7 +50,7 @@ let run_latencies throughput n ps =
   in
   let client = O.Client.new_client (List.map node_list ~f:snd) in
   let test = Bytes.of_string "test" in
-  let%bind _ = O.Client.op_write client ~k:test ~v:test in
+  let%bind _ = O.Client.op_write client ~k:test ~v:test |> get_not_failure in
   let period = Float.(1. / throughput) in
   let start = Time.now () in
   let start = Time.(add start Span.(of_ms 500.)) in
@@ -58,7 +62,7 @@ let run_latencies throughput n ps =
           let st =
             Time_ns.now () |> Time_ns.to_span_since_epoch |> Time_ns.Span.to_sec
           in
-          let%bind _ = O.Client.op_write client ~k:test ~v:test in
+          let%bind _ = O.Client.op_write client ~k:test ~v:test |> get_not_failure in
           let ed =
             Time_ns.now () |> Time_ns.to_span_since_epoch |> Time_ns.Span.to_sec
           in
