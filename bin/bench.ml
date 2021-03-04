@@ -36,8 +36,8 @@ let run_ts ts =
         upon p (printi i) ;
         return (p :: acc))
   in
-  print_endline "" ;
-  res |> List.rev |> Deferred.List.all
+  let%bind res = res |> List.rev |> Deferred.List.all in
+  return res
 
 let run_latencies throughput n ps =
   Log.info (fun m -> m "Setting up latency test\n") ;
@@ -95,6 +95,7 @@ let main target_throughput n output portss =
     let iter ports =
       let jsonpath = match output with None -> "data.json" | Some s -> s in
       let%bind res = run_latencies target_throughput n ports in
+      Log.info (fun m -> m "");
       Log.info (fun m -> m "%a\n" pp_stats res) ;
       let json = test_res_to_yojson res in
       Yojson.Safe.to_file jsonpath json ;

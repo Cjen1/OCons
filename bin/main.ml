@@ -60,7 +60,10 @@ let command =
         Infra.create ~node_id ~node_list ~datadir ~external_port ~internal_port
           ~election_timeout ~tick_speed ~batch_size ~batch_timeout
       in
-      Deferred.never ())
+      let i = Ivar.create () in
+      Signal.handle Signal.terminating ~f:(fun _ -> Ivar.fill i ());
+      Ivar.read i
+      )
 
 let () =
   Fmt_tty.setup_std_outputs () ;

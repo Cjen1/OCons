@@ -1,0 +1,5 @@
+(executables 
+  (names micro_bench)
+  (libraries ppx_jane core shexp.process angstrom fmt)
+  (preprocess (pps ppx_jane -allow-unannotated-ignores))
+  )
