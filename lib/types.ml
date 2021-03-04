@@ -69,6 +69,7 @@ module ILog = struct
   module IdSet = Set.Make (Id)
 
   module I = struct
+    (* store is in newest to oldest order*)
     type t = {store: log_entry list; command_set: IdSet.t; length: int64}
     [@@deriving sexp, accessors, compare]
 

@@ -71,7 +71,7 @@ module CompRes = struct
   let list_fold ls ~init ~f : ('a, 'b) t =
     List.fold ls ~init:(return init) ~f:(fun acc v ->
         let+ acc = acc in
-        f acc v)
+        f acc v )
 
   let list_iter ls ~f : (unit, 'a) t =
     list_fold ls ~init:() ~f:(fun () v -> f v)
@@ -179,6 +179,33 @@ module ReplicationSM = struct
      ==> In case of missing log entry a failure will be sent
   *)
 
+  let send_append_entries ?(force = false) (t : t) dst =
+    match t.node_state with
+    | Leader s -> (
+        let next_index = Map.find_exn s.next_index dst in
+        let prev_log_index = Int64.(next_index - one) in
+        let entries = S.entries_after_inc t.store next_index in
+        let entries_length = List.length entries |> Int64.of_int in
+        match entries with
+        | [] when not force ->
+            CompRes.return ()
+        | _ ->
+            let term = S.get_current_term t.store in
+            let prev_log_term = S.get_term_exn t.store prev_log_index in
+            let leader_commit = t.commit_index in
+            let res =
+              { src= t.config.node_id
+              ; term
+              ; prev_log_index
+              ; prev_log_term
+              ; entries
+              ; entries_length
+              ; leader_commit }
+            in
+            CompRes.append (`SendAppendEntries (dst, res)) )
+    | _ ->
+        CompRes.return ()
+
   let recv_append_entries (t : t) (msg : append_entries) =
     (* If we fail we return the latest point an error occurred (that we can tell) *)
     let send t success =
@@ -206,7 +233,7 @@ module ReplicationSM = struct
             ~f:
               (S.add_entries_remove_conflicts
                  ~start_index:Int64.(msg.prev_log_index + one)
-                 ~entries:msg.entries)
+                 ~entries:msg.entries )
         in
         let match_index = Int64.(msg.prev_log_index + msg.entries_length) in
         let commit_index =
@@ -237,34 +264,6 @@ module ReplicationSM = struct
         let+ () = send t (Ok match_index) in
         CompRes.return t
 
-  let send_append_entries ?(force = false) (t : t) dst =
-    match t.node_state with
-    | Leader s -> (
-        let next_index = Map.find_exn s.next_index dst in
-        let prev_log_index = Int64.(next_index - one) in
-        let entries, entries_length =
-          S.entries_after_inc_size t.store next_index
-        in
-        match entries with
-        | [] when not force ->
-            CompRes.return ()
-        | _ ->
-            let term = S.get_current_term t.store in
-            let prev_log_term = S.get_term_exn t.store prev_log_index in
-            let leader_commit = t.commit_index in
-            let res =
-              { src= t.config.node_id
-              ; term
-              ; prev_log_index
-              ; prev_log_term
-              ; entries
-              ; entries_length
-              ; leader_commit }
-            in
-            CompRes.append (`SendAppendEntries (dst, res)) )
-    | _ ->
-        CompRes.return ()
-
   let recv_append_entries_response (t : t) msg =
     let+ t =
       match (t.node_state, msg.success) with
@@ -275,7 +274,7 @@ module ReplicationSM = struct
               | None ->
                   remote_match_index
               | Some mi ->
-                  Int64.max mi remote_match_index)
+                  Int64.max mi remote_match_index )
           in
           let updated_match_index = Map.find_exn match_index msg.src in
           let next_index =
@@ -283,7 +282,7 @@ module ReplicationSM = struct
               | None ->
                   Int64.(updated_match_index + one)
               | Some ni ->
-                  Int64.(max ni (updated_match_index + one)))
+                  Int64.(max ni (updated_match_index + one)) )
           in
           let node_state = Leader {s with match_index; next_index} in
           CompRes.return {t with node_state}
@@ -303,21 +302,6 @@ module ReplicationSM = struct
     (* Send any remaining entries / Fixed entries *)
     let+ () = send_append_entries t msg.src in
     CompRes.return t
-
-  let recv_syncd (t : t) index =
-    match t.node_state with
-    | Leader s ->
-        let match_index =
-          Map.update s.match_index t.config.node_id ~f:(function
-            | None ->
-                index
-            | Some mi ->
-                Int64.max mi index)
-        in
-        let node_state = Leader {s with match_index} in
-        CompRes.return {t with node_state}
-    | _ ->
-        CompRes.return t
 end
 
 let transition_to_leader t =
@@ -338,7 +322,7 @@ let transition_to_leader t =
           ~init:(IdMap.empty, IdMap.empty) ~f:(fun (mi, ni) id ->
             let mi = Map.set mi ~key:id ~data:Int64.zero in
             let ni = Map.set ni ~key:id ~data:Int64.(t.commit_index + one) in
-            (mi, ni))
+            (mi, ni) )
       in
       let node_state = Leader {match_index; next_index; heartbeat= 0} in
       let t = {t with node_state} in
@@ -385,7 +369,7 @@ let transition_to_candidate t =
             ( node_id
             , { src= t.config.node_id
               ; term= S.get_current_term t.store
-              ; leader_commit= t.commit_index } ))
+              ; leader_commit= t.commit_index } ) )
     in
     let+ () = CompRes.appendv actions in
     CompRes.return t
@@ -394,10 +378,25 @@ let transition_to_follower t =
   [%log.info logger "Transition to Follower"] ;
   CompRes.return {t with node_state= Follower {heartbeat= 0}}
 
+let recv_syncd (t : t) index =
+  match t.node_state with
+  | Leader s ->
+      let match_index =
+        Map.update s.match_index t.config.node_id ~f:(function
+          | None ->
+              index
+          | Some mi ->
+              Int64.max mi index )
+      in
+      let node_state = Leader {s with match_index} in
+      CompRes.return {t with node_state}
+  | _ ->
+      CompRes.return t
+
 let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
   match (event, t.node_state) with
   | `Tick, Follower {heartbeat} when heartbeat >= t.config.election_timeout ->
-      [%log.debug logger "Election timeout"] ; transition_to_candidate t
+      [%log.info logger "Election timeout"] ; transition_to_candidate t
   | `Tick, Follower {heartbeat} ->
       let new_heartbeat = heartbeat + 1 in
       [%log.debug
@@ -514,7 +513,7 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       let+ () = CompRes.append (`Unapplied cs) in
       CompRes.return t
   | `Syncd index, _ ->
-      let+ t = ReplicationSM.recv_syncd t index in
+      let+ t = recv_syncd t index in
       check_commit_index t
 
 let is_leader (t : t) =
@@ -531,17 +530,12 @@ let get_term (t : t) = S.get_current_term t.store
 let pop_store (t : t) = ({t with store= S.reset_ops t.store}, t.store)
 
 let advance t event : (t, 'b) CompRes.t =
-  [%log.debug logger "Advancing" ~event:(Fmt.str "%a" pp_event event)] ;
   let* t, actions = advance_raw t event in
-  [%log.debug logger "Returning actions:" (actions : actions)] ;
   let is_leader = Option.is_some (is_leader t) in
   Ok (t, {actions with nonblock_sync= actions.nonblock_sync || is_leader})
 
 let create_node config store =
-  [%log.info
-    logger "Creating new node"
-      ~config:(config : config)
-      (S.get_current_term store : term)] ;
+  [%log.info logger "Creating new node" ~config:(config : config)] ;
   { config
   ; store
   ; commit_index= Int64.zero

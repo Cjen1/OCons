@@ -89,6 +89,7 @@ module T = struct
       let%bind (_ : (Socket.Address.Inet.t, int) Tcp.Server.t) =
         Tcp.Server.create (Tcp.Where_to_listen.of_port external_port)
           ~on_handler_error (fun _addr reader writer ->
+              [%log.global.debug "Client connected"];
             Rpc.Connection.server_with_close reader writer ~implementations
               ~connection_state:(fun _ -> t)
               ~on_handshake_error:`Ignore)
