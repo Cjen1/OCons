@@ -24,6 +24,7 @@ module T = struct
 
   type 'a functions =
     { get_batch: ('a, unit, request_batch) Function.t
+    ; batch_available_watch: ('a, unit, unit) Function.t
     ; return_result: ('a, return_result_t, unit) Function.t }
 
   module Worker_state = struct
@@ -38,6 +39,7 @@ module T = struct
       { client_ivars: (command_id, client_response Ivar.t list) H.t
       ; client_results: (command_id, op_result) H.t
       ; cr_pipe: client_request rd_wr_pipe
+      ; cr_batch_pipe: client_request list rd_wr_pipe
       ; batch_size: int
       ; batch_timeout: Time.Span.t }
   end
@@ -65,16 +67,65 @@ module T = struct
                 Deferred.create (fun i ->
                     [%log.global.debug "Adding to pipe" (cr.id : Id.t)] ;
                     H.add_multi t.client_ivars ~key:cr.id ~data:i ;
-                    Pipe.write_without_pushback t.cr_pipe.wr cr)) ]
+                    Pipe.write_without_pushback t.cr_pipe.wr cr ) ) ]
+
+    let some_or_default v d = match v with Some v -> v | None -> d
+
+    let get_batched_pipe {rd; _} batch_size batch_timeout =
+      let output =
+        let rd, wr = Pipe.create ~info:[%message "cr_batch_pipe"] () in
+        {rd; wr}
+      in
+      let rec loop batch_state =
+        let read_pipe ?timeout q size =
+          match%bind Pipe.read' ~max_queue_length:size rd with
+          | `Eof ->
+              [%log.global.error "Client request pipe unexpectedly closed"] ;
+              assert false
+          | `Ok q' -> (
+              let q = Queue.fold q' ~init:q ~f:Fqueue.enqueue in
+              match () with
+              | () when Fqueue.length q < batch_size ->
+                  let timeout = some_or_default timeout (after batch_timeout) in
+                  return @@ `Partial (q, timeout)
+              | () ->
+                  Pipe.write_without_pushback output.wr (Fqueue.to_list q) ;
+                  return `Empty )
+        in
+        match batch_state with
+        | `Empty ->
+            read_pipe Fqueue.empty batch_size
+        | `Partial (q, timeout) -> (
+            let timeout_choice = choice timeout (fun () -> `Timeout) in
+            let next_segment_choice =
+              choice (Pipe.values_available rd) (fun _ -> `ValuesAvailable)
+            in
+            let%bind enabled =
+              Deferred.enabled [next_segment_choice; timeout_choice]
+            in
+            match enabled () |> List.hd_exn with
+            | `Timeout ->
+                Pipe.write_without_pushback output.wr (Fqueue.to_list q) ;
+                loop `Empty
+            | `ValuesAvailable ->
+                read_pipe q (batch_size - Fqueue.length q) )
+      in
+      Deferred.forever `Empty loop ;
+      output
 
     let init_worker_state {external_port; batch_size; batch_timeout; log_level}
         =
       Log.Global.set_level log_level ;
-      let rd, wr = Pipe.create ~info:[%message "cr_pipe"] () in
+      let cr_pipe =
+        let rd, wr = Pipe.create ~info:[%message "cr_pipe"] () in
+        {rd; wr}
+      in
+      let cr_batch_pipe = get_batched_pipe cr_pipe batch_size batch_timeout in
       let t =
         { client_ivars= H.create (module Id)
         ; client_results= H.create (module Id)
-        ; cr_pipe= {rd; wr}
+        ; cr_pipe
+        ; cr_batch_pipe
         ; batch_size
         ; batch_timeout }
       in
@@ -89,101 +140,40 @@ module T = struct
       let%bind (_ : (Socket.Address.Inet.t, int) Tcp.Server.t) =
         Tcp.Server.create (Tcp.Where_to_listen.of_port external_port)
           ~on_handler_error (fun _addr reader writer ->
-              [%log.global.debug "Client connected"];
+            [%log.global.info "Client connected"] ;
             Rpc.Connection.server_with_close reader writer ~implementations
               ~connection_state:(fun _ -> t)
-              ~on_handshake_error:`Ignore)
+              ~on_handshake_error:`Ignore )
       in
       return t
 
     let init_connection_state ~connection:_ ~worker_state:_ () = Deferred.unit
 
+    let batch_available_watch_fn t =
+      [%log.global.debug "Checking batch availability"] ;
+      match%bind Pipe.values_available t.cr_batch_pipe.rd with
+      | `Eof ->
+          [%log.global.error "Client request pipe unexpectedly closed"] ;
+          assert false
+      | `Ok ->
+          Deferred.unit
+
+    let batch_available_watch =
+      let f ~worker_state:t ~conn_state:() () = batch_available_watch_fn t in
+      C.create_rpc ~name:"batch_available" ~f ~bin_input:bin_unit
+        ~bin_output:bin_unit ()
+
     let get_batch_fn t =
       [%log.global.debug "Getting batch"] ;
-      match%bind Pipe.read t.cr_pipe.rd with
+      match%bind Pipe.read t.cr_batch_pipe.rd with
       | `Eof ->
-          [%log.global.debug "Empty batch"] ;
+          [%log.global.error "Client request pipe unexpectedly closed"] ;
           assert false
-      | `Ok fst ->
-          [%log.global.debug "Got first element, attempting to get more"] ;
-          let batch = ref [fst] in
-          let cutoff = ref false in
-          let rec loop = function
-            | 0 ->
-                Deferred.unit
-            | rem -> (
-                let%bind (_ : [`Eof | `Ok]) =
-                  Pipe.values_available t.cr_pipe.rd
-                in
-                match () with
-                | () when !cutoff ->
-                    Deferred.unit
-                | () -> (
-                  match Pipe.read_now' ~max_queue_length:rem t.cr_pipe.rd with
-                  | `Eof | `Nothing_available ->
-                      assert false
-                  | `Ok q ->
-                      Queue.iter q ~f:(fun v -> batch := v :: !batch) ;
-                      loop (rem - Queue.length q) ) )
-          in
-          let batch_gather = loop (t.batch_size - 1) in
-          let batch_timout = after t.batch_timeout in
-          let%bind () =
-            choose
-              [ choice batch_gather (fun () ->
-                    [%log.global.debug "Filled batch"])
-              ; choice batch_timout (fun () ->
-                    [%log.global.debug "Batch timed out"]) ]
-          in
-          cutoff := true ;
-          return !batch
-
-    let%expect_test "correct_batching" =
-      let%bind state =
-        init_worker_state
-          { external_port= 12345
-          ; batch_size= 10
-          ; batch_timeout= Time.Span.of_sec 0.1
-          ; log_level= `Info }
-      in
-      let command = Command.{op= Read ""; id= Id.create ()} in
-      Pipe.write_without_pushback state.cr_pipe.wr command ;
-      let%bind batch = get_batch_fn state in
-      [%message (batch : command list) ~batch_size:(List.length batch : int)]
-      |> Sexp.to_string_hum |> print_endline ;
-      let%bind () =
-        [%expect {| ((batch (((op (Read "")) (id 0)))) (batch_size 1)) |}]
-      in
-      Pipe.write_without_pushback state.cr_pipe.wr command ;
-      let%bind batch = get_batch_fn state in
-      [%message (batch : command list) ~batch_size:(List.length batch : int)]
-      |> Sexp.to_string_hum |> print_endline ;
-      let%bind () =
-        [%expect {| ((batch (((op (Read "")) (id 0)))) (batch_size 1)) |}]
-      in
-      for _ = 0 to 20 do
-        Pipe.write_without_pushback state.cr_pipe.wr command
-      done ;
-      let%bind batch = get_batch_fn state in
-      [%message (batch : command list) ~batch_size:(List.length batch : int)]
-      |> Sexp.to_string_hum |> print_endline ;
-      let%bind () =
-        [%expect
-          {|
-        ((batch
-          (((op (Read "")) (id 0)) ((op (Read "")) (id 0)) ((op (Read "")) (id 0))
-           ((op (Read "")) (id 0)) ((op (Read "")) (id 0)) ((op (Read "")) (id 0))
-           ((op (Read "")) (id 0)) ((op (Read "")) (id 0)) ((op (Read "")) (id 0))
-           ((op (Read "")) (id 0))))
-         (batch_size 10)) |}]
-      in
-      Deferred.unit
+      | `Ok l ->
+          [%log.global.debug "Got batch"] ; return l
 
     let get_batch =
-      let sequencer = Sequencer.create () in
-      let f ~worker_state:t ~conn_state:() () =
-        Throttle.enqueue sequencer (fun () -> get_batch_fn t)
-      in
+      let f ~worker_state:t ~conn_state:() () = get_batch_fn t in
       C.create_rpc ~name:"get_batch" ~f ~bin_input:bin_unit
         ~bin_output:bin_request_batch ()
 
@@ -197,10 +187,10 @@ module T = struct
               H.set t.client_results ~key:cmd_id ~data:result ) ;
           let ivars = H.find_multi t.client_ivars cmd_id in
           List.iter ivars ~f:(fun i -> Ivar.fill i result) ;
-          H.remove_multi t.client_ivars cmd_id)
+          H.remove_multi t.client_ivars cmd_id )
         ~bin_input:bin_return_result_t ()
 
-    let functions = {get_batch; return_result}
+    let functions = {get_batch; batch_available_watch; return_result}
   end
 end
 

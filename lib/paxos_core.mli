@@ -4,6 +4,9 @@ module S = IStorage
 
 val logger : Async.Log.t
 
+(* More verbose logging for entry and exit of module *)
+val io_logger : Async.Log.t
+
 (** All the events incomming into the advance function *)
 type event =
   [ `Tick

@@ -12,6 +12,12 @@ let logger =
     ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core")])
     ()
 
+let io_logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core_io")])
+    ()
+
 (* R means receiving *)
 type event =
   [ `Tick
@@ -21,6 +27,7 @@ type event =
   | `RAppendEntries of append_entries
   | `RAppendEntiresResponse of append_entries_response
   | `Commands of command list ]
+[@@deriving sexp]
 
 type action =
   [ `Unapplied of command list
@@ -123,11 +130,12 @@ type config =
 [@@deriving sexp]
 
 type node_state =
-  | Follower of {heartbeat: int}
+  | Follower of {timeout: int}
   | Candidate of
       { quorum: node_id U.Quorum.t
       ; entries: log_entry list
-      ; start_index: log_index }
+      ; start_index: log_index
+      ; timeout: int }
   | Leader of
       { match_index: log_index IdMap.t
       ; next_index: log_index IdMap.t
@@ -136,8 +144,8 @@ type node_state =
 
 let pp_node_state f (x : node_state) =
   match x with
-  | Follower {heartbeat} ->
-      Fmt.pf f "Follower(%d)" heartbeat
+  | Follower {timeout} ->
+      Fmt.pf f "Follower(%d)" timeout
   | Candidate _ ->
       Fmt.pf f "Candidate"
   | Leader _ ->
@@ -257,7 +265,7 @@ module ReplicationSM = struct
         let t =
           match t.node_state with
           | Follower _s ->
-              {t with node_state= Follower {heartbeat= 0}}
+              {t with node_state= Follower {timeout= 0}}
           | _ ->
               t
         in
@@ -357,26 +365,29 @@ let transition_to_candidate t =
   in
   let entries = S.entries_after_inc t.store Int64.(t.commit_index + one) in
   let node_state =
-    Candidate {quorum; entries; start_index= Int64.(t.commit_index + one)}
+    Candidate
+      {quorum; entries; start_index= Int64.(t.commit_index + one); timeout= 0}
   in
   let t = {t with node_state} in
   let t = A.map store t ~f:(S.update_term ~term:updated_term) in
-  if U.Quorum.satisified quorum then transition_to_leader t
-  else
-    let actions =
-      List.map t.config.other_nodes ~f:(fun node_id ->
-          `SendRequestVote
-            ( node_id
-            , { src= t.config.node_id
-              ; term= S.get_current_term t.store
-              ; leader_commit= t.commit_index } ) )
-    in
-    let+ () = CompRes.appendv actions in
-    CompRes.return t
+  match U.Quorum.satisified quorum with
+  | true ->
+      transition_to_leader t
+  | false ->
+      let actions =
+        List.map t.config.other_nodes ~f:(fun node_id ->
+            `SendRequestVote
+              ( node_id
+              , { src= t.config.node_id
+                ; term= S.get_current_term t.store
+                ; leader_commit= t.commit_index } ) )
+      in
+      let+ () = CompRes.appendv actions in
+      CompRes.return t
 
 let transition_to_follower t =
   [%log.info logger "Transition to Follower"] ;
-  CompRes.return {t with node_state= Follower {heartbeat= 0}}
+  CompRes.return {t with node_state= Follower {timeout= 0}}
 
 let recv_syncd (t : t) index =
   match t.node_state with
@@ -395,13 +406,20 @@ let recv_syncd (t : t) index =
 
 let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
   match (event, t.node_state) with
-  | `Tick, Follower {heartbeat} when heartbeat >= t.config.election_timeout ->
+  | `Tick, Follower {timeout} when timeout >= t.config.election_timeout ->
       [%log.info logger "Election timeout"] ; transition_to_candidate t
-  | `Tick, Follower {heartbeat} ->
-      let new_heartbeat = heartbeat + 1 in
+  | `Tick, Follower {timeout} ->
+      let new_timeout = timeout + 1 in
+      [%log.debug logger "Tick" ~pre:(timeout : int) ~post:(new_timeout : int)] ;
+      CompRes.return {t with node_state= Follower {timeout= new_timeout}}
+  | `Tick, Candidate {timeout; _} when timeout >= t.config.election_timeout ->
+      [%log.info logger "Election timeout"] ; transition_to_candidate t
+  | `Tick, Candidate state ->
+      let new_timeout = state.timeout + 1 in
       [%log.debug
-        logger "Tick" ~pre:(heartbeat : int) ~post:(new_heartbeat : int)] ;
-      CompRes.return {t with node_state= Follower {heartbeat= new_heartbeat}}
+        logger "Tick" ~pre:(state.timeout : int) ~post:(new_timeout : int)] ;
+      CompRes.return
+        {t with node_state= Candidate {state with timeout= new_timeout}}
   | `Tick, Leader ({heartbeat; _} as s) when heartbeat > 0 ->
       let+ () =
         CompRes.list_iter t.config.other_nodes
@@ -411,8 +429,6 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
   | `Tick, Leader ({heartbeat; _} as s) ->
       CompRes.return
         {t with node_state= Leader {s with heartbeat= heartbeat + 1}}
-  | `Tick, _ ->
-      CompRes.return t
   | (`RRequestVote {term; _} as event), _
   | (`RRequestVoteResponse {term; _} as event), _
   | (`RAppendEntries {term; _} as event), _
@@ -451,7 +467,7 @@ let rec advance_raw t (event : event) : (t, 'b) CompRes.t =
       let t =
         match t.node_state with
         | Follower _s ->
-            {t with node_state= Follower {heartbeat= 0}}
+            {t with node_state= Follower {timeout= 0}}
         | _ ->
             t
       in
@@ -530,16 +546,21 @@ let get_term (t : t) = S.get_current_term t.store
 let pop_store (t : t) = ({t with store= S.reset_ops t.store}, t.store)
 
 let advance t event : (t, 'b) CompRes.t =
+  [%log.debug io_logger "Entry" (event : event)] ;
   let* t, actions = advance_raw t event in
   let is_leader = Option.is_some (is_leader t) in
-  Ok (t, {actions with nonblock_sync= actions.nonblock_sync || is_leader})
+  let actions =
+    {actions with nonblock_sync= actions.nonblock_sync || is_leader}
+  in
+  [%log.debug io_logger "Exit" (actions : actions)] ;
+  Ok (t, actions)
 
 let create_node config store =
   [%log.info logger "Creating new node" ~config:(config : config)] ;
   { config
   ; store
   ; commit_index= Int64.zero
-  ; node_state= Follower {heartbeat= config.election_timeout} }
+  ; node_state= Follower {timeout= config.election_timeout} }
 
 module Test = struct
   module Comp = Comp

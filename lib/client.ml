@@ -43,7 +43,15 @@ let send t op =
     let ivar = Ivar.create () in
     List.iter (p_timeout :: reqs) ~f:(fun p ->
         upon p (function Some v -> Ivar.fill_if_empty ivar v | None -> ()) ) ;
-    Ivar.read ivar
+    let%bind value = Ivar.read ivar in
+    let () =
+      match value with
+      | `Repeat _ ->
+          [%log.debug logger "Timed out repeating" (List.length reqs : int)]
+      | `Finished _ ->
+          ()
+    in
+    return value
   in
   Deferred.repeat_until_finished () retry_loop
 

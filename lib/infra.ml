@@ -26,7 +26,12 @@ type t =
   ; store: MS.t
   ; mutable last_applied: log_index
   ; conns: (int, Async_rpc_kernel.Persistent_connection.Rpc.t) H.t
-  ; state_machine: state_machine }
+  ; state_machine: state_machine
+  ; command_results: (Types.command_id, Types.op_result) H.t }
+
+let batch_available_watch t =
+  CH.Connection.run_exn t.external_server ~f:CH.functions.batch_available_watch
+    ~arg:()
 
 let get_request_batch t =
   CH.Connection.run_exn t.external_server ~f:CH.functions.get_batch ~arg:()
@@ -47,6 +52,7 @@ let rec advance_state_machine t = function
       (* This can't throw an error since there are no holes in the log (<= commit index) *)
       let entry = IS.get_index (MS.get_state t.store) index |> Result.ok_exn in
       let result = update_state_machine t.state_machine entry.command in
+      H.set t.command_results ~key:entry.command.id ~data:result ;
       return_result t entry.command.id (Ok result) ;
       advance_state_machine t commit_index
   | _ ->
@@ -59,12 +65,14 @@ let send : type query. t -> int -> query Rpc.One_way.t -> query -> unit =
  fun t target rpc msg ->
   let conn = H.find_exn t.conns target in
   match Async_rpc_kernel.Persistent_connection.Rpc.current_connection conn with
-  | None -> ()
-  | Some conn -> 
+  | None ->
+      [%log.debug logger "Connection not connected, skipping" (target : int)]
+  | Some conn -> (
     match Rpc.One_way.dispatch' rpc conn msg with
-    | Ok () -> ()
+    | Ok () ->
+        [%log.debug logger "Dispatched successfully" (target : int)]
     | Error e ->
-        Async_rpc_kernel.Rpc_error.raise e (Info.of_string "send request")
+        Async_rpc_kernel.Rpc_error.raise e (Info.of_string "send request") )
 
 let do_action t (act : P.action) =
   match act with
@@ -81,13 +89,18 @@ let do_action t (act : P.action) =
   | `CommitIndexUpdate index ->
       advance_state_machine t index
 
+let datasync_time = Delta_timer.create ~name:"ds_time"
+
 let datasync =
   let sequencer = Throttle.Sequencer.create () in
   fun t ->
-    Throttle.enqueue sequencer (fun () ->
-        let%bind sync_index = MS.datasync t.store in
-        Pipe.write_without_pushback t.datasync_queue.wr sync_index ;
-        Deferred.unit )
+    let%bind () =
+      Throttle.enqueue sequencer (fun () ->
+          let%bind sync_index = MS.datasync t.store in
+          Pipe.write_without_pushback t.datasync_queue.wr sync_index ;
+          Deferred.unit )
+    in
+    Deferred.unit
 
 let do_advance t event =
   let core, actions = P.advance t.core event |> get_ok in
@@ -121,7 +134,11 @@ let server_impls =
 let handle_ev_q t _window_size =
   let request_batch_pipe =
     Pipe.unfold ~init:() ~f:(fun () ->
+        [%log.debug logger "Waiting for batch available"] ;
+        let%bind () = batch_available_watch t in
+        [%log.debug logger "Batch available"] ;
         let%bind batch = get_request_batch t in
+        [%log.debug logger "Got batch"] ;
         return (Some (batch, ())) )
   in
   let construct_choices () :
@@ -169,9 +186,27 @@ let handle_ev_q t _window_size =
   let rec loop () =
     let run_queues () =
       match%bind choose @@ construct_choices () with
+      | `Event (`Commands b) ->
+          [%log.debug logger "got command batch"] ;
+          let fast_return (cmd : command) =
+            match H.find t.command_results cmd.id with
+            | Some res ->
+                [%log.debug
+                  logger
+                    "Client retried request which has already been responded to"] ;
+                CH.Connection.run_exn t.external_server
+                  ~f:CH.functions.return_result ~arg:(cmd.id, Ok res)
+                |> don't_wait_for ;
+                false
+            | None ->
+                true
+          in
+          let b = List.filter b ~f:fast_return in
+          do_advance t (`Commands b)
       | `Event e ->
-          do_advance t e
+          [%log.debug logger "got event"] ; do_advance t e
       | `Eof queue ->
+          [%log.debug logger "Queue unexpectedly closed"] ;
           let message =
             [%message "A queue unexpectedly closed" (queue : string)]
             |> Sexp.to_string_hum
@@ -265,7 +300,8 @@ let create ~node_id ~node_list ~datadir ~external_port ~internal_port
     ; store
     ; last_applied= Int64.zero
     ; conns
-    ; state_machine }
+    ; state_machine
+    ; command_results= H.create (module Types.Id) }
   in
   let log_window = 1 * batch_size in
   don't_wait_for (handle_ev_q t log_window) ;
