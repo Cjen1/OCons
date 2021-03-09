@@ -91,7 +91,7 @@ module ILog = struct
       let removed, store = List.split_n t.store (Int64.to_int_exn drop) in
       let command_set =
         List.fold_left removed ~init:t.command_set ~f:(fun cset entry ->
-            Set.remove cset entry.command.id)
+            Set.remove cset entry.command.id )
       in
       let length = Int64.(max zero (t.length - drop)) in
       {store; command_set; length}
@@ -186,7 +186,7 @@ module ILog = struct
     let t, ops =
       List.fold_left entries_to_add ~init:(t, ops) ~f:(fun (t, ops) v ->
           let t', ops' = apply_wrap t (Add v) in
-          (t', ops' :: ops))
+          (t', ops' :: ops) )
     in
     (t, ops)
 
@@ -196,7 +196,7 @@ module ILog = struct
     List.fold cmds ~init:(t, []) ~f:(fun (t, ops) command ->
         let t, op = add_cmd t command term in
         let ops = op :: ops in
-        (t, ops))
+        (t, ops) )
 end
 
 module ITerm = struct

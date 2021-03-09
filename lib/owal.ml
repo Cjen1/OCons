@@ -146,7 +146,7 @@ module Persistant (P : Persistable) = struct
             | Error `Closed ->
                 assert false
             | Ok () ->
-                return ())
+                return () )
         |> don't_wait_for
     | `Closed ->
         raise Closed
@@ -163,7 +163,7 @@ module Persistant (P : Persistable) = struct
           in
           Ivar.fill ivar () |> return
         in
-        p |> don't_wait_for |> return)
+        p |> don't_wait_for |> return )
     |> don't_wait_for ;
     Ivar.read ivar
 
@@ -182,7 +182,7 @@ module Persistant (P : Persistable) = struct
             U.accumulate t.file_closure_chain curr |> don't_wait_for ;
             let%bind () = U.accumulate t.file_closure_chain next in
             Throttle.kill t.serialisation ;
-            return ())
+            return () )
 
   let of_path ?(file_size = Int64.((of_int 2 ** of_int 20) * of_int 128)) path =
     let%bind _create_dir_if_needed =

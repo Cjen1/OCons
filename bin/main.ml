@@ -44,9 +44,10 @@ let command =
         ; Utils.logger
         ; Owal.logger
         ; Paxos_core.logger
+        ; Paxos_core.io_logger
         ; Client_handler.logger ] ~f:(fun log ->
           Async.Log.set_level log global_level ;
-          Async.Log.set_output log global_output) ;
+          Async.Log.set_output log global_output ) ;
       let tick_speed = Time.Span.of_sec tick_speed in
       let batch_timeout = Time.Span.of_ms batch_timeout in
       let%bind () =
@@ -61,9 +62,8 @@ let command =
           ~election_timeout ~tick_speed ~batch_size ~batch_timeout
       in
       let i = Ivar.create () in
-      Signal.handle Signal.terminating ~f:(fun _ -> Ivar.fill i ());
-      Ivar.read i
-      )
+      Signal.handle Signal.terminating ~f:(fun _ -> Ivar.fill i ()) ;
+      Ivar.read i )
 
 let () =
   Fmt_tty.setup_std_outputs () ;

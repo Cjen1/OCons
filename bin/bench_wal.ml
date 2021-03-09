@@ -63,7 +63,7 @@ let throughput file n write_size =
         let%bind () = T.datasync wal in
         let ed = Time.now () |> Time.to_span_since_epoch |> Time.Span.to_sec in
         Queue.enqueue result_q (start, ed) ;
-        return ())
+        return () )
       stream
   in
   Log.info (fun m -> m "Finished throughput test!\n") ;

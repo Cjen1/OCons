@@ -34,14 +34,17 @@ let run_ts ts =
         let%bind () = at start in
         let p = f () in
         upon p (printi i) ;
-        return (p :: acc))
+        return (p :: acc) )
   in
   let%bind res = res |> List.rev |> Deferred.List.all in
   return res
 
-let get_not_failure r = match%map r with
-  | O.Types.Failure -> raise @@ Failure "Got failure from operation"
-  | _ -> r
+let get_not_failure r =
+  match%map r with
+  | O.Types.Failure ->
+      raise @@ Failure "Got failure from operation"
+  | _ ->
+      r
 
 let run_latencies throughput n ps =
   Log.info (fun m -> m "Setting up latency test\n") ;
@@ -62,13 +65,15 @@ let run_latencies throughput n ps =
           let st =
             Time_ns.now () |> Time_ns.to_span_since_epoch |> Time_ns.Span.to_sec
           in
-          let%bind _ = O.Client.op_write client ~k:test ~v:test |> get_not_failure in
+          let%bind _ =
+            O.Client.op_write client ~k:test ~v:test |> get_not_failure
+          in
           let ed =
             Time_ns.now () |> Time_ns.to_span_since_epoch |> Time_ns.Span.to_sec
           in
           return (st, ed)
         in
-        (f, start))
+        (f, start) )
   in
   let%bind res = run_ts ts in
   let results = Array.of_list res in
@@ -99,7 +104,7 @@ let main target_throughput n output portss =
     let iter ports =
       let jsonpath = match output with None -> "data.json" | Some s -> s in
       let%bind res = run_latencies target_throughput n ports in
-      Log.info (fun m -> m "");
+      Log.info (fun m -> m "") ;
       Log.info (fun m -> m "%a\n" pp_stats res) ;
       let json = test_res_to_yojson res in
       Yojson.Safe.to_file jsonpath json ;

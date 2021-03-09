@@ -61,7 +61,7 @@ module Batcher = struct
       f xs
     in
     create ~f ~dispatch_timeout ~limit:(fun _ ->
-        incr counter ; !counter > limit)
+        incr counter ; !counter > limit )
 end
 
 let connect_persist ?(retry_delay = Time_ns.Span.of_sec 1.) name =
@@ -78,7 +78,7 @@ let connect_persist ?(retry_delay = Time_ns.Span.of_sec 1.) name =
       | Ok v ->
           Ok v |> return
       | Error exn ->
-          Error (Error.of_exn exn) |> return)
+          Error (Error.of_exn exn) |> return )
     (fun () -> Ok server_address |> return)
 
 type 'a rd_wr_pipe = {rd: 'a Pipe.Reader.t; wr: 'a Pipe.Writer.t}

@@ -17,7 +17,8 @@ let put =
     (fun ps k v () ->
       let c = C.new_client ps in
       let%map res = C.op_write c ~k ~v in
-      res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum |> print_endline)
+      res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum |> print_endline
+      )
 
 let get =
   Command.async_spec ~summary:"Get request"
@@ -28,7 +29,8 @@ let get =
     (fun ps k () ->
       let c = C.new_client ps in
       let%map res = C.op_read c k in
-      res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum |> print_endline)
+      res |> [%sexp_of: Types.op_result] |> Sexp.to_string_hum |> print_endline
+      )
 
 let reporter =
   let report src level ~over k msgf =
