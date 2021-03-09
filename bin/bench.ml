@@ -115,6 +115,11 @@ let main target_throughput n output portss =
   Logs.(set_level (Some Info)) ;
   Logs.set_reporter reporter ; perform ()
 
+let log_param =
+  Log_extended.Command.(
+    setup_via_params ~log_to_console_by_default:(Stderr Color)
+      ~log_to_syslog_by_default:false ())
+
 let () =
   Command.async_spec ~summary:"Benchmark for main.ml"
     Command.Spec.(
@@ -123,6 +128,13 @@ let () =
            (optional_with_default 10000 int)
       +> flag "-o" ~doc:" Output file" (optional string)
       +> flag "-p" ~doc:" ports list" (listed sexp)
-      +> flag "-t" ~doc:" Throughput" (optional_with_default 100000. float))
-    (fun n o ps t () -> main t n o ps)
+      +> flag "-t" ~doc:" Throughput" (optional_with_default 100000. float)
+      +> log_param)
+    (fun n o ps t () () ->
+      let global_level = Async.Log.Global.level () in
+      let global_output = Async.Log.Global.get_output () in
+      List.iter [Ocamlpaxos.Client.logger] ~f:(fun log ->
+          Async.Log.set_level log global_level ;
+          Async.Log.set_output log global_output ) ;
+      main t n o ps )
   |> Command.run
