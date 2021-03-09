@@ -18,7 +18,7 @@ module IStorageTest = struct
       |> List.mapi ~f:(fun id (term, key) -> make_entry (id + 1) term key)
     in
     List.fold_left ops ~init:istate ~f:(fun istate entry ->
-        IS.add_entry istate ~entry)
+        IS.add_entry istate ~entry )
 
   let%expect_test "init_log" =
     let istate = IS.init () in
@@ -355,7 +355,7 @@ module MStoreTest = struct
       |> List.mapi ~f:(fun id (term, key) -> make_entry (id + 1) term key)
     in
     List.fold_left ops ~init:istate ~f:(fun istate entry ->
-        IS.add_entry istate ~entry)
+        IS.add_entry istate ~entry )
 
   let%expect_test "end-to-end" =
     let f store =
@@ -422,7 +422,7 @@ module MStoreTest = struct
       let%bind () =
         [%expect
           {|
-        ("([%compare.equal :IS.data]) (IS.get_data istate') (IS.get_data istate'')"
+        ("([%compare.equal : IS.data]) (IS.get_data istate') (IS.get_data istate'')"
          true) |}]
       in
       PS.update store istate' |> ignore ;

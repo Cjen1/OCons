@@ -209,7 +209,7 @@ let%expect_test "loop triple" =
       | `SendRequestVote (dst, rv) when dst = 1 ->
           Some rv
       | _ ->
-          None)
+          None )
   in
   let t1, actions = P.advance t1 (`RRequestVote rv) |> get_ok in
   let t1 = print_state t1 actions in
@@ -229,7 +229,7 @@ let%expect_test "loop triple" =
       | `SendRequestVoteResponse (id, rvr) when id = 2 ->
           Some rvr
       | _ ->
-          None)
+          None )
   in
   let t2, actions = P.advance t2 (`RRequestVoteResponse rvr) |> get_ok in
   let t2 = print_state t2 actions in
@@ -294,7 +294,7 @@ let%expect_test "loop triple" =
       | `SendAppendEntries (id, ae) when id = 1 ->
           Some ae
       | _ ->
-          None)
+          None )
   in
   let t2, actions = P.advance t2 (`Syncd (Int64.of_int 2)) |> get_ok in
   let t2 = print_state t2 actions in
@@ -339,7 +339,7 @@ let%expect_test "loop triple" =
       | `SendAppendEntriesResponse (id, aer) when id = 2 ->
           Some aer
       | _ ->
-          None)
+          None )
   in
   (* In case of full update *)
   let () =

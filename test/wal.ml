@@ -36,7 +36,7 @@ let%expect_test "persist data" =
   let t =
     List.fold_left [1; 2; 3; 4] ~init:t ~f:(fun t i ->
         let op = T_p.Write i in
-        write wal op ; T_p.apply t op)
+        write wal op ; T_p.apply t op )
   in
   let%bind () = datasync wal in
   [%sexp_of: int list] t |> Sexp.to_string_hum |> print_endline ;
