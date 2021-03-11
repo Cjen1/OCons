@@ -71,19 +71,27 @@ val pop_store : t -> t * S.t
 
 (** Module for testing internal state *)
 module Test : sig
-  module Comp : sig
-    type 'a t = 'a * actions
+
+  module State : sig
+    type state = {t : t; a : actions}
+    val empty : t -> state
+  end 
+
+  module StateR : sig
+    type ('a, 'b) t
+    val eval : ('a, 'b) t -> State.state -> ('a * State.state, 'b) result
+    module Let_syntax : sig
+      module Let_syntax : sig
+        val bind : ('a, 'b) t -> f:('a -> ('c, 'b) t) -> ('c, 'b) t
+      end 
+    end 
   end
 
-  module CompRes : sig
-    type ('a, 'b) t = ('a Comp.t, 'b) Result.t
-  end
+  val transition_to_leader : unit -> (unit, [> `Msg of string]) StateR.t
 
-  val transition_to_leader : t -> (t, [> `Msg of string]) CompRes.t
+  val transition_to_candidate : unit -> (unit, [> `Msg of string]) StateR.t
 
-  val transition_to_candidate : t -> (t, [> `Msg of string]) CompRes.t
-
-  val transition_to_follower : t -> (t, [> `Msg of string]) CompRes.t
+  val transition_to_follower : unit -> (unit, [> `Msg of string]) StateR.t
 
   val get_node_state : t -> node_state
 
