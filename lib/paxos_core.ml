@@ -246,6 +246,8 @@ module ReplicationSM = struct
         let prev_log_index = Int64.(next_index - one) in
         let entries = S.entries_after_inc t.store next_index in
         let entries_length = List.length entries |> Int64.of_int in
+        let%bind () = StateR.map_t @@ A.map (node_state @> Leader.next_index) ~f:(Map.set ~key:dst ~data:Int64.(next_index + entries_length)) in
+        let%bind t = StateR.get_t () in
         [%log.debug
           logger (dst : int) (next_index : int64) (entries_length : int64)] ;
         match entries with
