@@ -81,7 +81,7 @@ module T = struct
           match%bind Pipe.read' ~max_queue_length:size rd with
           | `Eof ->
               [%log.global.error "Client request pipe unexpectedly closed"] ;
-              assert false
+              Deferred.never ()
           | `Ok q' -> (
               let q = Queue.fold q' ~init:q ~f:Fqueue.enqueue in
               match () with
@@ -154,7 +154,7 @@ module T = struct
       match%bind Pipe.values_available t.cr_batch_pipe.rd with
       | `Eof ->
           [%log.global.error "Client request pipe unexpectedly closed"] ;
-          assert false
+          Deferred.never ()
       | `Ok ->
           Deferred.unit
 
@@ -168,7 +168,7 @@ module T = struct
       match%bind Pipe.read t.cr_batch_pipe.rd with
       | `Eof ->
           [%log.global.error "Client request pipe unexpectedly closed"] ;
-          assert false
+          Deferred.never ()
       | `Ok l ->
           [%log.global.debug "Got batch"] ; return l
 
@@ -186,7 +186,7 @@ module T = struct
           | Ok result ->
               H.set t.client_results ~key:cmd_id ~data:result ) ;
           let ivars = H.find_multi t.client_ivars cmd_id in
-          List.iter ivars ~f:(fun i -> Ivar.fill i result) ;
+          List.iter ivars ~f:(fun i -> Ivar.fill_if_empty i result) ;
           H.remove_multi t.client_ivars cmd_id )
         ~bin_input:bin_return_result_t ()
 
