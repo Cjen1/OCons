@@ -76,7 +76,7 @@ module T = struct
         let rd, wr = Pipe.create ~info:[%message "cr_batch_pipe"] () in
         {rd; wr}
       in
-      let rec loop batch_state =
+      let loop batch_state =
         let read_pipe ?timeout q size =
           match%bind Pipe.read' ~max_queue_length:size rd with
           | `Eof ->
@@ -106,7 +106,7 @@ module T = struct
             match enabled () |> List.hd_exn with
             | `Timeout ->
                 Pipe.write_without_pushback output.wr (Fqueue.to_list q) ;
-                loop `Empty
+                return `Empty
             | `ValuesAvailable ->
                 read_pipe q (batch_size - Fqueue.length q) )
       in
