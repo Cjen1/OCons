@@ -34,7 +34,8 @@ let batch_available_watch t =
     ~arg:()
 
 let get_request_batch t =
-  CH.Connection.run_exn t.external_server ~f:CH.functions.get_batch ~arg:()
+  let%bind batch, _ = CH.Connection.run_exn t.external_server ~f:CH.functions.get_batch ~arg:() in
+  return batch
 
 let return_result t id res =
   CH.Connection.run_exn t.external_server ~f:CH.functions.return_result

@@ -18,7 +18,7 @@ module T = struct
      We read that batch off of the cr_pipe.
      When a request arrives we put it in that pipe.
   *)
-  type request_batch = client_request list [@@deriving bin_io]
+  type request_batch = client_request list * int [@@deriving bin_io]
 
   type return_result_t = command_id * client_response [@@deriving bin_io]
 
@@ -39,7 +39,6 @@ module T = struct
       { client_ivars: (command_id, client_response Ivar.t list) H.t
       ; client_results: (command_id, op_result) H.t
       ; cr_pipe: client_request rd_wr_pipe
-      ; cr_batch_pipe: client_request list rd_wr_pipe
       ; batch_size: int
       ; batch_timeout: Time.Span.t }
   end
@@ -71,48 +70,6 @@ module T = struct
 
     let some_or_default v d = match v with Some v -> v | None -> d
 
-    let get_batched_pipe {rd; _} batch_size batch_timeout =
-      let output =
-        let rd, wr = Pipe.create ~info:[%message "cr_batch_pipe"] () in
-        {rd; wr}
-      in
-      let loop batch_state =
-        let read_pipe ?timeout q size =
-          match%bind Pipe.read' ~max_queue_length:size rd with
-          | `Eof ->
-              [%log.global.error "Client request pipe unexpectedly closed"] ;
-              Deferred.never ()
-          | `Ok q' -> (
-              let q = Queue.fold q' ~init:q ~f:Fqueue.enqueue in
-              match () with
-              | () when Fqueue.length q < batch_size ->
-                  let timeout = some_or_default timeout (after batch_timeout) in
-                  return @@ `Partial (q, timeout)
-              | () ->
-                  Pipe.write_without_pushback output.wr (Fqueue.to_list q) ;
-                  return `Empty )
-        in
-        match batch_state with
-        | `Empty ->
-            read_pipe Fqueue.empty batch_size
-        | `Partial (q, timeout) -> (
-            let timeout_choice = choice timeout (fun () -> `Timeout) in
-            let next_segment_choice =
-              choice (Pipe.values_available rd) (fun _ -> `ValuesAvailable)
-            in
-            let%bind enabled =
-              Deferred.enabled [next_segment_choice; timeout_choice]
-            in
-            match enabled () |> List.hd_exn with
-            | `Timeout ->
-                Pipe.write_without_pushback output.wr (Fqueue.to_list q) ;
-                return `Empty
-            | `ValuesAvailable ->
-                read_pipe q (batch_size - Fqueue.length q) )
-      in
-      Deferred.forever `Empty loop ;
-      output
-
     let init_worker_state {external_port; batch_size; batch_timeout; log_level}
         =
       Log.Global.set_level log_level ;
@@ -120,12 +77,10 @@ module T = struct
         let rd, wr = Pipe.create ~info:[%message "cr_pipe"] () in
         {rd; wr}
       in
-      let cr_batch_pipe = get_batched_pipe cr_pipe batch_size batch_timeout in
       let t =
         { client_ivars= H.create (module Id)
         ; client_results= H.create (module Id)
         ; cr_pipe
-        ; cr_batch_pipe
         ; batch_size
         ; batch_timeout }
       in
@@ -151,7 +106,7 @@ module T = struct
 
     let batch_available_watch_fn t =
       [%log.global.debug "Checking batch availability"] ;
-      match%bind Pipe.values_available t.cr_batch_pipe.rd with
+      match%bind Pipe.values_available t.cr_pipe.rd with
       | `Eof ->
           [%log.global.error "Client request pipe unexpectedly closed"] ;
           Deferred.never ()
@@ -164,13 +119,44 @@ module T = struct
         ~bin_output:bin_unit ()
 
     let get_batch_fn t =
-      [%log.global.debug "Getting batch"] ;
-      match%bind Pipe.read t.cr_batch_pipe.rd with
-      | `Eof ->
-          [%log.global.error "Client request pipe unexpectedly closed"] ;
-          Deferred.never ()
-      | `Ok l ->
-          [%log.global.debug "Got batch"] ; return l
+      let cr_len = Pipe.length t.cr_pipe.rd in
+      let loop (q, remaining, timeout) :
+          [ `Repeat of client_request Fqueue.t * int * unit Deferred.t
+          | `Finished of client_request list * int ]
+          Deferred.t =
+        let q, len_added =
+          match Pipe.read_now' ~max_queue_length:remaining t.cr_pipe.rd with
+          | `Eof ->
+              [%log.global.error "Client request pipe unexpectedly closed"] ;
+              (q, 0)
+          | `Nothing_available ->
+              (q, 0)
+          | `Ok q' ->
+              let len_added = Queue.length q' in
+              (Queue.fold q' ~init:q ~f:Fqueue.enqueue, len_added)
+        in
+        assert (len_added = remaining || Pipe.length t.cr_pipe.rd = 0) ;
+        match Fqueue.length q < t.batch_size with
+        | false ->
+            return @@ `Finished (Fqueue.to_list q, cr_len)
+        | true -> (
+            let timeout_choice = choice timeout (fun () -> `Timeout) in
+            let next_segment_choice =
+              choice (Pipe.values_available t.cr_pipe.rd) (fun _ ->
+                  `ValuesAvailable )
+            in
+            let%bind enabled =
+              Deferred.enabled [next_segment_choice; timeout_choice]
+            in
+            match enabled () |> List.hd_exn with
+            | `Timeout ->
+                return @@ `Finished (Fqueue.to_list q, cr_len)
+            | `ValuesAvailable ->
+                return @@ `Repeat (q, remaining - len_added, timeout) )
+      in
+      Deferred.repeat_until_finished
+        (Fqueue.empty, t.batch_size, after t.batch_timeout)
+        loop
 
     let get_batch =
       let f ~worker_state:t ~conn_state:() () = get_batch_fn t in
@@ -203,10 +189,12 @@ let spawn_client_handler ~external_port ~batch_size ~batch_timeout =
     T.Worker_state.
       {external_port; batch_size; batch_timeout; log_level= Log.level logger}
   in
+  let%bind cwd = Unix.getcwd () in
   let%bind conn =
     spawn_exn ~shutdown_on:Shutdown_on.Connection_closed
       ~redirect_stdout:`Dev_null ~redirect_stderr:`Dev_null args
-      ~on_failure:Error.raise ~connection_state_init_arg:()
+      ~on_failure:(fun e -> [%log.global.error "Failed" (e : Error.t)])
+      ~connection_state_init_arg:()
   in
   let%bind client_log =
     Connection.run_exn conn ~f:Rpc_parallel.Function.async_log ~arg:()
