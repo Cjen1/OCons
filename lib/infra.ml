@@ -9,6 +9,7 @@ module MS = Types.MutableStorage (IS)
 module CH = Client_handler
 open Types
 open Utils
+open Core_profiler_disabled.Std
 
 let logger =
   let open Async_unix.Log in
@@ -33,8 +34,10 @@ let batch_available_watch t =
   CH.Connection.run_exn t.external_server ~f:CH.functions.batch_available_watch
     ~arg:()
 
+let p_cr_len = Probe.create ~name:"cr_len" ~units:Profiler_units.Int
 let get_request_batch t =
-  let%bind batch, _ = CH.Connection.run_exn t.external_server ~f:CH.functions.get_batch ~arg:() in
+  let%bind batch, cr_len = CH.Connection.run_exn t.external_server ~f:CH.functions.get_batch ~arg:() in
+  Probe.record p_cr_len cr_len;
   return batch
 
 let return_result t id res =
@@ -95,12 +98,14 @@ let datasync_time = Delta_timer.create ~name:"ds_time"
 let datasync =
   let sequencer = Throttle.Sequencer.create () in
   fun t ->
+    let st = Delta_timer.stateless_start datasync_time in
     let%bind () =
       Throttle.enqueue sequencer (fun () ->
           let%bind sync_index = MS.datasync t.store in
           Pipe.write_without_pushback t.datasync_queue.wr sync_index ;
           Deferred.unit )
     in
+    Delta_timer.stateless_stop datasync_time st ;
     Deferred.unit
 
 let do_advance t event =
@@ -132,6 +137,15 @@ let server_impls =
       ; Rpc.One_way.implement RPCs.append_entries_response (fun q aer ->
             Pipe.write_without_pushback q (`RAppendEntiresResponse aer) ) ]
 
+let record_queue_lengths =
+  let ds = Probe.create ~name:"ds" ~units:Profiler_units.Int in
+  let tk = Probe.create ~name:"tick" ~units:Profiler_units.Int in
+  let ev = Probe.create ~name:"ev" ~units:Profiler_units.Int in
+  fun t ->
+    Probe.record ds (Pipe.length t.datasync_queue.rd) ;
+    Probe.record tk (Pipe.length t.tick_queue.rd) ;
+    Probe.record ev (Pipe.length t.event_queue.rd)
+
 let handle_ev_q t _window_size =
   let request_batch_pipe =
     Pipe.unfold ~init:() ~f:(fun () ->
@@ -144,6 +158,7 @@ let handle_ev_q t _window_size =
   in
   let construct_choices () :
       [`Event of P.event | `Eof of string] Deferred.Choice.t list =
+    record_queue_lengths t ;
     let datasync_queue =
       let read =
         Pipe.read_choice_single_consumer_exn t.datasync_queue.rd [%here]

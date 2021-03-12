@@ -7,6 +7,7 @@ open Types.MessageTypes
 module S = IStorage
 module U = Utils
 module IdMap = Map.Make (Int)
+open Core_profiler_disabled.Std
 
 let logger =
   let open Async_unix.Log in
@@ -238,6 +239,9 @@ module ReplicationSM = struct
      ==> In case of missing log entry a failure will be sent
   *)
 
+  let probe_send_size =
+    Probe.create ~name:"send_entries_length" ~units:Profiler_units.Int
+
   let send_append_entries ?(force = false) dst =
     let%bind t = StateR.get_t () in
     match t.node_state with
@@ -248,6 +252,7 @@ module ReplicationSM = struct
         let entries_length = List.length entries |> Int64.of_int in
         let%bind () = StateR.map_t @@ A.map (node_state @> Leader.next_index) ~f:(Map.set ~key:dst ~data:Int64.(next_index + entries_length)) in
         let%bind t = StateR.get_t () in
+        Probe.record probe_send_size (Int64.to_int_exn entries_length) ;
         [%log.debug
           logger (dst : int) (next_index : int64) (entries_length : int64)] ;
         match entries with
@@ -479,6 +484,9 @@ let recv_syncd index =
   | _ ->
       StateR.return ()
 
+let command_size_probe =
+  Probe.create ~name:"cs_batch_size" ~units:Profiler_units.Int
+
 let rec advance_raw (event : event) : (unit, 'b) StateR.t =
   let%bind t = StateR.get_t () in
   match (event, t.node_state) with
@@ -582,6 +590,7 @@ let rec advance_raw (event : event) : (unit, 'b) StateR.t =
       let cmds =
         List.filter cs ~f:(fun cmd -> not @@ S.mem_id t.store cmd.id)
       in
+      Probe.record command_size_probe (List.length cmds) ;
       let%bind () = StateR.map_t @@ A.map store ~f:(S.add_cmds ~cmds ~term:(S.get_current_term t.store)) in
       let%bind () = check_commit_index () in
         StateR.list_iter t.config.other_nodes

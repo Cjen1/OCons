@@ -28,7 +28,7 @@ let start_server node_id =
   @@ ["exec"; "bin/main.exe"; "--"]
   @ [node_id; "1:127.0.0.1:5002,2:127.0.0.1:6002,3:127.0.0.1:7002"; data_dir]
   @ [port ^ "001"; port ^ "002"]
-  @ ["5"; "0.1"] @ ["-s"; "100"] @ ["-log-level"; "info"]
+  @ ["5"; "0.1"] @ ["-s"; "500"] @ ["-log-level"; "info"]
   @ ["-log-to-file"; log_dir ^ "/logger"]
   |> set_core_profiler prof_file
   |> redirect
