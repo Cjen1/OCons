@@ -66,7 +66,7 @@ let test target_rate =
   let%bind () = List'.iter bgs ~f:kill in
   match exit_code with
   | 0 ->
-      List'.iter [1; 2] ~f:(fun node -> print_summary (Fmt.str "%d.dat" node))
+      List'.iter [1; 2] ~f:(fun node -> if_exists print_summary (Fmt.str "%d.dat" node))
   | 124 ->
       print @@ Fmt.str "Benchmark timed out\n"
   | v ->
