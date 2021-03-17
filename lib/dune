@@ -2,6 +2,7 @@
  (name ocamlpaxos)
  (public_name ocamlpaxos)
  (inline_tests)
- (libraries base core async logs logs.fmt fmt.tty ppx_log)
+ (libraries base core async logs logs.fmt fmt.tty ppx_log rpc_parallel
+   accessor_async core_profiler)
  (preprocess
-  (pps ppx_jane ppx_log)))
+  (pps ppx_jane ppx_log ppx_accessor)))

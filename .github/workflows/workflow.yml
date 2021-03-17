@@ -3,7 +3,7 @@ name: Build and runtest
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
 
 jobs:
@@ -28,19 +28,19 @@ jobs:
         with:
           ocaml-version: ${{ matrix.ocaml-version }}
 
-      - name: Opam setup (install dependencies)
+      - name: Opam setup
         run: |
           opam pin add ocamlpaxos.dev . --no-action
           opam depext ocamlpaxos --yes --with-doc --with-test
           opam install . --deps-only --with-doc --with-test
 
-      - name: Test that it builds
+      - name: Dune build
         run: opam exec -- dune build
 
-      - name: Run any tests in the directory
+      - name: Dune runtest
         run: opam exec -- dune runtest
         
-      - name: Ensure code is formatted
+      - name: Format
         run: |
           opam install ocamlformat --yes --with-doc --with-test
           opam exec -- dune build @fmt

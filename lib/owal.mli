@@ -8,7 +8,7 @@ module type Persistable = sig
 
   val init : unit -> t
 
-  type op [@@deriving bin_io]
+  type op [@@deriving bin_io, sexp]
 
   val apply : t -> op -> t
 end
@@ -16,13 +16,11 @@ end
 module Persistant (P : Persistable) : sig
   type t
 
-  val of_path_async : ?file_size:int -> string -> (t * P.t) Deferred.t
+  val of_path : ?file_size:int64 -> string -> (t * P.t) Deferred.t
 
   val write : t -> P.op -> unit
 
-  val datasync : t -> unit
+  val datasync : t -> unit Deferred.t
 
-  val flush : t -> unit
-
-  val close : t -> unit
+  val close : t -> unit Deferred.t
 end

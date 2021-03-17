@@ -27,23 +27,29 @@ let command =
       +> anon ("node_id" %: int)
       +> anon ("node_list" %: node_list)
       +> anon ("datadir" %: string)
-      +> anon ("listen_address" %: int)
+      +> anon ("external_port" %: int)
+      +> anon ("internal_port" %: int)
       +> anon ("election_timeout" %: int)
       +> anon ("tick_speed" %: float)
-      +> flag "-s" ~doc:" Size of batches" (optional_with_default 1 int)
-      +> flag "-d" ~doc:" Time before batch is dispatched in ms"
-           (optional_with_default 100. float)
+      +> flag "-s" ~doc:" Size limit of batches" (optional_with_default 1 int)
+      +> flag "-d" ~doc:" Time limit of batches in ms"
+           (optional_with_default 50. float)
       +> log_param)
-    (fun node_id node_list datadir listen_port election_timeout tick_speed
-         batch_size dispatch_timeout () () ->
+    (fun node_id node_list datadir external_port internal_port election_timeout
+         tick_speed batch_size batch_timeout () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
-      List.iter [Infra.logger; Utils.logger; Owal.logger; Paxos_core.logger]
-        ~f:(fun log ->
+      List.iter
+        [ Infra.logger
+        ; Utils.logger
+        ; Owal.logger
+        ; Paxos_core.logger
+        ; Paxos_core.io_logger
+        ; Client_handler.logger ] ~f:(fun log ->
           Async.Log.set_level log global_level ;
-          Async.Log.set_output log global_output) ;
+          Async.Log.set_output log global_output ) ;
       let tick_speed = Time.Span.of_sec tick_speed in
-      let dispatch_timeout = Time.Span.of_ms dispatch_timeout in
+      let batch_timeout = Time.Span.of_ms batch_timeout in
       let%bind () =
         match%bind Sys.file_exists_exn datadir with
         | true ->
@@ -52,13 +58,14 @@ let command =
             Unix.mkdir datadir
       in
       let%bind (_ : Infra.t) =
-        Infra.create ~node_id ~node_list ~datadir ~listen_port ~election_timeout
-          ~tick_speed ~batch_size ~dispatch_timeout
+        Infra.create ~node_id ~node_list ~datadir ~external_port ~internal_port
+          ~election_timeout ~tick_speed ~batch_size ~batch_timeout
       in
-      let%bind () = after (Time.Span.of_sec 20.) in
-      return ())
+      let i = Ivar.create () in
+      Signal.handle Signal.terminating ~f:(fun _ -> Ivar.fill i ()) ;
+      Ivar.read i )
 
 let () =
   Fmt_tty.setup_std_outputs () ;
   Fmt.pr "%a" (Fmt.array ~sep:Fmt.sp Fmt.string) (Sys.get_argv ()) ;
-  Command.run command
+  Rpc_parallel.start_app command

@@ -34,10 +34,17 @@ let run_ts ts =
         let%bind () = at start in
         let p = f () in
         upon p (printi i) ;
-        return (p :: acc))
+        return (p :: acc) )
   in
-  print_endline "" ;
-  res |> List.rev |> Deferred.List.all
+  let%bind res = res |> List.rev |> Deferred.List.all in
+  return res
+
+let get_not_failure r =
+  match%map r with
+  | O.Types.Failure ->
+      raise @@ Failure "Got failure from operation"
+  | _ ->
+      r
 
 let run_latencies throughput n ps =
   Log.info (fun m -> m "Setting up latency test\n") ;
@@ -46,7 +53,7 @@ let run_latencies throughput n ps =
   in
   let client = O.Client.new_client (List.map node_list ~f:snd) in
   let test = Bytes.of_string "test" in
-  let%bind _ = O.Client.op_write client ~k:test ~v:test in
+  let%bind _ = O.Client.op_write client ~k:test ~v:test |> get_not_failure in
   let period = Float.(1. / throughput) in
   let start = Time.now () in
   let start = Time.(add start Span.(of_ms 500.)) in
@@ -58,13 +65,15 @@ let run_latencies throughput n ps =
           let st =
             Time_ns.now () |> Time_ns.to_span_since_epoch |> Time_ns.Span.to_sec
           in
-          let%bind _ = O.Client.op_write client ~k:test ~v:test in
+          let%bind _ =
+            O.Client.op_write client ~k:test ~v:test |> get_not_failure
+          in
           let ed =
             Time_ns.now () |> Time_ns.to_span_since_epoch |> Time_ns.Span.to_sec
           in
           return (st, ed)
         in
-        (f, start))
+        (f, start) )
   in
   let%bind res = run_ts ts in
   let results = Array.of_list res in
@@ -95,6 +104,7 @@ let main target_throughput n output portss =
     let iter ports =
       let jsonpath = match output with None -> "data.json" | Some s -> s in
       let%bind res = run_latencies target_throughput n ports in
+      Log.info (fun m -> m "") ;
       Log.info (fun m -> m "%a\n" pp_stats res) ;
       let json = test_res_to_yojson res in
       Yojson.Safe.to_file jsonpath json ;
@@ -105,6 +115,11 @@ let main target_throughput n output portss =
   Logs.(set_level (Some Info)) ;
   Logs.set_reporter reporter ; perform ()
 
+let log_param =
+  Log_extended.Command.(
+    setup_via_params ~log_to_console_by_default:(Stderr Color)
+      ~log_to_syslog_by_default:false ())
+
 let () =
   Command.async_spec ~summary:"Benchmark for main.ml"
     Command.Spec.(
@@ -113,6 +128,13 @@ let () =
            (optional_with_default 10000 int)
       +> flag "-o" ~doc:" Output file" (optional string)
       +> flag "-p" ~doc:" ports list" (listed sexp)
-      +> flag "-t" ~doc:" Throughput" (optional_with_default 100000. float))
-    (fun n o ps t () -> main t n o ps)
+      +> flag "-t" ~doc:" Throughput" (optional_with_default 100000. float)
+      +> log_param)
+    (fun n o ps t () () ->
+      let global_level = Async.Log.Global.level () in
+      let global_output = Async.Log.Global.get_output () in
+      List.iter [Ocamlpaxos.Client.logger] ~f:(fun log ->
+          Async.Log.set_level log global_level ;
+          Async.Log.set_output log global_output ) ;
+      main t n o ps )
   |> Command.run

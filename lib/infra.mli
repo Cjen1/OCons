@@ -9,11 +9,12 @@ val create :
      node_id:int
   -> node_list:(int * string) list
   -> datadir:string
-  -> listen_port:int
+  -> external_port:int
+  -> internal_port:int
   -> election_timeout:int
   -> tick_speed:Time.Span.t
   -> batch_size:int
-  -> dispatch_timeout:Core.Time.Span.t
+  -> batch_timeout:Time.Span.t
   -> t Deferred.t
 (** [create] returns a new node after it has loaded its state from file.
     [node_list] is a list of pairs of node_ids and addresses (eg 127.0.0.1:5001)
