@@ -73,9 +73,9 @@ module ILog = struct
     type t = {store: log_entry list; command_set: IdSet.t; length: int64}
     [@@deriving sexp, accessors, compare]
 
-      let nth_of_index t i = Int64.(t.length - i)
+    let nth_of_index t i = Int64.(t.length - i)
 
-      let drop_of_index t i = Int64.(nth_of_index t i + one)
+    let drop_of_index t i = Int64.(nth_of_index t i + one)
 
     type op = Add of log_entry | RemoveGEQ of log_index
     [@@deriving bin_io, sexp, compare]
@@ -140,13 +140,13 @@ module ILog = struct
     let drop = I.drop_of_index t index |> Int64.to_int_exn in
     List.split_n t.store drop |> fst
 
-    let entries_after_inc_size t index =
-      let size = Int64.(get_max_index t - index + one) in
-      (entries_after_inc t index, size)
+  let entries_after_inc_size t index =
+    let size = Int64.(get_max_index t - index + one) in
+    (entries_after_inc t index, size)
 
-    let to_string t =
-      let entries = entries_after_inc t Int64.zero in
-      [%sexp_of: log_entry list] entries |> Sexp.to_string_hum
+  let to_string t =
+    let entries = entries_after_inc t Int64.zero in
+    [%sexp_of: log_entry list] entries |> Sexp.to_string_hum
 
   let add_entries_remove_conflicts t ~start_index new_entries =
     let relevant_entries = entries_after_inc t start_index in
