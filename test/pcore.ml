@@ -41,8 +41,9 @@ let get_result s p =
 
 let get_ok = function
   | Error (`Msg s) ->
-    raise @@ Invalid_argument s
-  | Ok v -> v
+      raise @@ Invalid_argument s
+  | Ok v ->
+      v
 
 let print_state (t : P.t) actions =
   let t, store = P.pop_store t in
@@ -59,7 +60,9 @@ let%expect_test "transitions" =
   let () = pr_err (make_empty t) @@ P.Test.transition_to_leader () in
   [%expect
     {| Error: Cannot transition to leader from states other than candidate |}] ;
-  let t, actions = P.Test.transition_to_candidate () |> get_result (make_empty t) in
+  let t, actions =
+    P.Test.transition_to_candidate () |> get_result (make_empty t)
+  in
   print_endline @@ Fmt.str "%d" (P.get_term t) ;
   [%expect {| 1 |}] ;
   let t = print_state t actions in
@@ -76,7 +79,9 @@ let%expect_test "transitions" =
         ((SendRequestVote (2 ((src 1) (term 1) (leader_commit 0))))
          (SendRequestVote (3 ((src 1) (term 1) (leader_commit 0))))))
        (nonblock_sync false)))) |}] ;
-  let t, actions = P.Test.transition_to_leader () |> get_result (make_empty t) in
+  let t, actions =
+    P.Test.transition_to_leader () |> get_result (make_empty t)
+  in
   let t = print_state t actions in
   let _ = t in
   [%expect
@@ -269,7 +274,7 @@ let%expect_test "loop triple" =
   [%expect
     {|
     (("P.Test.get_node_state t"
-      (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 1) (2 1) (3 1)))
+      (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 3) (2 1) (3 3)))
        (heartbeat 0)))
      (store
       ((data
@@ -311,7 +316,7 @@ let%expect_test "loop triple" =
   [%expect
     {|
     (("P.Test.get_node_state t"
-      (Leader (match_index ((1 0) (2 2) (3 0))) (next_index ((1 1) (2 1) (3 1)))
+      (Leader (match_index ((1 0) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
        (heartbeat 0)))
      (store
       ((data
@@ -353,14 +358,12 @@ let%expect_test "loop triple" =
   in
   (* In case of full update *)
   let () =
-    let t2, actions =
-      P.advance t2 (`RAppendEntiresResponse aer) |> get_ok
-    in
+    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
     let _t2 = print_state t2 actions in
     [%expect
       {|
       (("P.Test.get_node_state t"
-        (Leader (match_index ((1 2) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 1)))
+        (Leader (match_index ((1 2) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
          (heartbeat 0)))
        (store
         ((data
@@ -375,6 +378,11 @@ let%expect_test "loop triple" =
   in
   (* In case of partial update *)
   let () =
+    (* This case is a bit weird, but still correct
+       From the Leader's perspective it has sent cmds 1 and 2 to the follower (NI = 3, MI = 0 initially)
+       However it gets a successful ack for only up to 1 (MI = 1, NI = NI)
+       Thus it doesn't need to send more since 'it has already sent 2 to the follower'
+    *)
     let aer =
       match aer with
       | {success= Ok v; _} ->
@@ -382,15 +390,13 @@ let%expect_test "loop triple" =
       | _ ->
           assert false
     in
-    let t2, actions =
-      P.advance t2 (`RAppendEntiresResponse aer) |> get_ok
-    in
+    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
     let t2 = print_state t2 actions in
     let _ = t2 in
     [%expect
       {|
       (("P.Test.get_node_state t"
-        (Leader (match_index ((1 1) (2 2) (3 0))) (next_index ((1 2) (2 1) (3 1)))
+        (Leader (match_index ((1 1) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
          (heartbeat 0)))
        (store
         ((data
@@ -401,28 +407,18 @@ let%expect_test "loop triple" =
                ((command ((op (Read 1)) (id 1))) (term 2))))
              (command_set (1 2)) (length 2)))))
          (ops ())))
-       (actions
-        ((acts
-          ((CommitIndexUpdate 1)
-           (SendAppendEntries
-            (1
-             ((src 2) (term 2) (prev_log_index 1) (prev_log_term 2)
-              (entries (((command ((op (Read 2)) (id 2))) (term 2))))
-              (entries_length 1) (leader_commit 0))))))
-         (nonblock_sync true)))) |}]
+       (actions ((acts ((CommitIndexUpdate 1))) (nonblock_sync true)))) |}]
   in
   (* In case of a failed update *)
   let () =
     let aer = {aer with success= Error Int64.one} in
-    let t2, actions =
-      P.advance t2 (`RAppendEntiresResponse aer) |> get_ok
-    in
+    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
     let t2 = print_state t2 actions in
     let _ = t2 in
     [%expect
       {|
       (("P.Test.get_node_state t"
-        (Leader (match_index ((1 0) (2 2) (3 0))) (next_index ((1 1) (2 1) (3 1)))
+        (Leader (match_index ((1 0) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
          (heartbeat 0)))
        (store
         ((data

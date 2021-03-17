@@ -35,9 +35,12 @@ let batch_available_watch t =
     ~arg:()
 
 let p_cr_len = Probe.create ~name:"cr_len" ~units:Profiler_units.Int
+
 let get_request_batch t =
-  let%bind batch, cr_len = CH.Connection.run_exn t.external_server ~f:CH.functions.get_batch ~arg:() in
-  Probe.record p_cr_len cr_len;
+  let%bind batch, cr_len =
+    CH.Connection.run_exn t.external_server ~f:CH.functions.get_batch ~arg:()
+  in
+  Probe.record p_cr_len cr_len ;
   return batch
 
 let return_result t id res =
