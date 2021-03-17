@@ -38,8 +38,6 @@ val pp_action : Format.formatter -> action -> unit
 
 val pp_event : Format.formatter -> event -> unit
 
-val pp_event : Format.formatter -> event -> unit
-
 type config =
   { phase1quorum: int
   ; phase2quorum: int

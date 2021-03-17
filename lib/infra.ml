@@ -1,4 +1,5 @@
 open! Core
+open! Async
 open! Ppx_log_async
 module P = Paxos_core
 module O = Owal

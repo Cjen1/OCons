@@ -1,4 +1,5 @@
 open! Core
+open! Async
 open! Ppx_log_async
 module A = Accessor_async
 open! A.O
