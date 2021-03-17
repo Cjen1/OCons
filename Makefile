@@ -8,4 +8,4 @@ clean: clean_benchmark
 	dune clean
 
 clean_benchmark:
-	rm -rf *.log *.datadir *.dat *.dat.old *.stderr *.stdout
+	rm -rf *.log *.datadir *.dat *.dat.old *.stderr *.stdout data.json
