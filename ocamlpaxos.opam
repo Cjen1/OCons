@@ -18,6 +18,7 @@ depends: [
   "fmt"
   "owl"
   "core_bench"
+  "core_profiler"
 ]
 build: [
   ["dune" "subst"] {pinned}

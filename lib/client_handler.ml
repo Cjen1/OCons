@@ -189,7 +189,6 @@ let spawn_client_handler ~external_port ~batch_size ~batch_timeout =
     T.Worker_state.
       {external_port; batch_size; batch_timeout; log_level= Log.level logger}
   in
-  let%bind cwd = Unix.getcwd () in
   let%bind conn =
     spawn_exn ~shutdown_on:Shutdown_on.Connection_closed
       ~redirect_stdout:`Dev_null ~redirect_stderr:`Dev_null args
