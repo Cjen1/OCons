@@ -3,7 +3,6 @@ open! Async
 open! Ppx_log_async
 module H = Hashtbl
 open Types
-open Types.MessageTypes
 open! Utils
 open Rpc_parallel
 
@@ -57,7 +56,7 @@ module T = struct
     open Worker_state
 
     let client_handler_impl =
-      [ Rpc.Rpc.implement RPCs.client_request (fun t cr ->
+      [ Rpc.Rpc.implement Types.client_rpc (fun t cr ->
             [%log.global.debug "Received" (cr.id : Id.t)] ;
             match H.find t.client_results cr.id with
             | Some result ->
@@ -180,9 +179,8 @@ module T = struct
   end
 end
 
-module M = Rpc_parallel.Make (T)
-include M
-module Shutdown_on = M.Shutdown_on (Monad.Ident)
+include Rpc_parallel.Make (T)
+module Shutdown_on = Shutdown_on (Monad.Ident)
 
 let spawn_client_handler ~external_port ~batch_size ~batch_timeout =
   let args =

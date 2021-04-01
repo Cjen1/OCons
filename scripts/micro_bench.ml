@@ -29,7 +29,7 @@ let start_server node_id =
   let port = node_id + 4 |> Int.to_string in
   let node_id = Int.to_string node_id in
   spawn "dune"
-  @@ ["exec"; "bin/main.exe"; "--"]
+  @@ ["exec"; "paxos/main.exe"; "--"]
   @ [node_id; "1:127.0.0.1:5002,2:127.0.0.1:6002,3:127.0.0.1:7002"; data_dir]
   @ [port ^ "001"; port ^ "002"]
   @ ["5"; "0.1"] @ ["-s"; "500"] @ ["-log-level"; "info"]
@@ -82,7 +82,7 @@ let () =
       fun () ->
         let () =
           eval
-            (call ["dune"; "build"; "bin/main.exe"; "scripts/micro_bench.exe"])
+            (call ["dune"; "build"; "paxos/main.exe"; "scripts/micro_bench.exe"])
         in
         let () = eval (sleep 5.) in
         let () = eval (print @@ Fmt.str "Built main\n") in

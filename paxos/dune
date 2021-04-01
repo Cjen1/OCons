@@ -1,0 +1,13 @@
+(executable
+ (name main)
+ (public_name ocons-paxos)
+ (package ocons-paxos)
+ (libraries ocons-core core async async.log_extended)
+ (preprocess
+  (pps ppx_jane ppx_log ppx_accessor))
+ )
+
+(env
+ (dev
+  (flags
+   (:standard -w -39-53-55))))

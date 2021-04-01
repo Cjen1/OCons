@@ -27,7 +27,7 @@ let send t op =
     *)
     let reqs =
       List.map conns ~f:(fun conn ->
-          match%map Rpc.Rpc.dispatch Types.RPCs.client_request conn op with
+          match%map Rpc.Rpc.dispatch Types.client_rpc conn op with
           | Ok (Ok v) ->
               Some (`Finished v)
           | Ok (Error `Unapplied) ->
