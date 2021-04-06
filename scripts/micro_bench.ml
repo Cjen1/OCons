@@ -18,7 +18,7 @@ let delay t p =
   let%bind () = sleep t in
   p
 
-let start_server node_id =
+let start_server service node_id =
   let data_dir = Fmt.str "%d.datadir" node_id in
   let%bind () = if_exists rm_rf data_dir in
   let log_dir = Fmt.str "%d.log" node_id in
@@ -28,8 +28,8 @@ let start_server node_id =
   let%bind () = if_exists rm prof_file in
   let port = node_id + 4 |> Int.to_string in
   let node_id = Int.to_string node_id in
-  spawn "dune"
-  @@ ["exec"; "paxos/main.exe"; "--"]
+  spawn "opam"
+  @@ ["exec"; "--"; "dune"; "exec"; service ^ "/main.exe"; "--"]
   @ [node_id; "1:127.0.0.1:5002,2:127.0.0.1:6002,3:127.0.0.1:7002"; data_dir]
   @ [port ^ "001"; port ^ "002"]
   @ ["5"; "0.1"] @ ["-s"; "500"] @ ["-log-level"; "info"]
@@ -52,7 +52,7 @@ let client_test nodes rate =
   let timeout = Fmt.str "%ds" (test_length * 5) in
   let nodes = List.map nodes ~f:(fun i -> ((i + 4) * 1000) + 1) in
   let nodes = nodes |> [%sexp_of: int list] |> Sexp.to_string in
-  call_exit_code @@ ["timeout"; timeout]
+  call_exit_code @@ ["timeout"; timeout] @ ["opam"; "exec"; "--"]
   @ ["dune"; "exec"; "bin/bench.exe"; "--"]
   @ ["-p"; nodes] @ ["-t"; Int.to_string rate] @ ["-n"; Int.to_string n]
   @ ["-log-level"; "info"]
@@ -60,8 +60,10 @@ let client_test nodes rate =
 let print_summary file =
   call ["core-profiler-tool"; "summary"; "-filename"; file]
 
-let test target_rate =
-  let%bind bgs = fork_all [start_server 1; delay 1. @@ start_server 2] in
+let test service target_rate =
+  let%bind bgs =
+    fork_all [start_server service 1; delay 1. @@ start_server service 2]
+  in
   let%bind exit_code = client_test [1; 2] target_rate in
   let%bind () = List'.iter bgs ~f:kill in
   match exit_code with
@@ -76,21 +78,22 @@ let test target_rate =
 let () =
   Command.basic ~summary:"Script for automating benchmarking"
     [%map_open.Command
-      let rate =
+      let service = anon ("service" %: string)
+      and rate =
         flag "rate" (optional_with_default 5000 int) ~doc:"N Target rate"
       and trace = flag "trace" no_arg ~doc:" Print a trace of the test" in
       fun () ->
         let () =
           eval
-            (call
-               ["dune"; "build"; "paxos/main.exe"; "scripts/micro_bench.exe"] )
+            ( call @@ ["opam"; "exec"; "--"] @ ["dune"; "build"]
+            @ [service ^ "/main.exe"; "scripts/micro_bench.exe"] )
         in
         let () = eval (sleep 5.) in
         let () = eval (print @@ Fmt.str "Built main\n") in
         match trace with
         | true ->
-            let (), trace = Traced.eval_exn @@ test rate in
+            let (), trace = Traced.eval_exn @@ test service rate in
             trace |> Sexp.to_string_hum |> print_endline
         | false ->
-            eval (test rate)]
+            eval (test service rate)]
   |> Command.run

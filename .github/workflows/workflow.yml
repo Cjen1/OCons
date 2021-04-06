@@ -30,15 +30,17 @@ jobs:
 
       - name: Opam setup
         run: |
-          opam pin add ocamlpaxos.dev . --no-action
-          opam depext ocamlpaxos --yes --with-doc --with-test
+          opam pin add ocons-core.dev . --no-action
+          opam depext ocons-core --yes --with-doc --with-test
+          opam pin add ocons-variants.dev . --no-action
+          opam depext ocons-variants --yes --with-doc --with-test
           opam install . --deps-only --with-doc --with-test
 
       - name: Dune build
         run: opam exec -- dune build
 
-      - name: Dune runtest
-        run: opam exec -- dune runtest
+      - name: Run tests
+        run: make test
         
       - name: Format
         run: |

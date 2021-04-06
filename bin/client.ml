@@ -1,4 +1,4 @@
-open! Core
+(*open! Core
 open! Async
 open Ocamlpaxos
 module C = Client
@@ -56,3 +56,4 @@ let () =
   Fmt_tty.setup_std_outputs () ;
   Logs.(set_level (Some Debug)) ;
   Logs.set_reporter reporter ; Core.Command.run cmd
+  *)
