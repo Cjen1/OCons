@@ -27,10 +27,12 @@
     owl
     core_bench
     core_profiler
+    shexp
+    angstrom
     ))
 
 (package
-  (name ocons-paxos)
+  (name ocons-variants)
   (synopsis "An ocaml implementation of the Paxos protocol")
   (depends 
     (ocaml (>= 4.08.0))
