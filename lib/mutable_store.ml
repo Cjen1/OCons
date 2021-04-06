@@ -41,7 +41,7 @@ end = struct
 
   let sexp_of_t t = [%message (t.state : I.t)]
 
-  let get_index t index = I.get_index(get_state t) index
+  let get_index t index = I.get_index (get_state t) index
 
   let update t i' =
     t.state <- I.reset_ops i' ;
@@ -66,6 +66,6 @@ end = struct
 end
 
 (* Test that Immutable_store :> ImmutableStore *)
-let () = 
-  let module _ = Make(Immutable_store) in
+let () =
+  let module _ = Make (Immutable_store) in
   ()

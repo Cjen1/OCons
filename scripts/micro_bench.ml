@@ -82,7 +82,8 @@ let () =
       fun () ->
         let () =
           eval
-            (call ["dune"; "build"; "paxos/main.exe"; "scripts/micro_bench.exe"])
+            (call
+               ["dune"; "build"; "paxos/main.exe"; "scripts/micro_bench.exe"] )
         in
         let () = eval (sleep 5.) in
         let () = eval (print @@ Fmt.str "Built main\n") in

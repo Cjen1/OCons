@@ -10,7 +10,6 @@ let logger =
     ~transform:(fun m -> Message.add_tags m [("src", "ImmutableLog")])
     ()
 
-
 module ILog = struct
   module IdSet = Set.Make (Id)
 
@@ -185,8 +184,7 @@ let get_ops t = t.ops
 let reset_ops t = {t with ops= []}
 
 let update_term t ~term =
-  A.set (data @> current_term) t ~to_:term
-  |> A.set ops ~to_:(Term term :: t.ops)
+  A.set (data @> current_term) t ~to_:term |> A.set ops ~to_:(Term term :: t.ops)
 
 let add_entry t ~entry =
   let l, op = L.add_entry t.data.log entry in
