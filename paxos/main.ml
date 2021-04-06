@@ -2,8 +2,7 @@ open! Core
 open! Async
 open! Paxos_lib
 module O = Ocons_core
-module P = Paxos.Make (O.Immutable_store)
-module I = O.Infra.Make (P)
+module I = O.Infra.Make (O.Immutable_store) (Paxos.Make)
 
 let network_address =
   let parse s =
