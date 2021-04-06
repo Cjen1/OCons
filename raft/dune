@@ -1,0 +1,21 @@
+(executable
+ (name main)
+ (public_name ocons-raft)
+ (package ocons-variants)
+ (libraries raft_lib ocons-core core async async.log_extended)
+ (preprocess
+  (pps ppx_jane ppx_log ppx_accessor))
+ (modules main))
+
+(library
+ (name raft_lib)
+ (libraries ocons-core core async async.log_extended)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_log ppx_accessor))
+ (modules raft test))
+
+(env
+ (dev
+  (flags
+   (:standard -w -39-53-55))))
