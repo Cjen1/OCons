@@ -10,10 +10,13 @@ type config =
   ; election_timeout: int }
 [@@deriving sexp]
 
-val make_config : node_id:node_id -> node_list: node_id list -> election_timeout:int -> config
+val make_config :
+  node_id:node_id -> node_list:node_id list -> election_timeout:int -> config
 
 module Make (S : Immutable_store_intf.S) : sig
-  include Consensus_intf.S with type config = config [@@deriving sexp_of]
+  include
+    Consensus_intf.S with type config = config and type store = S.t
+  [@@deriving sexp_of]
 
   (** Module for testing internal state *)
   module Test : sig

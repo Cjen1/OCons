@@ -1,10 +1,10 @@
 open! Core
-open! Ocamlpaxos
+open! Ocons_core
 open Owal
 open Async
 
 module T_p = struct
-  type t = int list
+  type t = int list [@@deriving sexp]
 
   let init () = []
 

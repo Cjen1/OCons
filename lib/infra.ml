@@ -25,8 +25,9 @@ type infra_config =
   ; batch_timeout: Time.Span.t }
 [@@deriving sexp_of]
 
-module Make (C : Consensus_intf.S) = struct
-  module MS = Mutable_store.Make (C.Store)
+module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
+  module C = C (S)
+  module MS = Mutable_store.Make (S)
 
   let message_rpc =
     Async.Rpc.One_way.create ~name:"conc_msg" ~version:0 ~bin_msg:C.bin_message

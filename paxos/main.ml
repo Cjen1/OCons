@@ -1,5 +1,6 @@
 open! Core
 open! Async
+open! Paxos_lib
 module O = Ocons_core
 module P = Paxos.Make (O.Immutable_store)
 module I = O.Infra.Make (P)
@@ -62,8 +63,22 @@ let command =
         | false ->
             Unix.mkdir datadir
       in
-      let p_config = Paxos.make_config ~node_id ~node_list:(List.map ~f:fst node_list) ~election_timeout in
-      let i_config = O.Infra.{node_id; node_list; datadir; external_port; internal_port; tick_speed; batch_size; batch_timeout}in
+      let p_config =
+        Paxos.make_config ~node_id
+          ~node_list:(List.map ~f:fst node_list)
+          ~election_timeout
+      in
+      let i_config =
+        O.Infra.
+          { node_id
+          ; node_list
+          ; datadir
+          ; external_port
+          ; internal_port
+          ; tick_speed
+          ; batch_size
+          ; batch_timeout }
+      in
       let%bind (_ : I.t) = I.create i_config p_config in
       let i = Ivar.create () in
       Signal.handle Signal.terminating ~f:(fun _ -> Ivar.fill i ()) ;

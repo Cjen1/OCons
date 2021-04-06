@@ -21,10 +21,10 @@ type infra_config =
   ; batch_timeout: Time.Span.t }
 [@@deriving sexp_of]
 
-module Make (C : Consensus_intf.S) : sig
+module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) : sig
   type t
 
-  val create : infra_config -> C.config -> t Deferred.t
+  val create : infra_config -> C(S).config -> t Deferred.t
   (** [create] returns a new node after it has loaded its state from file.*)
 
   val close : t -> unit Deferred.t

@@ -10,12 +10,15 @@ module type S = sig
   type message [@@deriving sexp_of, bin_io]
 
   (** All the events incomming into the advance function *)
-  type event = [`Tick | `Syncd of log_index | `Recv of message | `Commands of command list]
+  type event =
+    [`Tick | `Syncd of log_index | `Recv of message | `Commands of command list]
   [@@deriving sexp_of]
 
   (** Actions which can be emitted by the implementation *)
   type action =
-    [`Unapplied of command list | `Send of node_id * message | `CommitIndexUpdate of log_index]
+    [ `Unapplied of command list
+    | `Send of node_id * message
+    | `CommitIndexUpdate of log_index ]
   [@@deriving sexp_of]
 
   type actions = {acts: action list; nonblock_sync: bool}
@@ -25,9 +28,7 @@ module type S = sig
 
   type t
 
-  module Store : Immutable_store_intf.S
-
-  type store = Store.t
+  type store
 
   val create_node : config -> store -> t
   (** [create_node config log term] returns the initialised state machine. *)
@@ -38,3 +39,6 @@ module type S = sig
   val pop_store : t -> t * store
   (** [pop_store t] pops the store and removes any pending operations from the internal one *)
 end
+
+module type F = functor (Store : Immutable_store_intf.S) ->
+  S with type store = Store.t

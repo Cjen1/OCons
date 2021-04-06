@@ -2,7 +2,6 @@ open! Core
 open Accessor.O
 module A = Accessor
 open Ppx_log_async
-
 open! Ocons_core
 open! Types
 module U = Utils
@@ -22,8 +21,15 @@ let make_config ~node_id ~node_list ~election_timeout =
   let length = List.length node_list in
   let phase1quorum = (length + 1) / 2 in
   let phase2quorum = (length + 1) / 2 in
-  let other_nodes = List.filter node_list ~f:(fun id -> not @@ Int.equal node_id id) in
-  {phase1quorum;phase2quorum;other_nodes;num_nodes=length;node_id;election_timeout}
+  let other_nodes =
+    List.filter node_list ~f:(fun id -> not @@ Int.equal node_id id)
+  in
+  { phase1quorum
+  ; phase2quorum
+  ; other_nodes
+  ; num_nodes= length
+  ; node_id
+  ; election_timeout }
 
 module MessageTypes = struct
   type request_vote = {src: node_id; term: term; leader_commit: log_index}
@@ -69,6 +75,7 @@ module Make (S : Immutable_store_intf.S) = struct
       ()
 
   module Store = S
+
   type store = Store.t
 
   type nonrec config = config [@@deriving sexp_of]
@@ -640,6 +647,7 @@ module Make (S : Immutable_store_intf.S) = struct
 
   module Test = struct
     type nonrec node_state = node_state [@@deriving sexp_of]
+
     module State = State
     module StateR = StateR
 
