@@ -225,8 +225,7 @@ module Make (S : Immutable_store_intf.S) = struct
           |> fun ls -> List.nth_exn ls t.config.phase2quorum
         in
         match
-          (S.get_index_exn t.store commit_index).term
-          = S.get_current_term t.store
+          S.get_term_exn t.store commit_index = S.get_current_term t.store
         with
         | true ->
             let%bind () =
@@ -398,7 +397,7 @@ module Make (S : Immutable_store_intf.S) = struct
   let transition_to_leader () =
     let%bind t = StateR.get_t () in
     match t.node_state with
-    | Candidate s when U.Quorum.satisified s.quorum->
+    | Candidate _ ->
         [%log.info logger "Transition to leader"] ;
         let last_index = S.get_max_index t.store in
         let match_index, next_index =
@@ -530,17 +529,32 @@ module Make (S : Immutable_store_intf.S) = struct
              ; term= S.get_current_term t.store
              ; vote_granted= false }
     | `Recv (RequestVote msg), _ -> (
+        (*
+When a server receives the RequestVote request it will respond positively provided
+- the candidate’s term is greater than or equal to its own,
+- it has not yet voted for a candidate in this term,
+- and the candidate’s log is at least as up-to-date as its own.
+
+This last criterion can be checked by ensuring that
+- the candidate’s last log term is greater than the server’s 
+- or, if they are the same, that the candidate’s last index is greater than the server’s.
+           *)
         let vote_granted =
-          match t.voted_for with
-          | Some v when v <> msg.candidate_id ->
-              false
-          | _
-            when S.get_current_term t.store < msg.last_log_term
-                 || S.get_current_term t.store = msg.last_log_term
-                    && Int64.(msg.last_log_index <= S.get_max_index t.store) ->
-              true
-          | _ ->
-              false
+          let c_term = msg.term >= S.get_current_term t.store in
+          let c_voted_for =
+            match t.voted_for with
+            | None ->
+                true
+            | Some v ->
+                v = msg.candidate_id
+          in
+          let llt = S.get_term_exn t.store (S.get_max_index t.store) in
+          let c_llt = msg.last_log_term > llt in
+          let c_lli =
+            msg.last_log_term = llt
+            && Int64.(S.get_max_index t.store <= msg.last_log_index)
+          in
+          c_term && c_voted_for && (c_llt || c_lli)
         in
         match vote_granted with
         | true (* candidate's log is at least as up to date as node's *) ->
