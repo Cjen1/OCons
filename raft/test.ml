@@ -92,7 +92,8 @@ let%expect_test "transitions" =
   in
   let t = print_state t actions in
   let _ = t in
-  [%expect{|
+  [%expect
+    {|
     (("R.Test.get_node_state t"
       (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 1) (2 1) (3 1)))
        (heartbeat 0)))
@@ -168,7 +169,8 @@ let%expect_test "loop single" =
        (nonblock_sync false)))) |}] ;
   let t, actions = R.advance t `Tick |> get_ok in
   let t = print_state t actions in
-  [%expect{|
+  [%expect
+    {|
     (("R.Test.get_node_state t"
       (Leader (match_index ((1 0))) (next_index ((1 1))) (heartbeat 0)))
      (store
@@ -179,7 +181,8 @@ let%expect_test "loop single" =
     R.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
   in
   let t = print_state t actions in
-  [%expect{|
+  [%expect
+    {|
     (("R.Test.get_node_state t"
       (Leader (match_index ((1 0))) (next_index ((1 1))) (heartbeat 0)))
      (store
@@ -197,7 +200,8 @@ let%expect_test "loop single" =
   let t, actions = R.advance t Int64.(`Syncd (of_int 2)) |> get_ok in
   let t = print_state t actions in
   let _ = t in
-  [%expect{|
+  [%expect
+    {|
     (("R.Test.get_node_state t"
       (Leader (match_index ((1 2))) (next_index ((1 1))) (heartbeat 0)))
      (store
@@ -338,7 +342,8 @@ let%expect_test "loop triple" =
   in
   let t2, actions = R.advance t2 (`Syncd (Int64.of_int 2)) |> get_ok in
   let t2 = print_state t2 actions in
-  [%expect{|
+  [%expect
+    {|
     (("R.Test.get_node_state t"
       (Leader (match_index ((1 0) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
        (heartbeat 0)))
@@ -355,7 +360,8 @@ let%expect_test "loop triple" =
   let t1, actions = R.advance t1 (`Recv ae) |> get_ok in
   let t1 = print_state t1 actions in
   let _ = t1 in
-  [%expect{|
+  [%expect
+    {|
     (("R.Test.get_node_state t" (Follower (timeout 0)))
      (store
       ((data
@@ -383,7 +389,8 @@ let%expect_test "loop triple" =
   let () =
     let t2, actions = R.advance t2 (`Recv aer) |> get_ok in
     let _t2 = print_state t2 actions in
-    [%expect{|
+    [%expect
+      {|
       (("R.Test.get_node_state t"
         (Leader (match_index ((1 2) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
          (heartbeat 0)))
