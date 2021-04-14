@@ -1,6 +1,6 @@
 open! Core
 open! Async
-module O = Ocamlpaxos
+module O = Ocons_core
 
 let log_src = Logs.Src.create "Bench"
 
@@ -133,7 +133,7 @@ let () =
     (fun n o ps t () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
-      List.iter [Ocamlpaxos.Client.logger] ~f:(fun log ->
+      List.iter [O.Client.logger] ~f:(fun log ->
           Async.Log.set_level log global_level ;
           Async.Log.set_output log global_output ) ;
       main t n o ps )

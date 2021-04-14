@@ -1,11 +1,14 @@
-.PHONY: build clean clean_benchmark
-
+.PHONY: build
 build:
 	eval `opam env` 
-	dune build @install 
+	opam exec -- dune build @install 
 
-clean: clean_benchmark
-	dune clean
+.PHONY: test
+test: clean
+	opam exec -- dune runtest -f
+	opam exec -- dune exec scripts/micro_bench.exe -- paxos -rate 100
 
-clean_benchmark:
+.PHONY: clean
+clean:
+	opam exec -- dune clean
 	rm -rf *.log *.datadir *.dat *.dat.old *.stderr *.stdout data.json

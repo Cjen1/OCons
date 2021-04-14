@@ -1,14 +1,14 @@
 open! Core
-open! Ocamlpaxos
-module P = Paxos_core
-module S = Types.IStorage
+open! Ocons_core
+module S = Immutable_store
+module P = Paxos.Make (S)
 open! P.Test.StateR.Let_syntax
 
 let cmd_of_int i =
   Types.Command.{op= Read (Int.to_string i); id= Types.Id.of_int_exn i}
 
 let single_config =
-  P.
+  Paxos.
     { phase1quorum= 1
     ; phase2quorum= 1
     ; other_nodes= []
@@ -17,7 +17,7 @@ let single_config =
     ; election_timeout= 1 }
 
 let three_config =
-  P.
+  Paxos.
     { phase1quorum= 2
     ; phase2quorum= 2
     ; other_nodes= [2; 3]
@@ -48,7 +48,9 @@ let get_ok = function
 let print_state (t : P.t) actions =
   let t, store = P.pop_store t in
   [%message
-    (P.Test.get_node_state t : P.node_state) (store : S.t) (actions : P.actions)]
+    (P.Test.get_node_state t : P.Test.node_state)
+      (store : S.t)
+      (actions : P.actions)]
   |> Sexp.to_string_hum |> print_endline ;
   t
 
@@ -63,8 +65,6 @@ let%expect_test "transitions" =
   let t, actions =
     P.Test.transition_to_candidate () |> get_result (make_empty t)
   in
-  print_endline @@ Fmt.str "%d" (P.get_term t) ;
-  [%expect {| 1 |}] ;
   let t = print_state t actions in
   [%expect
     {|
@@ -76,8 +76,8 @@ let%expect_test "transitions" =
        (ops ((Term 1)))))
      (actions
       ((acts
-        ((SendRequestVote (2 ((src 1) (term 1) (leader_commit 0))))
-         (SendRequestVote (3 ((src 1) (term 1) (leader_commit 0))))))
+        ((Send (2 (RequestVote ((src 1) (term 1) (leader_commit 0)))))
+         (Send (3 (RequestVote ((src 1) (term 1) (leader_commit 0)))))))
        (nonblock_sync false)))) |}] ;
   let t, actions =
     P.Test.transition_to_leader () |> get_result (make_empty t)
@@ -94,14 +94,16 @@ let%expect_test "transitions" =
        (ops ())))
      (actions
       ((acts
-        ((SendAppendEntries
+        ((Send
           (3
-           ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
-            (entries_length 0) (leader_commit 0))))
-         (SendAppendEntries
+           (AppendEntries
+            ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))
+         (Send
           (2
-           ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
-            (entries_length 0) (leader_commit 0))))))
+           (AppendEntries
+            ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))))
        (nonblock_sync false)))) |}]
 
 let%expect_test "tick" =
@@ -119,8 +121,8 @@ let%expect_test "tick" =
        (ops ((Term 1)))))
      (actions
       ((acts
-        ((SendRequestVote (2 ((src 1) (term 1) (leader_commit 0))))
-         (SendRequestVote (3 ((src 1) (term 1) (leader_commit 0))))))
+        ((Send (2 (RequestVote ((src 1) (term 1) (leader_commit 0)))))
+         (Send (3 (RequestVote ((src 1) (term 1) (leader_commit 0)))))))
        (nonblock_sync false)))) |}] ;
   let t, _ = P.Test.transition_to_follower () |> get_result (make_empty t) in
   let t, actions = P.advance t `Tick |> get_ok in
@@ -216,17 +218,17 @@ let%expect_test "loop triple" =
        (ops ((Term 2)))))
      (actions
       ((acts
-        ((SendRequestVote (1 ((src 2) (term 2) (leader_commit 0))))
-         (SendRequestVote (3 ((src 2) (term 2) (leader_commit 0))))))
+        ((Send (1 (RequestVote ((src 2) (term 2) (leader_commit 0)))))
+         (Send (3 (RequestVote ((src 2) (term 2) (leader_commit 0)))))))
        (nonblock_sync false)))) |}] ;
   let rv =
     List.find_map_exn actions.acts ~f:(function
-      | `SendRequestVote (dst, rv) when dst = 1 ->
+      | `Send (dst, rv) when dst = 1 ->
           Some rv
       | _ ->
           None )
   in
-  let t1, actions = P.advance t1 (`RRequestVote rv) |> get_ok in
+  let t1, actions = P.advance t1 (`Recv rv) |> get_ok in
   let t1 = print_state t1 actions in
   [%expect
     {|
@@ -236,17 +238,19 @@ let%expect_test "loop triple" =
        (ops ((Term 2)))))
      (actions
       ((acts
-        ((SendRequestVoteResponse
-          (2 ((src 1) (term 2) (vote_granted true) (entries ()) (start_index 1))))))
+        ((Send
+          (2
+           (RequestVoteResponse
+            ((src 1) (term 2) (vote_granted true) (entries ()) (start_index 1)))))))
        (nonblock_sync false)))) |}] ;
   let rvr =
     List.find_map_exn actions.acts ~f:(function
-      | `SendRequestVoteResponse (id, rvr) when id = 2 ->
+      | `Send (id, rvr) when id = 2 ->
           Some rvr
       | _ ->
           None )
   in
-  let t2, actions = P.advance t2 (`RRequestVoteResponse rvr) |> get_ok in
+  let t2, actions = P.advance t2 (`Recv rvr) |> get_ok in
   let t2 = print_state t2 actions in
   [%expect
     {|
@@ -258,14 +262,16 @@ let%expect_test "loop triple" =
        (ops ())))
      (actions
       ((acts
-        ((SendAppendEntries
+        ((Send
           (3
-           ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
-            (entries_length 0) (leader_commit 0))))
-         (SendAppendEntries
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))
+         (Send
           (1
-           ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
-            (entries_length 0) (leader_commit 0))))))
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))))
        (nonblock_sync true)))) |}] ;
   let t2, actions =
     P.advance t2 (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
@@ -289,24 +295,26 @@ let%expect_test "loop triple" =
          (Log (Add ((command ((op (Read 1)) (id 1))) (term 2))))))))
      (actions
       ((acts
-        ((SendAppendEntries
+        ((Send
           (3
-           ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
-            (entries
-             (((command ((op (Read 2)) (id 2))) (term 2))
-              ((command ((op (Read 1)) (id 1))) (term 2))))
-            (entries_length 2) (leader_commit 0))))
-         (SendAppendEntries
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+             (entries
+              (((command ((op (Read 2)) (id 2))) (term 2))
+               ((command ((op (Read 1)) (id 1))) (term 2))))
+             (entries_length 2) (leader_commit 0)))))
+         (Send
           (1
-           ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
-            (entries
-             (((command ((op (Read 2)) (id 2))) (term 2))
-              ((command ((op (Read 1)) (id 1))) (term 2))))
-            (entries_length 2) (leader_commit 0))))))
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+             (entries
+              (((command ((op (Read 2)) (id 2))) (term 2))
+               ((command ((op (Read 1)) (id 1))) (term 2))))
+             (entries_length 2) (leader_commit 0)))))))
        (nonblock_sync true)))) |}] ;
   let ae =
     List.find_map_exn actions.acts ~f:(function
-      | `SendAppendEntries (id, ae) when id = 1 ->
+      | `Send (id, ae) when id = 1 ->
           Some ae
       | _ ->
           None )
@@ -328,7 +336,7 @@ let%expect_test "loop triple" =
            (command_set (1 2)) (length 2)))))
        (ops ())))
      (actions ((acts ()) (nonblock_sync true)))) |}] ;
-  let t1, actions = P.advance t1 (`RAppendEntries ae) |> get_ok in
+  let t1, actions = P.advance t1 (`Recv ae) |> get_ok in
   let t1 = print_state t1 actions in
   let _ = t1 in
   [%expect
@@ -347,18 +355,18 @@ let%expect_test "loop triple" =
          (Log (Add ((command ((op (Read 1)) (id 1))) (term 2))))))))
      (actions
       ((acts
-        ((SendAppendEntriesResponse (2 ((src 1) (term 2) (success (Ok 2)))))))
+        ((Send (2 (AppendEntriesResponse ((src 1) (term 2) (success (Ok 2))))))))
        (nonblock_sync false)))) |}] ;
   let aer =
     List.find_map_exn actions.acts ~f:(function
-      | `SendAppendEntriesResponse (id, aer) when id = 2 ->
+      | `Send (id, aer) when id = 2 ->
           Some aer
       | _ ->
           None )
   in
   (* In case of full update *)
   let () =
-    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
+    let t2, actions = P.advance t2 (`Recv aer) |> get_ok in
     let _t2 = print_state t2 actions in
     [%expect
       {|
@@ -375,69 +383,5 @@ let%expect_test "loop triple" =
              (command_set (1 2)) (length 2)))))
          (ops ())))
        (actions ((acts ((CommitIndexUpdate 2))) (nonblock_sync true)))) |}]
-  in
-  (* In case of partial update *)
-  let () =
-    (* This case is a bit weird, but still correct
-       From the Leader's perspective it has sent cmds 1 and 2 to the follower (NI = 3, MI = 0 initially)
-       However it gets a successful ack for only up to 1 (MI = 1, NI = NI)
-       Thus it doesn't need to send more since 'it has already sent 2 to the follower'
-    *)
-    let aer =
-      match aer with
-      | {success= Ok v; _} ->
-          {aer with success= Ok Int64.(v - one)}
-      | _ ->
-          assert false
-    in
-    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
-    let t2 = print_state t2 actions in
-    let _ = t2 in
-    [%expect
-      {|
-      (("P.Test.get_node_state t"
-        (Leader (match_index ((1 1) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
-         (heartbeat 0)))
-       (store
-        ((data
-          ((current_term 2)
-           (log
-            ((store
-              (((command ((op (Read 2)) (id 2))) (term 2))
-               ((command ((op (Read 1)) (id 1))) (term 2))))
-             (command_set (1 2)) (length 2)))))
-         (ops ())))
-       (actions ((acts ((CommitIndexUpdate 1))) (nonblock_sync true)))) |}]
-  in
-  (* In case of a failed update *)
-  let () =
-    let aer = {aer with success= Error Int64.one} in
-    let t2, actions = P.advance t2 (`RAppendEntiresResponse aer) |> get_ok in
-    let t2 = print_state t2 actions in
-    let _ = t2 in
-    [%expect
-      {|
-      (("P.Test.get_node_state t"
-        (Leader (match_index ((1 0) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
-         (heartbeat 0)))
-       (store
-        ((data
-          ((current_term 2)
-           (log
-            ((store
-              (((command ((op (Read 2)) (id 2))) (term 2))
-               ((command ((op (Read 1)) (id 1))) (term 2))))
-             (command_set (1 2)) (length 2)))))
-         (ops ())))
-       (actions
-        ((acts
-          ((SendAppendEntries
-            (1
-             ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
-              (entries
-               (((command ((op (Read 2)) (id 2))) (term 2))
-                ((command ((op (Read 1)) (id 1))) (term 2))))
-              (entries_length 2) (leader_commit 0))))))
-         (nonblock_sync true)))) |}]
   in
   ()

@@ -1,40 +1,20 @@
 (executable
- (name main)
- (public_name ocamlpaxos)
- (libraries ocamlpaxos core async async.log_extended)
- (preprocess
-  (pps ppx_jane))
- (modules main))
-
-(executable
  (name client)
- (public_name ocamlpaxos-client)
- (libraries ocamlpaxos core async)
+ (public_name ocons-core.client)
+ (package ocons-core)
+ (libraries ocons-core core async)
  (preprocess
   (pps ppx_jane))
  (modules client))
 
 (executable
  (name bench)
- (public_name ocamlpaxos-bench)
- (libraries ocamlpaxos owl core async yojson async.log_extended)
+ (public_name ocons-core.bench)
+ (package ocons-core)
+ (libraries ocons-core owl core async yojson async.log_extended)
  (preprocess
   (pps ppx_jane ppx_deriving_yojson))
  (modules bench))
-
-(executable
- (name bench_wal)
- (libraries ocamlpaxos owl core async yojson)
- (preprocess
-  (pps ppx_jane ppx_deriving_yojson))
- (modules bench_wal))
-
-(executable
- (name pcore_bench)
- (libraries ocamlpaxos core async core_bench)
- (preprocess
-  (pps ppx_jane -allow-unannotated-ignores))
- (modules pcore_bench))
 
 (env
  (dev

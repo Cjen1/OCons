@@ -1,10 +1,8 @@
 open! Core
-open! Ocamlpaxos
+open! Ocons_core
 open Types
-module L = Types.ILog
-module T = Types.ITerm
-module IS = Types.IStorage
-module PS = Types.MutableStorage (IS)
+module IS = Immutable_store
+module PS = Mutable_store.Make (IS)
 
 let make_entry id term key =
   let id = Types.Id.of_int_exn id in

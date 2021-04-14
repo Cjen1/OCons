@@ -4,11 +4,11 @@ open! Async
 val logger : Log.t
 
 module type Persistable = sig
-  type t
+  type t [@@deriving sexp_of]
 
   val init : unit -> t
 
-  type op [@@deriving bin_io, sexp]
+  type op [@@deriving bin_io, sexp_of]
 
   val apply : t -> op -> t
 end

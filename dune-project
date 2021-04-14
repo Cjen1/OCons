@@ -9,7 +9,30 @@
 (generate_opam_files true)
 
 (package
-  (name ocamlpaxos)
+  (name ocons-core)
+  (synopsis "The infrastructure for pluggable consensus implementations")
+  (depends 
+    (ocaml (>= 4.08.0))
+    core
+    async
+    accessor_async
+    rpc_parallel
+    ppx_jane
+    ppx_log
+    ppx_deriving_yojson
+    ppx_accessor
+    dune
+    logs
+    fmt
+    owl
+    core_bench
+    core_profiler
+    shexp
+    angstrom
+    ))
+
+(package
+  (name ocons-variants)
   (synopsis "An ocaml implementation of the Paxos protocol")
   (depends 
     (ocaml (>= 4.08.0))
