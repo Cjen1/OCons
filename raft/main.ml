@@ -63,7 +63,7 @@ let command =
             Unix.mkdir datadir
       in
       let p_config =
-        Paxos.make_config ~node_id
+        Raft.make_config ~node_id
           ~node_list:(List.map ~f:fst node_list)
           ~election_timeout
       in
