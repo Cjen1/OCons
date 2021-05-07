@@ -646,6 +646,8 @@ module Make (S : Immutable_store_intf.S) = struct
     ; node_state= Follower {timeout= config.election_timeout} }
 
   module Test = struct
+    let logger = logger
+    let io_logger = io_logger
     type nonrec node_state = node_state [@@deriving sexp_of]
 
     module State = State

@@ -41,8 +41,8 @@ let run_ts ts =
 
 let get_not_failure r =
   match%map r with
-  | O.Types.Failure ->
-      raise @@ Failure "Got failure from operation"
+  | O.Types.Failure s ->
+      raise @@ Failure ("Got failure from operation" ^ s)
   | _ ->
       r
 

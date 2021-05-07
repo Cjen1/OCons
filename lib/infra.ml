@@ -74,6 +74,7 @@ module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
         (* This can't throw an error since there are no holes in the log (<= commit index) *)
         let entry = MS.get_index t.store index |> Result.ok_exn in
         let result = update_state_machine t.state_machine entry.command in
+        [%log.debug logger (index : int64) (result : Types.op_result)] ;
         H.set t.command_results ~key:entry.command.id ~data:result ;
         return_result t entry.command.id (Ok result) ;
         advance_state_machine t commit_index
@@ -101,8 +102,9 @@ module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
           | Ok () ->
               [%log.debug logger "Dispatched successfully" (dst : int)]
           | Error e ->
-              Async_rpc_kernel.Rpc_error.raise e (Info.of_string "send request")
-          ) )
+              [%log.error
+                logger "Failed while dispatching"
+                  ~e:(Async_rpc_kernel.Rpc_error.to_string e : string)] ) )
 
   let datasync_time = Delta_timer.create ~name:"ds_time"
 
@@ -300,7 +302,7 @@ module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
       ; last_applied= Int64.zero
       ; conns
       ; state_machine
-      ; command_results= H.create (module Types.Id) }
+      ; command_results= H.create (module Uuid) }
     in
     don't_wait_for (handle_ev_q t) ;
     Async.every ~continue_on_error:true infra_config.tick_speed (fun () ->

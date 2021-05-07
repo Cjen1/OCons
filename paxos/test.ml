@@ -5,7 +5,9 @@ module P = Paxos.Make (S)
 open! P.Test.StateR.Let_syntax
 
 let cmd_of_int i =
-  Types.Command.{op= Read (Int.to_string i); id= Types.Id.of_int_exn i}
+  Types.Command.
+    { op= Read (Int.to_string i)
+    ; id= Uuid.create_random (Random.State.make [|i|]) }
 
 let single_config =
   Paxos.
@@ -149,7 +151,10 @@ let%expect_test "loop single" =
       ((data ((current_term 0) (log ((store ()) (command_set ()) (length 0)))))
        (ops ())))
      (actions
-      ((acts ((Unapplied (((op (Read 1)) (id 1)) ((op (Read 2)) (id 2))))))
+      ((acts
+        ((Unapplied
+          (((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0))
+           ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a))))))
        (nonblock_sync false)))) |}] ;
   let t, actions = P.advance t `Tick |> get_ok in
   let t = print_state t actions in
@@ -174,12 +179,23 @@ let%expect_test "loop single" =
         ((current_term 1)
          (log
           ((store
-            (((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2)) (length 2)))))
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
        (ops
-        ((Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))))))
+        ((Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))))
      (actions ((acts ()) (nonblock_sync true)))) |}] ;
   let t, actions = P.advance t Int64.(`Syncd (of_int 2)) |> get_ok in
   let t = print_state t actions in
@@ -193,9 +209,14 @@ let%expect_test "loop single" =
         ((current_term 1)
          (log
           ((store
-            (((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2)) (length 2)))))
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
        (ops ())))
      (actions ((acts ((CommitIndexUpdate 2))) (nonblock_sync true)))) |}]
 
@@ -287,12 +308,23 @@ let%expect_test "loop triple" =
         ((current_term 2)
          (log
           ((store
-            (((command ((op (Read 2)) (id 2))) (term 2))
-             ((command ((op (Read 1)) (id 1))) (term 2))))
-           (command_set (1 2)) (length 2)))))
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
        (ops
-        ((Log (Add ((command ((op (Read 2)) (id 2))) (term 2))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 2))))))))
+        ((Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 2))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 2))))))))
      (actions
       ((acts
         ((Send
@@ -300,16 +332,24 @@ let%expect_test "loop triple" =
            (AppendEntries
             ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
              (entries
-              (((command ((op (Read 2)) (id 2))) (term 2))
-               ((command ((op (Read 1)) (id 1))) (term 2))))
+              (((command
+                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command
+                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
              (entries_length 2) (leader_commit 0)))))
          (Send
           (1
            (AppendEntries
             ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
              (entries
-              (((command ((op (Read 2)) (id 2))) (term 2))
-               ((command ((op (Read 1)) (id 1))) (term 2))))
+              (((command
+                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command
+                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
              (entries_length 2) (leader_commit 0)))))))
        (nonblock_sync true)))) |}] ;
   let ae =
@@ -331,9 +371,14 @@ let%expect_test "loop triple" =
         ((current_term 2)
          (log
           ((store
-            (((command ((op (Read 2)) (id 2))) (term 2))
-             ((command ((op (Read 1)) (id 1))) (term 2))))
-           (command_set (1 2)) (length 2)))))
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
        (ops ())))
      (actions ((acts ()) (nonblock_sync true)))) |}] ;
   let t1, actions = P.advance t1 (`Recv ae) |> get_ok in
@@ -347,12 +392,23 @@ let%expect_test "loop triple" =
         ((current_term 2)
          (log
           ((store
-            (((command ((op (Read 2)) (id 2))) (term 2))
-             ((command ((op (Read 1)) (id 1))) (term 2))))
-           (command_set (1 2)) (length 2)))))
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
        (ops
-        ((Log (Add ((command ((op (Read 2)) (id 2))) (term 2))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 2))))))))
+        ((Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 2))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 2))))))))
      (actions
       ((acts
         ((Send (2 (AppendEntriesResponse ((src 1) (term 2) (success (Ok 2))))))))
@@ -378,9 +434,14 @@ let%expect_test "loop triple" =
           ((current_term 2)
            (log
             ((store
-              (((command ((op (Read 2)) (id 2))) (term 2))
-               ((command ((op (Read 1)) (id 1))) (term 2))))
-             (command_set (1 2)) (length 2)))))
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
          (ops ())))
        (actions ((acts ((CommitIndexUpdate 2))) (nonblock_sync true)))) |}]
   in

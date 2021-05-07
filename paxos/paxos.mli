@@ -20,6 +20,9 @@ module Make (S : Immutable_store_intf.S) : sig
 
   (** Module for testing internal state *)
   module Test : sig
+    val logger : Async.Log.t
+    val io_logger : Async.Log.t
+
     type node_state [@@deriving sexp_of]
 
     module State : sig

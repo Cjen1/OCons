@@ -11,7 +11,7 @@ let logger =
     ()
 
 module ILog = struct
-  module IdSet = Set.Make (Id)
+  module IdSet = Set.Make (Uuid.Stable.V1)
 
   module I = struct
     (* store is in newest to oldest order*)

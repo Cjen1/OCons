@@ -17,14 +17,6 @@ let get_current_conns t = List.filter_map t.conns ~f:PC.Rpc.current_connection
 let send t op =
   let retry_loop () =
     let conns = get_current_conns t in
-    (* For each conn send out request
-       match response with
-       | Ok (Ok v) -> return v
-       | Ok (Error `Unapplied) -> do nothing
-       | Error e ->
-                log error;
-                do nothing
-    *)
     let reqs =
       List.map conns ~f:(fun conn ->
           match%map Rpc.Rpc.dispatch Types.client_rpc conn op with
@@ -55,11 +47,23 @@ let send t op =
   in
   Deferred.repeat_until_finished () retry_loop
 
-let op_read t k = send t Types.{op= Read (Bytes.to_string k); id= Id.create ()}
+let op_read t k =
+  send t Types.{op= Read (Bytes.to_string k); id= Uuid_unix.create ()}
 
 let op_write t ~k ~v =
   send t
-    Types.{op= Write (Bytes.to_string k, Bytes.to_string v); id= Id.create ()}
+    Types.
+      {op= Write (Bytes.to_string k, Bytes.to_string v); id= Uuid_unix.create ()}
+
+let op_cas t ~key ~value ~value' =
+  let key = Bytes.to_string key in
+  let value = Bytes.to_string value in
+  let value' = Bytes.to_string value' in
+  (*
+  Deferred.return @@ Types.Failure "Mock fail"
+  send t Types.{op= Write (key, value); id= Uuid_unix.create ()}
+     *)
+  send t Types.{op= CAS {key; value'; value}; id= Uuid_unix.create ()}
 
 let new_client ?(retry_delay = Time.Span.of_sec 1.) addresses =
   let conns = List.map addresses ~f:connect_persist in

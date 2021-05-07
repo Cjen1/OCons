@@ -46,10 +46,6 @@ let command =
         ; O.Utils.logger
         ; O.Owal.logger
         ; O.Client_handler.logger
-          (*
-        ; Paxos.logger
-        ; Paxos.io_logger
-               *)
         ] ~f:(fun log ->
           Async.Log.set_level log global_level ;
           Async.Log.set_output log global_output ) ;
