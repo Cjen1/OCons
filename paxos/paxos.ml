@@ -8,6 +8,18 @@ module U = Utils
 module IdMap = Map.Make (Int)
 open Core_profiler_disabled.Std
 
+let logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core")])
+    ()
+
+let io_logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core_io")])
+    ()
+
 type config =
   { phase1quorum: int
   ; phase2quorum: int
@@ -61,19 +73,6 @@ end
 
 module Make (S : Immutable_store_intf.S) = struct
   open MessageTypes
-
-  let logger =
-    let open Async_unix.Log in
-    create ~level:`Info ~output:[] ~on_error:`Raise
-      ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core")])
-      ()
-
-  let io_logger =
-    let open Async_unix.Log in
-    create ~level:`Info ~output:[] ~on_error:`Raise
-      ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core_io")])
-      ()
-
   module Store = S
 
   type store = Store.t
@@ -646,8 +645,6 @@ module Make (S : Immutable_store_intf.S) = struct
     ; node_state= Follower {timeout= config.election_timeout} }
 
   module Test = struct
-    let logger = logger
-    let io_logger = io_logger
     type nonrec node_state = node_state [@@deriving sexp_of]
 
     module State = State
