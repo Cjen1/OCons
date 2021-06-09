@@ -43,6 +43,11 @@ let make_config ~node_id ~node_list ~election_timeout =
   ; node_id
   ; election_timeout }
 
+let sexp_of_entries entries =
+  List.map entries ~f:(fun v ->
+      [%message (v.command.op : Types.sm_op) (v.term : term)] )
+  |> [%sexp_of: Sexp.t list]
+
 module MessageTypes = struct
   type request_vote = {src: node_id; term: term; leader_commit: log_index}
   [@@deriving bin_io, sexp]
@@ -121,11 +126,11 @@ module Make (S : Immutable_store_intf.S) = struct
   [@@deriving sexp_of, accessors]
 
   module State = struct
-    type state = {t: t; a: actions} [@@deriving accessors]
+    type state = {t: t; a: actions} [@@deriving sexp_of, accessors]
 
     let empty t = {t; a= empty}
 
-    type 'a sm = state -> 'a * state
+    type 'a sm = state -> 'a * state [@@deriving sexp_of]
 
     let return x : 'a sm = fun state -> (x, state)
 
@@ -160,7 +165,7 @@ module Make (S : Immutable_store_intf.S) = struct
   end
 
   module StateR = struct
-    type ('a, 'b) t = ('a, 'b) Result.t State.sm
+    type ('a, 'b) t = ('a, 'b) Result.t State.sm [@@deriving sexp_of]
 
     let return v : ('a, 'b) t = State.return @@ Result.return v
 
@@ -189,7 +194,13 @@ module Make (S : Immutable_store_intf.S) = struct
 
     let get_t = map_statef State.get_t
 
+    let get_a acc =
+      let%bind t = get_t () in
+      return (A.get acc t)
+
+    (*
     let put_t = map_statef State.put_t
+       *)
 
     let map_t = map_statef State.map_t
 
@@ -212,25 +223,81 @@ module Make (S : Immutable_store_intf.S) = struct
 
   open StateR.Let_syntax
 
+  let update_commit_index new_commit_index =
+    let%bind old_commit_index = StateR.get_a commit_index in
+    if Int64.(old_commit_index <> new_commit_index) then
+      let%bind () = StateR.map_t @@ A.set commit_index ~to_:new_commit_index in
+      StateR.append @@ `CommitIndexUpdate new_commit_index
+    else StateR.return ()
+
   let check_commit_index () =
-    let%bind t = StateR.get_t () in
-    match t.node_state with
+    match%bind StateR.get_a node_state with
     | Leader s ->
-        let commit_index =
-          Map.fold s.match_index ~init:[S.get_max_index t.store]
+        let%bind current_store = StateR.get_a store in
+        let%bind config = StateR.get_a config in
+        let calculated_commit_index =
+          Map.fold s.match_index ~init:[S.get_max_index current_store]
             ~f:(fun ~key:_ ~data acc -> data :: acc)
           |> List.sort ~compare:Int64.compare
           |> List.rev
-          |> fun ls -> List.nth_exn ls t.config.phase2quorum
+          |> fun ls -> List.nth_exn ls config.phase2quorum
         in
-        let%bind () =
-          if Int64.(commit_index <> t.commit_index) then
-            StateR.append @@ `CommitIndexUpdate commit_index
-          else StateR.return ()
+        let%bind new_commit_index =
+          let%bind prev_commit_index = StateR.get_a commit_index in
+          Int64.max calculated_commit_index prev_commit_index |> StateR.return
         in
-        StateR.put_t {t with commit_index}
+        update_commit_index new_commit_index
     | _ ->
         StateR.return ()
+
+  (* Takes two lists of entries lowest index first
+       iterates through the lists until there is a conflict
+       at which point it returns the conflict index and the entries to add
+  *)
+  let rec merge_y_into_x idx :
+      log_entry list * log_entry list -> int64 option * log_entry list =
+    function
+    | [], [] ->
+        (None, [])
+    | _ :: _, [] ->
+        (Some idx, [])
+    | [], ys ->
+        (None, ys)
+    | x :: _, (y :: _ as ys) when not @@ [%compare.equal: term] x.term y.term ->
+        [%log.debug
+          logger "Mismatch while merging" (x : log_entry) (y : log_entry)] ;
+        (Some idx, ys)
+    | _ :: xs, _ :: ys ->
+        merge_y_into_x Int64.(succ idx) (xs, ys)
+
+  let add_entries_remove_conflicts ~start_index new_entries =
+    let%bind t = StateR.get_t () in
+    let relevant_entries = S.entries_after_inc t.store start_index in
+    (* entries_to_add is in oldest first order *)
+    let removeGEQ_o, entries_to_add =
+      merge_y_into_x start_index
+        (List.rev relevant_entries, List.rev new_entries)
+    in
+    [%log.debug
+      logger "add_entries_remove_conflicts merge_y_into_x result"
+        (removeGEQ_o : log_index option)
+        ~adding:(sexp_of_entries entries_to_add : Sexp.t)] ;
+    let%bind () =
+      StateR.map_t
+      @@ A.map store ~f:(fun s ->
+             match removeGEQ_o with
+             | Some i ->
+                 S.remove_geq s ~index:i
+             | None ->
+                 s )
+    in
+    let%bind () =
+      StateR.map_t
+      @@ A.map store ~f:(fun s ->
+             List.fold_left entries_to_add ~init:s ~f:(fun s entry ->
+                 S.add_entry s ~entry ) )
+    in
+    StateR.return ()
 
   module ReplicationSM = struct
     (* We use the next_index to figure out what to send.
@@ -255,6 +322,11 @@ module Make (S : Immutable_store_intf.S) = struct
           let next_index = Map.find_exn s.next_index dst in
           let prev_log_index = Int64.(next_index - one) in
           let entries = S.entries_after_inc t.store next_index in
+          [%log.debug
+            io_logger "Sending append entries"
+              (next_index : log_index)
+              (prev_log_index : log_index)
+              (dst : node_id)] ;
           let entries_length = List.length entries |> Int64.of_int in
           let%bind () =
             StateR.map_t
@@ -265,7 +337,10 @@ module Make (S : Immutable_store_intf.S) = struct
           let%bind t = StateR.get_t () in
           Probe.record probe_send_size (Int64.to_int_exn entries_length) ;
           [%log.debug
-            logger (dst : int) (next_index : int64) (entries_length : int64)] ;
+            logger "send_append_entries"
+              (dst : int)
+              (prev_log_index : int64)
+              (entries_length : int64)] ;
           match entries with
           | [] when not force ->
               StateR.return ()
@@ -290,36 +365,49 @@ module Make (S : Immutable_store_intf.S) = struct
       Probe.create ~name:"recv_entries_size" ~units:Profiler_units.Int
 
     let recv_append_entries (msg : append_entries) =
-      let%bind t = StateR.get_t () in
       (* If we fail we return the latest point an error occurred (that we can tell) *)
-      let send t success =
+      let send success =
+        let%bind t = StateR.get_t () in
         StateR.append @@ send msg.src
         @@ AppendEntriesResponse
              {src= t.config.node_id; term= S.get_current_term t.store; success}
       in
-      match S.get_term t.store msg.prev_log_index with
-      | _ when Int.(msg.term < S.get_current_term t.store) ->
+      let%bind prev_store = StateR.get_a store in
+      match S.get_term prev_store msg.prev_log_index with
+      | _ when Int.(msg.term < S.get_current_term prev_store) ->
+          [%log.debug
+            logger "Received message from old leader"
+              (msg.term : term)
+              (msg.src : node_id)] ;
           (* May want better error reporting here *)
-          let%bind () = send t (Error msg.prev_log_index) in
-          StateR.put_t t
+          send (Error msg.prev_log_index)
       | Error _ ->
-          (* The entries that got sent were greater than the entirety of the log *)
-          let%bind () = send t (Error (S.get_max_index t.store)) in
-          StateR.put_t t
+          (* The entries that got sent were greater than the entirety of the log 
+           * So the error is the missing entry one higher than the highest index *)
+          [%log.debug
+            logger "Entries received were larger than entirety of log"
+              (msg.prev_log_index : log_index)
+              (S.get_max_index prev_store : log_index)] ;
+          send (Error Int64.(S.get_max_index prev_store + one))
       | Ok term when Int.(term <> msg.prev_log_term) ->
-          let%bind () = send t (Error msg.prev_log_index) in
-          StateR.put_t t
+          [%log.debug
+            logger "Log divergence, difference terms for same entry"
+              (term : term)
+              (msg.prev_log_term : term)] ;
+          send (Error msg.prev_log_index)
       | Ok _ ->
           Probe.record probe_recv_size (Int64.to_int_exn msg.entries_length) ;
-          let t =
-            A.map store t
-              ~f:
-                (S.add_entries_remove_conflicts
-                   ~start_index:Int64.(msg.prev_log_index + one)
-                   ~entries:msg.entries )
+          let%bind () =
+            add_entries_remove_conflicts
+              ~start_index:Int64.(msg.prev_log_index + one)
+              msg.entries
+          in
+          let%bind () =
+            StateR.map_t @@ A.set (node_state @> Follower.timeout) ~to_:0
           in
           let match_index = Int64.(msg.prev_log_index + msg.entries_length) in
-          let commit_index =
+          let%bind prev_commit_index = StateR.get_a commit_index in
+          let new_commit_index =
             let last_entry =
               match List.hd msg.entries with
               | None ->
@@ -327,32 +415,20 @@ module Make (S : Immutable_store_intf.S) = struct
               | Some _ ->
                   match_index
             in
-            if Int64.(msg.leader_commit > t.commit_index) then
-              Int64.(min msg.leader_commit last_entry)
-            else t.commit_index
+            Int64.(max prev_commit_index (min msg.leader_commit last_entry))
           in
-          let%bind () =
-            if Int64.(t.commit_index <> commit_index) then
-              StateR.append @@ `CommitIndexUpdate commit_index
-            else StateR.return ()
-          in
-          let t = {t with commit_index} in
-          let t =
-            match t.node_state with
-            | Follower _s ->
-                {t with node_state= Follower {timeout= 0}}
-            | _ ->
-                t
-          in
-          let%bind () = send t (Ok match_index) in
-          StateR.put_t t
+          let%bind () = update_commit_index new_commit_index in
+          let%bind () = send (Ok match_index) in
+          StateR.return ()
 
     let recv_append_entries_response msg =
-      let%bind t = StateR.get_t () in
       let%bind () =
-        match (t.node_state, msg.success) with
+        let%bind prev_node_state = StateR.get_a node_state in
+        let%bind prev_store = StateR.get_a store in
+        match (prev_node_state, msg.success) with
         | Leader s, Ok remote_match_index
-          when Int.(msg.term = S.get_current_term t.store) ->
+        (* Update commit index, send more messages *)
+          when Int.(msg.term = S.get_current_term prev_store) ->
             let match_index =
               Map.update s.match_index msg.src ~f:(function
                 | None ->
@@ -368,20 +444,21 @@ module Make (S : Immutable_store_intf.S) = struct
                 | Some ni ->
                     Int64.(max ni (updated_match_index + one)) )
             in
-            let node_state = Leader {s with match_index; next_index} in
-            StateR.map_t (fun t -> {t with node_state})
-        | Leader s, Error prev_log_index ->
-            [%log.error
-              logger "RappendEntiresResponse: not valid append entries"
-                (prev_log_index : log_index)
+            let new_node_state = Leader {s with match_index; next_index} in
+            StateR.map_t @@ A.set node_state ~to_:new_node_state
+        | Leader s, Error error_index ->
+            (* Error occurred, it occurred at an index which is at most prev_log_index *)
+            [%log.debug
+              logger "RappendEntiresResponse: Invalid append_entries"
+                (error_index : log_index)
                 ~next_index:(Map.find_exn s.next_index msg.src : log_index)] ;
             let next_index =
-              Map.set s.next_index ~key:msg.src ~data:prev_log_index
+              Map.set s.next_index ~key:msg.src ~data:error_index
             in
             let node_state = Leader {s with next_index} in
             StateR.map_t (fun t -> {t with node_state})
         | _ ->
-            StateR.put_t t
+            StateR.return ()
       in
       (* Send any remaining entries / Fixed entries *)
       send_append_entries msg.src
@@ -391,17 +468,20 @@ module Make (S : Immutable_store_intf.S) = struct
     let%bind t = StateR.get_t () in
     match t.node_state with
     | Candidate s ->
-        [%log.info logger "Transition to leader"] ;
         let current_term = S.get_current_term t.store in
+        [%log.info
+          logger "Won leader election"
+            ~of_term:(current_term : term)
+            ~commited:(t.commit_index : log_index)] ;
+        [%log.debug
+          logger "Leader transition starting"
+            (Candidate s : node_state)
+            ~log:(t.store : Store.t)] ;
         let entries =
           List.map s.entries ~f:(fun entry -> {entry with term= current_term})
         in
         let%bind () =
-          StateR.map_t
-          @@ A.map store
-               ~f:
-                 (S.add_entries_remove_conflicts ~start_index:s.start_index
-                    ~entries )
+          add_entries_remove_conflicts ~start_index:s.start_index entries
         in
         let match_index, next_index =
           List.fold (t.config.node_id :: t.config.other_nodes)
@@ -419,6 +499,8 @@ module Make (S : Immutable_store_intf.S) = struct
           ReplicationSM.send_append_entries ~force:true node_id
         in
         let%bind () = check_commit_index () in
+        [%log.debug
+          logger "Leader transition complete" ~log:(t.store : Store.t)] ;
         StateR.list_iter t.config.other_nodes ~f:iter
     | _ ->
         StateR.fail
@@ -494,6 +576,45 @@ module Make (S : Immutable_store_intf.S) = struct
     | _ ->
         StateR.return ()
 
+  (**
+   * Takes two lists of log entries
+   * merges them.
+   * They should start at the same point
+   *
+   * If they don't match it takes the entry with the highest term
+   *)
+  let merge_entries lx sx ly sy =
+    if not Int64.(sx = sy) then (
+      [%log.error
+        logger "Error while merging"
+          ~start_x:(sx : log_index)
+          ~start_y:(sy : log_index)] ;
+      StateR.fail @@ `Msg "Can't merge entries not starting at same point" )
+    else
+      let rec loop acc : 'a -> log_entry list = function
+        | [], [] ->
+            acc
+        | x :: xs, ([] as ys) ->
+            loop (x :: acc) (xs, ys)
+        | ([] as xs), y :: ys ->
+            loop (y :: acc) (xs, ys)
+        | x :: xs, y :: ys when x.term < y.term ->
+            loop (y :: acc) (xs, ys)
+        | x :: xs, y :: ys when x.term > y.term ->
+            loop (x :: acc) (xs, ys)
+        | x :: xs, y :: ys
+          when [%compare: Types.command] x.command y.command = 0 ->
+            loop (x :: acc) (xs, ys)
+        | x :: _xs, y :: _ys ->
+            [%log.error
+              logger "Commands for same term and index are different..."
+                ~start:(sx : log_index)
+                (x : Types.log_entry)
+                (y : Types.log_entry)] ;
+            assert false
+      in
+      loop [] (lx, ly) |> List.rev |> StateR.return
+
   let command_size_probe =
     Probe.create ~name:"cs_batch_size" ~units:Profiler_units.Int
 
@@ -560,28 +681,8 @@ module Make (S : Immutable_store_intf.S) = struct
       | Error `AlreadyInList ->
           StateR.return ()
       | Ok (quorum : node_id U.Quorum.t) ->
-          let merge x sx y sy =
-            if not Int64.(sx = sy) then (
-              [%log.error
-                logger "Error while merging"
-                  ~start_x:(sx : log_index)
-                  ~start_y:(sy : log_index)] ;
-              StateR.fail
-              @@ `Msg "Can't merge entries not starting at same point" )
-            else
-              let rec loop acc : 'a -> log_entry list = function
-                | xs, [] ->
-                    xs
-                | [], ys ->
-                    ys
-                | x :: xs, y :: ys ->
-                    let res = if Int.(x.term < y.term) then y else x in
-                    loop (res :: acc) (xs, ys)
-              in
-              loop [] (x, y) |> List.rev |> StateR.return
-          in
           let%bind entries =
-            merge s.entries s.start_index msg.entries msg.start_index
+            merge_entries s.entries s.start_index msg.entries msg.start_index
           in
           let%bind () =
             StateR.map_t
@@ -601,10 +702,9 @@ module Make (S : Immutable_store_intf.S) = struct
           List.filter cs ~f:(fun cmd -> not @@ S.mem_id t.store cmd.id)
         in
         Probe.record command_size_probe (List.length cmds) ;
+        let current_term = S.get_current_term t.store in
         let%bind () =
-          StateR.map_t
-          @@ A.map store
-               ~f:(S.add_cmds ~cmds ~term:(S.get_current_term t.store))
+          StateR.map_t @@ A.map store ~f:(S.add_cmds ~cmds ~term:current_term)
         in
         let%bind () = check_commit_index () in
         StateR.list_iter t.config.other_nodes
@@ -625,7 +725,7 @@ module Make (S : Immutable_store_intf.S) = struct
   let pop_store (t : t) = ({t with store= S.reset_ops t.store}, t.store)
 
   let advance t event =
-    [%log.debug io_logger "Entry" (event : event)] ;
+    [%log.debug io_logger "NEW EVENT" (event : event)] ;
     let prog = advance_raw event in
     let%bind.Result (), State.{t; a= actions} =
       StateR.eval prog (State.empty t)
@@ -634,7 +734,6 @@ module Make (S : Immutable_store_intf.S) = struct
     let actions =
       {actions with nonblock_sync= actions.nonblock_sync || is_leader}
     in
-    [%log.debug io_logger "Exit" (actions : actions)] ;
     Ok (t, actions)
 
   let create_node config store =
@@ -643,23 +742,922 @@ module Make (S : Immutable_store_intf.S) = struct
     ; store
     ; commit_index= Int64.zero
     ; node_state= Follower {timeout= config.election_timeout} }
+end
 
-  module Test = struct
-    type nonrec node_state = node_state [@@deriving sexp_of]
+module Test = struct
+  module S = Immutable_store
+  module P = Make (S)
+  open! P.StateR.Let_syntax
 
-    module State = State
-    module StateR = StateR
+  let cmd_of_int i =
+    Types.Command.
+      { op= Read (Int.to_string i)
+      ; id= Uuid.create_random (Random.State.make [|i|]) }
 
-    let transition_to_leader = transition_to_leader
+  let single_config =
+    { phase1quorum= 1
+    ; phase2quorum= 1
+    ; other_nodes= []
+    ; num_nodes= 1
+    ; node_id= 1
+    ; election_timeout= 1 }
 
-    let transition_to_candidate = transition_to_candidate
+  let three_config =
+    { phase1quorum= 2
+    ; phase2quorum= 2
+    ; other_nodes= [2; 3]
+    ; num_nodes= 3
+    ; node_id= 1
+    ; election_timeout= 1 }
 
-    let transition_to_follower = transition_to_follower
+  let%expect_test "merge_entries" =
+    let empty_state =
+      let store = S.init () in
+      let t = P.create_node single_config store in
+      P.State.empty t
+    in
+    let open Types in
+    let open P in
+    let mk_entry i term =
+      let cmd = cmd_of_int i in
+      {command= cmd; term}
+    in
+    let mk_entries ls = List.map ls ~f:(fun (i, term) -> mk_entry i term) in
+    let print_result res =
+      res
+      |> (fun v -> StateR.eval v empty_state)
+      |> Result.map ~f:fst
+      |> Result.map ~f:(fun v ->
+             List.map v ~f:(fun v ->
+                 [%message (v.command.op : Types.sm_op) (v.term : term)] ) )
+      |> [%sexp_of: (Sexp.t list, [> `Msg of key]) Result.t]
+      |> Sexp.to_string_hum |> print_endline
+    in
+    merge_entries [] Int64.(of_int 1) [] Int64.(of_int 2) |> print_result ;
+    [%expect
+      {| (Error (Msg "Can't merge entries not starting at same point")) |}] ;
+    let x = [(1, 1); (2, 1); (3, 1)] |> mk_entries in
+    let y = [(1, 1)] |> mk_entries in
+    merge_entries x Int64.zero y Int64.zero |> print_result ;
+    [%expect
+      {|
+      (Ok
+       ((("(v.command).op" (Read 1)) (v.term 1))
+        (("(v.command).op" (Read 2)) (v.term 1))
+        (("(v.command).op" (Read 3)) (v.term 1)))) |}] ;
+    let x = [(1, 1)] |> mk_entries in
+    let y = [(1, 1); (2, 1); (3, 1)] |> mk_entries in
+    merge_entries x Int64.zero y Int64.zero |> print_result ;
+    [%expect
+      {|
+      (Ok
+       ((("(v.command).op" (Read 1)) (v.term 1))
+        (("(v.command).op" (Read 2)) (v.term 1))
+        (("(v.command).op" (Read 3)) (v.term 1)))) |}] ;
+    let x = [(1, 1); (2, 1); (3, 1)] |> mk_entries in
+    let y = [(1, 1); (2, 1); (3, 1)] |> mk_entries in
+    merge_entries x Int64.zero y Int64.zero |> print_result ;
+    [%expect
+      {|
+      (Ok
+       ((("(v.command).op" (Read 1)) (v.term 1))
+        (("(v.command).op" (Read 2)) (v.term 1))
+        (("(v.command).op" (Read 3)) (v.term 1)))) |}] ;
+    let x = [(1, 1); (4, 2)] |> mk_entries in
+    let y = [(1, 1); (2, 1); (3, 2)] |> mk_entries in
+    merge_entries x Int64.zero y Int64.zero |> print_result ;
+    [%expect
+      {|
+      (Ok
+       ((("(v.command).op" (Read 1)) (v.term 1))
+        (("(v.command).op" (Read 4)) (v.term 2))
+        (("(v.command).op" (Read 3)) (v.term 2)))) |}] ;
+    let x = [(1, 1); (2, 1); (3, 2)] |> mk_entries in
+    let y = [(1, 1); (4, 2)] |> mk_entries in
+    merge_entries x Int64.zero y Int64.zero |> print_result ;
+    [%expect
+      {|
+      (Ok
+       ((("(v.command).op" (Read 1)) (v.term 1))
+        (("(v.command).op" (Read 4)) (v.term 2))
+        (("(v.command).op" (Read 3)) (v.term 2)))) |}] ;
+    ()
 
-    let get_node_state t = t.node_state
+  let pr_err s p =
+    match P.StateR.eval p s with
+    | Error (`Msg s) ->
+        print_endline @@ Fmt.str "Error: %s" s
+    | Ok _ ->
+        ()
 
-    let get_commit_index t = t.commit_index
+  let get_result s p =
+    match P.StateR.eval p s with
+    | Error (`Msg s) ->
+        raise @@ Invalid_argument s
+    | Ok ((), {t; a= actions}) ->
+        (t, actions)
 
-    let get_store t = t.store
-  end
+  let get_ok = function
+    | Error (`Msg s) ->
+        raise @@ Invalid_argument s
+    | Ok v ->
+        v
+
+  let print_state (t : P.t) actions =
+    let t, store = P.pop_store t in
+    [%message
+      (t.P.node_state : P.node_state)
+        (t.P.commit_index : log_index)
+        (store : S.t)
+        (actions : P.actions)]
+    |> Sexp.to_string_hum |> print_endline ;
+    t
+
+  let make_empty t = P.State.empty t
+
+  let%expect_test "transitions" =
+    let store = S.init () in
+    let t = P.create_node three_config store in
+    let () = pr_err (make_empty t) @@ P.transition_to_leader () in
+    [%expect
+      {| Error: Cannot transition to leader from states other than candidate |}] ;
+    let t, actions =
+      P.transition_to_candidate () |> get_result (make_empty t)
+    in
+    let t = print_state t actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Candidate (quorum ((elts (1)) (n 1) (threshold 2) (eq <fun>)))
+       (entries ()) (start_index 1) (timeout 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data ((current_term 1) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ((Term 1)))))
+     (actions
+      ((acts
+        ((Send (2 (RequestVote ((src 1) (term 1) (leader_commit 0)))))
+         (Send (3 (RequestVote ((src 1) (term 1) (leader_commit 0)))))))
+       (nonblock_sync false)))) |}] ;
+    let t, actions = P.transition_to_leader () |> get_result (make_empty t) in
+    let t = print_state t actions in
+    let _ = t in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 1) (2 1) (3 1)))
+       (heartbeat 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data ((current_term 1) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ())))
+     (actions
+      ((acts
+        ((Send
+          (3
+           (AppendEntries
+            ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))
+         (Send
+          (2
+           (AppendEntries
+            ((src 1) (term 1) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))))
+       (nonblock_sync false)))) |}]
+
+  let%expect_test "tick" =
+    let store = S.init () in
+    let t = P.create_node three_config store in
+    let t, actions = P.advance t `Tick |> get_ok in
+    let t = print_state t actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Candidate (quorum ((elts (1)) (n 1) (threshold 2) (eq <fun>)))
+       (entries ()) (start_index 1) (timeout 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data ((current_term 1) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ((Term 1)))))
+     (actions
+      ((acts
+        ((Send (2 (RequestVote ((src 1) (term 1) (leader_commit 0)))))
+         (Send (3 (RequestVote ((src 1) (term 1) (leader_commit 0)))))))
+       (nonblock_sync false)))) |}] ;
+    let t, _ = P.transition_to_follower () |> get_result (make_empty t) in
+    let t, actions = P.advance t `Tick |> get_ok in
+    let _t = print_state t actions in
+    [%expect
+      {|
+    ((t.P.node_state (Follower (timeout 1))) (t.P.commit_index 0)
+     (store
+      ((data ((current_term 1) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ())))
+     (actions ((acts ()) (nonblock_sync false)))) |}]
+
+  let%expect_test "loop single" =
+    let store = S.init () in
+    let t = P.create_node single_config store in
+    let t, actions =
+      P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+    in
+    let t = print_state t actions in
+    [%expect
+      {|
+    ((t.P.node_state (Follower (timeout 1))) (t.P.commit_index 0)
+     (store
+      ((data ((current_term 0) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ())))
+     (actions
+      ((acts
+        ((Unapplied
+          (((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0))
+           ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a))))))
+       (nonblock_sync false)))) |}] ;
+    let t, actions = P.advance t `Tick |> get_ok in
+    let t = print_state t actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Leader (match_index ((1 0))) (next_index ((1 1))) (heartbeat 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data ((current_term 1) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ((Term 1)))))
+     (actions ((acts ()) (nonblock_sync true)))) |}] ;
+    let t, actions =
+      P.advance t (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+    in
+    let t = print_state t actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Leader (match_index ((1 0))) (next_index ((1 1))) (heartbeat 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data
+        ((current_term 1)
+         (log
+          ((store
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
+       (ops
+        ((Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))))
+     (actions ((acts ()) (nonblock_sync true)))) |}] ;
+    let t, actions = P.advance t Int64.(`Syncd (of_int 2)) |> get_ok in
+    let t = print_state t actions in
+    let _ = t in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Leader (match_index ((1 2))) (next_index ((1 1))) (heartbeat 0)))
+     (t.P.commit_index 2)
+     (store
+      ((data
+        ((current_term 1)
+         (log
+          ((store
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
+       (ops ())))
+     (actions ((acts ((CommitIndexUpdate 2))) (nonblock_sync true)))) |}]
+
+  let%expect_test "loop triple" =
+    let s1 = S.init () in
+    let t1 = P.create_node three_config s1 in
+    let s2 = S.init () in
+    let t2 =
+      P.create_node {three_config with other_nodes= [1; 3]; node_id= 2} s2
+    in
+    let t2, actions = P.advance t2 `Tick |> get_ok in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Candidate (quorum ((elts (2)) (n 1) (threshold 2) (eq <fun>)))
+       (entries ()) (start_index 1) (timeout 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data ((current_term 2) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ((Term 2)))))
+     (actions
+      ((acts
+        ((Send (1 (RequestVote ((src 2) (term 2) (leader_commit 0)))))
+         (Send (3 (RequestVote ((src 2) (term 2) (leader_commit 0)))))))
+       (nonblock_sync false)))) |}] ;
+    let rv =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (dst, rv) when dst = 1 ->
+            Some rv
+        | _ ->
+            None )
+    in
+    let t1, actions = P.advance t1 (`Recv rv) |> get_ok in
+    let t1 = print_state t1 actions in
+    [%expect
+      {|
+    ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 0)
+     (store
+      ((data ((current_term 2) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ((Term 2)))))
+     (actions
+      ((acts
+        ((Send
+          (2
+           (RequestVoteResponse
+            ((src 1) (term 2) (vote_granted true) (entries ()) (start_index 1)))))))
+       (nonblock_sync false)))) |}] ;
+    let rvr =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, rvr) when id = 2 ->
+            Some rvr
+        | _ ->
+            None )
+    in
+    let t2, actions = P.advance t2 (`Recv rvr) |> get_ok in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 1) (2 1) (3 1)))
+       (heartbeat 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data ((current_term 2) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ())))
+     (actions
+      ((acts
+        ((Send
+          (3
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))
+         (Send
+          (1
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0) (entries ())
+             (entries_length 0) (leader_commit 0)))))))
+       (nonblock_sync true)))) |}] ;
+    let t2, actions =
+      P.advance t2 (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+    in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 3) (2 1) (3 3)))
+       (heartbeat 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data
+        ((current_term 2)
+         (log
+          ((store
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
+       (ops
+        ((Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 2))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 2))))))))
+     (actions
+      ((acts
+        ((Send
+          (3
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+             (entries
+              (((command
+                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command
+                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (entries_length 2) (leader_commit 0)))))
+         (Send
+          (1
+           (AppendEntries
+            ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+             (entries
+              (((command
+                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command
+                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (entries_length 2) (leader_commit 0)))))))
+       (nonblock_sync true)))) |}] ;
+    let ae =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, ae) when id = 1 ->
+            Some ae
+        | _ ->
+            None )
+    in
+    let t2, actions = P.advance t2 (`Syncd (Int64.of_int 2)) |> get_ok in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+    ((t.P.node_state
+      (Leader (match_index ((1 0) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
+       (heartbeat 0)))
+     (t.P.commit_index 0)
+     (store
+      ((data
+        ((current_term 2)
+         (log
+          ((store
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
+       (ops ())))
+     (actions ((acts ()) (nonblock_sync true)))) |}] ;
+    let t1, actions = P.advance t1 (`Recv ae) |> get_ok in
+    let t1 = print_state t1 actions in
+    let _ = t1 in
+    [%expect
+      {|
+    ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 0)
+     (store
+      ((data
+        ((current_term 2)
+         (log
+          ((store
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
+       (ops
+        ((Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 2))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 2))))))))
+     (actions
+      ((acts
+        ((Send (2 (AppendEntriesResponse ((src 1) (term 2) (success (Ok 2))))))))
+       (nonblock_sync false)))) |}] ;
+    let aer =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, aer) when id = 2 ->
+            Some aer
+        | _ ->
+            None )
+    in
+    (* In case of full update *)
+    let () =
+      let t2, actions = P.advance t2 (`Recv aer) |> get_ok in
+      let _t2 = print_state t2 actions in
+      [%expect
+        {|
+      ((t.P.node_state
+        (Leader (match_index ((1 2) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
+         (heartbeat 0)))
+       (t.P.commit_index 2)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops ())))
+       (actions ((acts ((CommitIndexUpdate 2))) (nonblock_sync true)))) |}]
+    in
+    ()
+
+  let%expect_test "loop triple, double leader election" =
+    let s1 = S.init () in
+    let t1 = P.create_node three_config s1 in
+    let s2 = S.init () in
+    let t2 =
+      P.create_node {three_config with other_nodes= [1; 3]; node_id= 2} s2
+    in
+    let s3 = S.init () in
+    let t3 =
+      P.create_node {three_config with other_nodes= [1; 2]; node_id= 3} s3
+    in
+    let t2, actions = P.advance t2 `Tick |> get_ok in
+    let t2, _ = P.pop_store t2 in
+    let rv =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (dst, rv) when dst = 1 ->
+            Some rv
+        | _ ->
+            None )
+    in
+    let t1, actions = P.advance t1 (`Recv rv) |> get_ok in
+    let t1, _ = P.pop_store t1 in
+    let rvr =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, rvr) when id = 2 ->
+            Some rvr
+        | _ ->
+            None )
+    in
+    let t2, _actions = P.advance t2 (`Recv rvr) |> get_ok in
+    let t2, _ = P.pop_store t2 in
+    let t2, actions =
+      P.advance t2 (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+    in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+      ((t.P.node_state
+        (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 3) (2 1) (3 3)))
+         (heartbeat 0)))
+       (t.P.commit_index 0)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))))
+           (Log
+            (Add
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))))))
+       (actions
+        ((acts
+          ((Send
+            (3
+             (AppendEntries
+              ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+               (entries
+                (((command
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 2))
+                 ((command
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 2))))
+               (entries_length 2) (leader_commit 0)))))
+           (Send
+            (1
+             (AppendEntries
+              ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
+               (entries
+                (((command
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 2))
+                 ((command
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 2))))
+               (entries_length 2) (leader_commit 0)))))))
+         (nonblock_sync true)))) |}] ;
+    let ae =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, ae) when id = 1 ->
+            Some ae
+        | _ ->
+            None )
+    in
+    let t2, _actions = P.advance t2 (`Syncd (Int64.of_int 2)) |> get_ok in
+    let t2, _ = P.pop_store t2 in
+    let t1, actions = P.advance t1 (`Recv ae) |> get_ok in
+    let t1 = print_state t1 actions in
+    [%expect
+      {|
+      ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 0)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))))
+           (Log
+            (Add
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))))))
+       (actions
+        ((acts
+          ((Send (2 (AppendEntriesResponse ((src 1) (term 2) (success (Ok 2))))))))
+         (nonblock_sync false)))) |}] ;
+    let aer =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, aer) when id = 2 ->
+            Some aer
+        | _ ->
+            None )
+    in
+    let t2, actions = P.advance t2 (`Recv aer) |> get_ok in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+      ((t.P.node_state
+        (Leader (match_index ((1 2) (2 2) (3 0))) (next_index ((1 3) (2 1) (3 3)))
+         (heartbeat 0)))
+       (t.P.commit_index 2)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops ())))
+       (actions ((acts ((CommitIndexUpdate 2))) (nonblock_sync true)))) |}] ;
+    let t2, actions =
+      P.advance t2 (`Commands [cmd_of_int 3; cmd_of_int 4]) |> get_ok
+    in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+      ((t.P.node_state
+        (Leader (match_index ((1 2) (2 2) (3 0))) (next_index ((1 5) (2 1) (3 5)))
+         (heartbeat 0)))
+       (t.P.commit_index 2)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                (term 2))
+               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                (term 2))
+               ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+               da9280e5-0845-4466-e4bb-94e2f401c14a
+               eed8f731-aab8-4baf-f515-521eff34be65))
+             (length 4)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 2))))
+           (Log
+            (Add
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 2))))))))
+       (actions
+        ((acts
+          ((Send
+            (3
+             (AppendEntries
+              ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
+               (entries
+                (((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 2))
+                 ((command
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 2))))
+               (entries_length 2) (leader_commit 2)))))
+           (Send
+            (1
+             (AppendEntries
+              ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
+               (entries
+                (((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 2))
+                 ((command
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 2))))
+               (entries_length 2) (leader_commit 2)))))))
+         (nonblock_sync true)))) |}] ;
+    let t1, _actions = P.advance t1 `Tick |> get_ok in
+    let t1, _ = P.pop_store t1 in
+    let t1, actions = P.advance t1 `Tick |> get_ok in
+    let t1 = print_state t1 actions in
+    [%expect
+      {|
+      ((t.P.node_state
+        (Candidate (quorum ((elts (1)) (n 1) (threshold 2) (eq <fun>)))
+         (entries
+          (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 2))
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 2))))
+         (start_index 1) (timeout 0)))
+       (t.P.commit_index 0)
+       (store
+        ((data
+          ((current_term 4)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops ((Term 4)))))
+       (actions
+        ((acts
+          ((Send (2 (RequestVote ((src 1) (term 4) (leader_commit 0)))))
+           (Send (3 (RequestVote ((src 1) (term 4) (leader_commit 0)))))))
+         (nonblock_sync false)))) |}] ;
+    let rv =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, rv) when id = 3 ->
+            Some rv
+        | _ ->
+            None )
+    in
+    let t3, actions = P.advance t3 (`Recv rv) |> get_ok in
+    let t3 = print_state t3 actions in
+    [%expect
+      {|
+      ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 0)
+       (store
+        ((data ((current_term 4) (log ((store ()) (command_set ()) (length 0)))))
+         (ops ((Term 4)))))
+       (actions
+        ((acts
+          ((Send
+            (1
+             (RequestVoteResponse
+              ((src 3) (term 4) (vote_granted true) (entries ()) (start_index 1)))))))
+         (nonblock_sync false)))) |}] ;
+    let rvr =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, rvr) when id = 1 ->
+            Some rvr
+        | _ ->
+            None )
+    in
+    let t1, actions = P.advance t1 (`Recv rvr) |> get_ok in
+    let t1 = print_state t1 actions in
+    [%expect
+      {|
+      ((t.P.node_state
+        (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 1) (2 3) (3 3)))
+         (heartbeat 0)))
+       (t.P.commit_index 0)
+       (store
+        ((data
+          ((current_term 4)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 4))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 4))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 4))))
+           (Log
+            (Add
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 4))))
+           (Log (RemoveGEQ 1))))))
+       (actions
+        ((acts
+          ((Send
+            (3
+             (AppendEntries
+              ((src 1) (term 4) (prev_log_index 0) (prev_log_term 0)
+               (entries
+                (((command
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 4))
+                 ((command
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 4))))
+               (entries_length 2) (leader_commit 0)))))
+           (Send
+            (2
+             (AppendEntries
+              ((src 1) (term 4) (prev_log_index 0) (prev_log_term 0)
+               (entries
+                (((command
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 4))
+                 ((command
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 4))))
+               (entries_length 2) (leader_commit 0)))))))
+         (nonblock_sync true)))) |}] ;
+    let ae =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, ae) when id = 2 ->
+            Some ae
+        | _ ->
+            None )
+    in
+    let t2, actions = P.advance t2 (`Recv ae) |> get_ok in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+      ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 2)
+       (store
+        ((data
+          ((current_term 4)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 4))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 4))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 4))))
+           (Log
+            (Add
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 4))))
+           (Log (RemoveGEQ 1)) (Term 4)))))
+       (actions
+        ((acts
+          ((Send (1 (AppendEntriesResponse ((src 2) (term 4) (success (Ok 2))))))))
+         (nonblock_sync false)))) |}] ;
+    let _ts = (t1, t2, t3) in
+    ()
 end

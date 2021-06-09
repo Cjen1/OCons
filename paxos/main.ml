@@ -46,7 +46,8 @@ let command =
         ; O.Utils.logger
         ; O.Owal.logger
         ; O.Client_handler.logger
-        ; Paxos_lib.Paxos.logger ] ~f:(fun log ->
+        ; Paxos_lib.Paxos.logger
+        ; Paxos_lib.Paxos.io_logger ] ~f:(fun log ->
           Async.Log.set_level log global_level ;
           Async.Log.set_output log global_output ) ;
       let tick_speed = Time.Span.of_sec tick_speed in
