@@ -45,9 +45,6 @@ module type S = sig
 
   val to_string : t -> string
 
-  val add_entries_remove_conflicts :
-    t -> start_index:log_index -> entries:log_entry list -> t
-
   val add_cmd : t -> cmd:command -> term:term -> t
 
   val add_cmds : t -> cmds:command list -> term:term -> t

@@ -4,7 +4,7 @@ open! Ppx_log_async
 module A = Accessor
 open! A.O
 
-let logger =
+let _logger =
   let open Async_unix.Log in
   create ~level:`Info ~output:[] ~on_error:`Raise
     ~transform:(fun m -> Message.add_tags m [("src", "ImmutableLog")])
@@ -89,48 +89,6 @@ module ILog = struct
     let size = Int64.(get_max_index t - index + one) in
     (entries_after_inc t index, size)
 
-  let add_entries_remove_conflicts t ~start_index new_entries =
-    let relevant_entries = entries_after_inc t start_index in
-    (* Takes two lists of entries lowest index first
-         iterates through the lists until there is a conflict
-         at which point it returns the conflict index and the entries to add
-    *)
-    let rec merge_y_into_x idx :
-        log_entry list * log_entry list -> int64 option * log_entry list =
-      function
-      | _, [] ->
-          (None, [])
-      | [], ys ->
-          (None, ys)
-      | x :: _, (y :: _ as ys) when not @@ [%compare.equal: term] x.term y.term
-        ->
-          [%log.debug
-            logger "Mismatch while merging" (x : log_entry) (y : log_entry)] ;
-          Logs.debug (fun m -> m "Mismatch at %a" Fmt.int64 idx) ;
-          (Some idx, ys)
-      | _ :: xs, _ :: ys ->
-          merge_y_into_x Int64.(succ idx) (xs, ys)
-    in
-    (* entries_to_add is in oldest first order *)
-    let removeGEQ_o, entries_to_add =
-      merge_y_into_x start_index
-        (List.rev relevant_entries, List.rev new_entries)
-    in
-    let t, ops =
-      match removeGEQ_o with
-      | Some i ->
-          let t', op' = apply_wrap t (RemoveGEQ i) in
-          (t', [op'])
-      | None ->
-          (t, [])
-    in
-    let t, ops =
-      List.fold_left entries_to_add ~init:(t, ops) ~f:(fun (t, ops) v ->
-          let t', ops' = apply_wrap t (Add v) in
-          (t', ops' :: ops) )
-    in
-    (t, ops)
-
   let add_cmd t command term = add_entry t {command; term}
 
   let add_cmds t cmds term =
@@ -211,13 +169,6 @@ let entries_after_inc t index = L.entries_after_inc t.data.log index
 let entries_after_inc_size t index = L.entries_after_inc_size t.data.log index
 
 let to_string t = [%message (t : t)] |> Sexp.to_string_hum
-
-let add_entries_remove_conflicts t ~start_index ~entries =
-  let l, ops' =
-    L.add_entries_remove_conflicts t.data.log ~start_index entries
-  in
-  A.set (data @> log) t ~to_:l
-  |> A.set ops ~to_:(List.map ~f:(fun op -> Log op) ops' @ t.ops)
 
 let add_cmd t ~cmd ~term =
   let l, op = L.add_cmd t.data.log cmd term in

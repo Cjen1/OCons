@@ -14,15 +14,17 @@ depends: [
   "ppx_log"
   "ppx_deriving_yojson"
   "ppx_accessor"
-  "dune"
+  "dune" {>= "2.7"}
   "logs"
   "fmt"
   "owl"
   "core_bench"
   "core_profiler"
+  "bisect_ppx"
+  "odoc" {with-doc}
 ]
 build: [
-  ["dune" "subst"] {pinned}
+  ["dune" "subst"] {dev}
   [
     "dune"
     "build"

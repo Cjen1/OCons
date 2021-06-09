@@ -160,8 +160,6 @@ module IStorageTest = struct
   let%expect_test "update_term" =
     let istate = IS.init () |> init_log in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
-    let istate = IS.update_term istate ~term:5 in
-    istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
     [%expect
       {|
       ((data
@@ -198,7 +196,11 @@ module IStorageTest = struct
          (Log
           (Add
            ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
-            (term 1)))))))
+            (term 1))))))) |}] ;
+    let istate = IS.update_term istate ~term:5 in
+    istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
+    [%expect
+      {|
       ((data
         ((current_term 5)
          (log
@@ -239,12 +241,14 @@ module IStorageTest = struct
   let%expect_test "add_entry" =
     let istate = IS.init () in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
+    [%expect
+      {|
+      ((data ((current_term 0) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ())) |}] ;
     let istate = IS.add_entry istate ~entry:(make_entry 5 4 3) in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
     [%expect
       {|
-      ((data ((current_term 0) (log ((store ()) (command_set ()) (length 0)))))
-       (ops ()))
       ((data
         ((current_term 0)
          (log
@@ -260,6 +264,7 @@ module IStorageTest = struct
 
   let%expect_test "remove_geq" =
     let istate = IS.init () |> init_log in
+    [%expect {||}] ;
     let istate = IS.remove_geq istate ~index:Int64.(of_int 3) in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
     [%expect
@@ -303,12 +308,14 @@ module IStorageTest = struct
     [%expect {| (Error (Not_found_s 0)) |}] ;
     IS.get_index_exn istate (Int64.of_int 1)
     |> [%sexp_of: Types.log_entry] |> Sexp.to_string_hum |> print_endline ;
-    [%expect {|
+    [%expect
+      {|
       ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
        (term 1)) |}] ;
     IS.get_index_exn istate (Int64.of_int 2)
     |> [%sexp_of: Types.log_entry] |> Sexp.to_string_hum |> print_endline ;
-    [%expect {|
+    [%expect
+      {|
       ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
        (term 1)) |}]
 
@@ -373,96 +380,6 @@ module IStorageTest = struct
         ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
          (term 1)))
        3) |}]
-
-  let%expect_test "add_entries_rem_conflicts" =
-    let istate = IS.init () |> init_log in
-    istate |> IS.to_string |> print_endline ;
-    [%expect
-      {|
-      (t
-       ((data
-         ((current_term 0)
-          (log
-           ((store
-             (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
-               (term 3))
-              ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-               (term 3))
-              ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
-               (term 1))
-              ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
-               (term 1))))
-            (command_set
-             (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
-              6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
-              da9280e5-0845-4466-e4bb-94e2f401c14a
-              eed8f731-aab8-4baf-f515-521eff34be65))
-            (length 4)))))
-        (ops
-         ((Log
-           (Add
-            ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
-             (term 3))))
-          (Log
-           (Add
-            ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-             (term 3))))
-          (Log
-           (Add
-            ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
-             (term 1))))
-          (Log
-           (Add
-            ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
-             (term 1)))))))) |}] ;
-    let entries =
-      List.map [(3, 4, 3); (2, 1, 2)] ~f:(fun (a, b, c) -> make_entry a b c)
-    in
-    let istate =
-      IS.add_entries_remove_conflicts istate ~start_index:(Int64.of_int 2)
-        ~entries
-    in
-    istate |> IS.to_string |> print_endline ;
-    [%expect
-      {|
-      (t
-       ((data
-         ((current_term 0)
-          (log
-           ((store
-             (((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-               (term 4))
-              ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
-               (term 1))
-              ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
-               (term 1))))
-            (command_set
-             (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
-              6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
-              da9280e5-0845-4466-e4bb-94e2f401c14a))
-            (length 3)))))
-        (ops
-         ((Log
-           (Add
-            ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-             (term 4))))
-          (Log (RemoveGEQ 3))
-          (Log
-           (Add
-            ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
-             (term 3))))
-          (Log
-           (Add
-            ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-             (term 3))))
-          (Log
-           (Add
-            ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
-             (term 1))))
-          (Log
-           (Add
-            ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
-             (term 1)))))))) |}]
 
   let%expect_test "add_cmd" =
     let istate = IS.init () |> init_log in
@@ -604,7 +521,7 @@ module MStoreTest = struct
     let f store =
       let istate = PS.get_state store in
       let entries =
-        List.map [(3, 4, 3); (2, 1, 2)] ~f:(fun (a, b, c) -> make_entry a b c)
+        List.map [(5, 10, 5); (6, 11, 6)] ~f:(fun (a, b, c) -> make_entry a b c)
       in
       let istate = istate |> init_log in
       PS.update store istate |> ignore ;
@@ -613,8 +530,8 @@ module MStoreTest = struct
       idx |> [%sexp_of: int64] |> Sexp.to_string_hum |> print_endline ;
       let%bind () = [%expect {| 4 |}] in
       let istate' =
-        IS.add_entries_remove_conflicts istate ~start_index:(Int64.of_int 2)
-          ~entries
+        List.fold_left entries ~init:istate ~f:(fun s entry ->
+            IS.add_entry s ~entry )
         |> IS.update_term ~term:100
       in
       let ops = List.rev @@ IS.get_ops istate' in
@@ -649,8 +566,14 @@ module MStoreTest = struct
             ((current_term 100)
              (log
               ((store
-                (((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-                  (term 4))
+                (((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                  (term 11))
+                 ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                  (term 10))
+                 ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 3))
+                 ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 3))
                  ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                   (term 1))
                  ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
@@ -658,22 +581,34 @@ module MStoreTest = struct
                (command_set
                 (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
                  6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
-                 da9280e5-0845-4466-e4bb-94e2f401c14a))
-               (length 3)))))
+                 da9280e5-0845-4466-e4bb-94e2f401c14a
+                 dbb2a9af-5f11-427b-238c-63c074946538
+                 eed8f731-aab8-4baf-f515-521eff34be65
+                 f3ff37c6-ef29-4d50-6f65-48022624a717))
+               (length 6)))))
            (ops
             ((Term 100)
              (Log
               (Add
-               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-                (term 4))))
-             (Log (RemoveGEQ 3))))))
+               ((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                (term 11))))
+             (Log
+              (Add
+               ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                (term 10))))))))
          (istate''
           ((data
             ((current_term 100)
              (log
               ((store
-                (((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-                  (term 4))
+                (((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                  (term 11))
+                 ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                  (term 10))
+                 ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 3))
+                 ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 3))
                  ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                   (term 1))
                  ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
@@ -681,8 +616,11 @@ module MStoreTest = struct
                (command_set
                 (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
                  6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
-                 da9280e5-0845-4466-e4bb-94e2f401c14a))
-               (length 3)))))
+                 da9280e5-0845-4466-e4bb-94e2f401c14a
+                 dbb2a9af-5f11-427b-238c-63c074946538
+                 eed8f731-aab8-4baf-f515-521eff34be65
+                 f3ff37c6-ef29-4d50-6f65-48022624a717))
+               (length 6)))))
            (ops ())))) |}]
       in
       [%message
@@ -698,7 +636,7 @@ module MStoreTest = struct
       PS.update store istate' |> ignore ;
       let%bind idx = PS.datasync store in
       idx |> [%sexp_of: int64] |> Sexp.to_string_hum |> print_endline ;
-      [%expect {| 3 |}]
+      [%expect {| 6 |}]
     in
     let%bind () = with_file f "end-to-end" in
     let f' store =
@@ -710,8 +648,14 @@ module MStoreTest = struct
           ((current_term 100)
            (log
             ((store
-              (((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-                (term 4))
+              (((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                (term 11))
+               ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                (term 10))
+               ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                (term 3))
+               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                (term 3))
                ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                 (term 1))
                ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
@@ -719,8 +663,11 @@ module MStoreTest = struct
              (command_set
               (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
                6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
-               da9280e5-0845-4466-e4bb-94e2f401c14a))
-             (length 3)))))
+               da9280e5-0845-4466-e4bb-94e2f401c14a
+               dbb2a9af-5f11-427b-238c-63c074946538
+               eed8f731-aab8-4baf-f515-521eff34be65
+               f3ff37c6-ef29-4d50-6f65-48022624a717))
+             (length 6)))))
          (ops ())) |}]
     in
     with_file f' "end-to-end"

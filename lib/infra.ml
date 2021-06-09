@@ -43,6 +43,7 @@ module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
     ; mutable last_applied: log_index
     ; conns: (int, Async_rpc_kernel.Persistent_connection.Rpc.t) H.t
     ; state_machine: state_machine
+    ; mutable state_machine_lock: [`Locked | `Unlocked]
     ; command_results: (Types.command_id, Types.op_result) H.t }
 
   let batch_available_watch t =
@@ -63,23 +64,49 @@ module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
       ~arg:(id, res)
     |> don't_wait_for
 
-  let rec advance_state_machine t = function
-    | commit_index when Int64.(t.last_applied < commit_index) ->
-        [%log.debug
-          logger "Advancing state machine"
-            ~from:(t.last_applied : log_index)
-            ~to_:(commit_index : log_index)] ;
-        let index = Int64.(t.last_applied + one) in
-        t.last_applied <- index ;
-        (* This can't throw an error since there are no holes in the log (<= commit index) *)
-        let entry = MS.get_index t.store index |> Result.ok_exn in
-        let result = update_state_machine t.state_machine entry.command in
-        [%log.debug logger (index : int64) (result : Types.op_result)] ;
-        H.set t.command_results ~key:entry.command.id ~data:result ;
-        return_result t entry.command.id (Ok result) ;
-        advance_state_machine t commit_index
-    | _ ->
-        ()
+  let with_attempted_lock t ~f ~fail =
+    let attempt_lock () =
+      match t.state_machine_lock with
+      | `Locked ->
+          Error `Locked
+      | `Unlocked ->
+          Ok ()
+    in
+    let worked =
+      let open Result.Let_syntax in
+      let%bind () = attempt_lock () in
+      let v = f () in
+      let () = t.state_machine_lock <- `Unlocked in
+      Ok v
+    in
+    match worked with Ok v -> v | Error `Locked -> fail ()
+
+  let advance_state_machine =
+    let rec f t idx =
+      match idx with
+      | commit_index when Int64.(t.last_applied < commit_index) ->
+          [%log.debug
+            logger "Advancing state machine"
+              ~from:(t.last_applied : log_index)
+              ~to_:(commit_index : log_index)] ;
+          let index = Int64.(t.last_applied + one) in
+          t.last_applied <- index ;
+          (* This can't throw an error since there are no holes in the log (<= commit index) *)
+          let entry = MS.get_index t.store index |> Result.ok_exn in
+          let result = update_state_machine t.state_machine entry.command in
+          [%log.debug logger (index : int64) (result : Types.op_result)] ;
+          H.set t.command_results ~key:entry.command.id ~data:result ;
+          return_result t entry.command.id (Ok result) ;
+          f t commit_index
+      | _ ->
+          ()
+    in
+    fun t idx ->
+      with_attempted_lock t
+        ~f:(fun () -> f t idx)
+        ~fail:(fun () ->
+          [%log.error
+            logger "Concurrent access to state machine!!" (idx : log_index)] )
 
   let get_ok v =
     match v with Error (`Msg s) -> raise @@ Invalid_argument s | Ok v -> v
@@ -302,6 +329,7 @@ module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
       ; last_applied= Int64.zero
       ; conns
       ; state_machine
+      ; state_machine_lock= `Unlocked
       ; command_results= H.create (module Uuid) }
     in
     don't_wait_for (handle_ev_q t) ;

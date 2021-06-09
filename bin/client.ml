@@ -24,6 +24,14 @@ let log_param =
     setup_via_params ~log_to_console_by_default:(Stderr Color)
       ~log_to_syslog_by_default:false ())
 
+let timeout_or_succeed ?(timeout = 30.) v =
+  let timeout = after (Time.Span.of_sec timeout) in
+  match%bind choose [choice timeout Result.fail; choice v Result.return] with
+  | Ok v ->
+      return v
+  | Error () ->
+      prerr_endline "Timeout" ; Async.exit 1
+
 let put =
   Command.async_spec ~summary:"Put request"
     Command.Spec.(
@@ -39,7 +47,7 @@ let put =
           Async.Log.set_level log global_level ;
           Async.Log.set_output log global_output ) ;
       let c = O.Client.new_client ps in
-      match%bind O.Client.op_write c ~k ~v with
+      match%bind timeout_or_succeed @@ O.Client.op_write c ~k ~v with
       | ReadSuccess _ ->
           prerr_endline "Got read success on write operation" ;
           Async.exit 1
@@ -63,7 +71,7 @@ let get =
           Async.Log.set_output log global_output ) ;
       let c = O.Client.new_client ps in
       let open O.Types in
-      match%bind O.Client.op_read c k with
+      match%bind timeout_or_succeed @@ O.Client.op_read c k with
       | Success ->
           prerr_endline "Got write success on read operation" ;
           Async.exit 1
@@ -89,7 +97,9 @@ let cas =
           Async.Log.set_output log global_output ) ;
       let c = O.Client.new_client ps in
       let open O.Types in
-      match%bind O.Client.op_cas c ~key ~value ~value' with
+      match%bind
+        timeout_or_succeed @@ O.Client.op_cas c ~key ~value ~value'
+      with
       | ReadSuccess _ ->
           prerr_endline "Got read success on cas operation" ;
           Async.exit 1

@@ -12,7 +12,14 @@ let logger =
 
 type t = {conns: PC.Rpc.t list; retry_delay: Time.Span.t}
 
-let get_current_conns t = List.filter_map t.conns ~f:PC.Rpc.current_connection
+let get_current_conns t =
+  List.filter_mapi t.conns ~f:(fun i c ->
+      match PC.Rpc.current_connection c with
+      | Some c ->
+          Some c
+      | None ->
+          [%log.debug logger "Got no connection" ~dst_id:(i : int)] ;
+          None )
 
 let send t op =
   let retry_loop () =
