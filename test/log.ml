@@ -353,10 +353,12 @@ module IStorageTest = struct
     IS.mem_id istate (uid_of_id 1) |> Bool.to_string |> print_endline ;
     [%expect {| true |}]
 
-  let%expect_test "entries_after_inc" =
+  let%expect_test "fold_geq" =
     let istate = IS.init () |> init_log in
-    let entries = IS.entries_after_inc istate Int64.(of_int 2) in
-    entries |> [%sexp_of: log_entry list] |> Sexp.to_string_hum |> print_endline ;
+    let values =
+      IS.fold_geq istate ~idx:(Int64.of_int 2) ~init:[] ~f:(fun a v -> v :: a)
+    in
+    values |> [%sexp_of: log_entry list] |> Sexp.to_string_hum |> print_endline ;
     [%expect
       {|
       (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
@@ -366,20 +368,25 @@ module IStorageTest = struct
        ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
         (term 1))) |}]
 
-  let%expect_test "entries_after_inc_size" =
+  let%expect_test "foldi_geq" =
     let istate = IS.init () |> init_log in
-    let entries = IS.entries_after_inc_size istate Int64.(of_int 2) in
-    entries |> [%sexp_of: log_entry list * int64] |> Sexp.to_string_hum
+    let values =
+      IS.foldi_geq istate ~idx:(Int64.of_int 2) ~init:[] ~f:(fun i a v ->
+          (i, v) :: a )
+    in
+    values |> [%sexp_of: (Int64.t * log_entry) list] |> Sexp.to_string_hum
     |> print_endline ;
     [%expect
       {|
-      ((((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
-         (term 3))
+      ((4
+        ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+         (term 3)))
+       (3
         ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
-         (term 3))
+         (term 3)))
+       (2
         ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
-         (term 1)))
-       3) |}]
+         (term 1)))) |}]
 
   let%expect_test "add_cmd" =
     let istate = IS.init () |> init_log in

@@ -62,7 +62,7 @@ module MessageTypes = struct
     { src: node_id
     ; term: term
     ; vote_granted: bool
-    ; entries: log_entry list
+    ; entries: log_entry list (* Entries is in oldest to newest ordering *)
     ; start_index: log_index }
   [@@deriving bin_io, sexp]
 
@@ -71,7 +71,7 @@ module MessageTypes = struct
     ; term: term
     ; prev_log_index: log_index
     ; prev_log_term: term
-    ; entries: log_entry list
+    ; entries: log_entry list (* Entries is in oldest to newest ordering *)
     ; entries_length: log_index
     ; leader_commit: log_index }
   [@@deriving bin_io, sexp]
@@ -241,6 +241,10 @@ module Make (S : Immutable_store_intf.S) = struct
     | Leader s ->
         let%bind current_store = StateR.get_a store in
         let%bind config = StateR.get_a config in
+        (* Take a sorted list of points where we know the log is correct up to in highest to lowest
+           Then if we take the nth then all prev are known to replicate at least that much
+           Thus taking the quorum'th gives the match index known by at least a quorum
+        *)
         let calculated_commit_index =
           Map.fold s.match_index ~init:[S.get_max_index current_store]
             ~f:(fun ~key:_ ~data acc -> data :: acc)
@@ -256,33 +260,37 @@ module Make (S : Immutable_store_intf.S) = struct
     | _ ->
         StateR.return ()
 
-  (* Takes two lists of entries lowest index first
-       iterates through the lists until there is a conflict
-       at which point it returns the conflict index and the entries to add
-  *)
-  let rec merge_y_into_x idx :
-      log_entry list * log_entry list -> int64 option * log_entry list =
-    function
-    | [], [] ->
-        (None, [])
-    | _ :: _, [] ->
-        (Some idx, [])
-    | [], ys ->
-        (None, ys)
-    | x :: _, (y :: _ as ys) when not @@ [%compare.equal: term] x.term y.term ->
-        [%log.debug
-          logger "Mismatch while merging" (x : log_entry) (y : log_entry)] ;
-        (Some idx, ys)
-    | _ :: xs, _ :: ys ->
-        merge_y_into_x Int64.(succ idx) (xs, ys)
+  let merge_recv_into_curr store start_index (entries : log_entry list) =
+    let f :
+           log_index
+        -> log_entry list
+        -> log_entry
+        -> (log_entry list, 'final) Continue_or_stop.t =
+     fun idx rem_recv_entries curr_entry ->
+      let open Continue_or_stop in
+      match rem_recv_entries with
+      | [] ->
+          Stop (None, [])
+      | x :: _ as xs when not @@ [%compare.equal: term] x.term curr_entry.term
+        ->
+          [%log.debug
+            logger "Merging: Term mismatch"
+              (x : log_entry)
+              (curr_entry : log_entry)] ;
+          Stop (Some idx, xs)
+      | _ :: xs ->
+          Continue xs
+    in
+    let finish _idx rem_entries =
+      match rem_entries with [] -> (None, []) | xs -> (None, xs)
+    in
+    S.foldi_until_geq ~idx:start_index ~init:entries ~f ~finish store
 
   let add_entries_remove_conflicts ~start_index new_entries =
     let%bind t = StateR.get_t () in
-    let relevant_entries = S.entries_after_inc t.store start_index in
     (* entries_to_add is in oldest first order *)
     let removeGEQ_o, entries_to_add =
-      merge_y_into_x start_index
-        (List.rev relevant_entries, List.rev new_entries)
+      merge_recv_into_curr t.store start_index new_entries
     in
     [%log.debug
       logger "add_entries_remove_conflicts merge_y_into_x result"
@@ -327,7 +335,11 @@ module Make (S : Immutable_store_intf.S) = struct
       | Leader s -> (
           let next_index = Map.find_exn s.next_index dst in
           let prev_log_index = Int64.(next_index - one) in
-          let entries = S.entries_after_inc t.store next_index in
+          let entries =
+            S.fold_geq t.store ~idx:next_index ~init:[] ~f:(fun acc e ->
+                e :: acc )
+            |> List.rev
+          in
           [%log.debug
             io_logger "Sending append entries"
               (next_index : log_index)
@@ -415,10 +427,10 @@ module Make (S : Immutable_store_intf.S) = struct
           let%bind prev_commit_index = StateR.get_a commit_index in
           let new_commit_index =
             let last_entry =
-              match List.hd msg.entries with
-              | None ->
+              match msg.entries with
+              | [] ->
                   msg.prev_log_index
-              | Some _ ->
+              | _ ->
                   match_index
             in
             Int64.(max prev_commit_index (min msg.leader_commit last_entry))
@@ -532,7 +544,13 @@ module Make (S : Immutable_store_intf.S) = struct
       | Error _ ->
           StateR.fail @@ `Msg "Tried to add element to empty quorum and failed"
     in
-    let entries = S.entries_after_inc t.store Int64.(t.commit_index + one) in
+    let entries =
+      S.fold_geq t.store
+        ~idx:Int64.(t.commit_index + one)
+        ~init:[]
+        ~f:(fun acc e -> e :: acc)
+      |> List.rev
+    in
     let%bind () =
       StateR.map_t
       @@ A.set node_state
@@ -586,6 +604,7 @@ module Make (S : Immutable_store_intf.S) = struct
    * Takes two lists of log entries
    * merges them.
    * They should start at the same point
+   * And be in oldest to newest order
    *
    * If they don't match it takes the entry with the highest term
    *)
@@ -670,7 +689,11 @@ module Make (S : Immutable_store_intf.S) = struct
     | `Recv (RequestVote msg), _ ->
         let%bind () =
           let entries =
-            S.entries_after_inc t.store Int64.(msg.leader_commit + one)
+            S.fold_geq t.store
+              ~idx:Int64.(msg.leader_commit + one)
+              ~init:[]
+              ~f:(fun acc e -> e :: acc)
+            |> List.rev
           in
           StateR.append @@ send msg.src
           @@ RequestVoteResponse
@@ -802,7 +825,8 @@ module Test = struct
     in
     merge_entries [] Int64.(of_int 1) [] Int64.(of_int 2) |> print_result ;
     [%expect
-      {| (Error (Msg "Can't merge entries not starting at same point")) |}] ;
+      {|
+        (Error (Msg "Can't merge entries not starting at same point")) |}] ;
     let x = [(1, 1); (2, 1); (3, 1)] |> mk_entries in
     let y = [(1, 1)] |> mk_entries in
     merge_entries x Int64.zero y Int64.zero |> print_result ;
@@ -1164,10 +1188,10 @@ module Test = struct
             ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
              (entries
               (((command
-                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
                 (term 2))
                ((command
-                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                 (term 2))))
              (entries_length 2) (leader_commit 0)))))
          (Send
@@ -1176,10 +1200,10 @@ module Test = struct
             ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
              (entries
               (((command
-                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
                 (term 2))
                ((command
-                 ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                 ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                 (term 2))))
              (entries_length 2) (leader_commit 0)))))))
        (nonblock_sync true)))) |}] ;
@@ -1351,10 +1375,10 @@ module Test = struct
               ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
                (entries
                 (((command
-                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
                   (term 2))
                  ((command
-                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                   (term 2))))
                (entries_length 2) (leader_commit 0)))))
            (Send
@@ -1363,10 +1387,10 @@ module Test = struct
               ((src 2) (term 2) (prev_log_index 0) (prev_log_term 0)
                (entries
                 (((command
-                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
                   (term 2))
                  ((command
-                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                   (term 2))))
                (entries_length 2) (leader_commit 0)))))))
          (nonblock_sync true)))) |}] ;
@@ -1486,10 +1510,10 @@ module Test = struct
               ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
                (entries
                 (((command
-                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
                   (term 2))
                  ((command
-                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
                   (term 2))))
                (entries_length 2) (leader_commit 2)))))
            (Send
@@ -1498,10 +1522,10 @@ module Test = struct
               ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
                (entries
                 (((command
-                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
                   (term 2))
                  ((command
-                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
                   (term 2))))
                (entries_length 2) (leader_commit 2)))))))
          (nonblock_sync true)))) |}] ;
@@ -1514,9 +1538,9 @@ module Test = struct
       ((t.P.node_state
         (Candidate (quorum ((elts (1)) (n 1) (threshold 2) (eq <fun>)))
          (entries
-          (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+          (((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
             (term 2))
-           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
             (term 2))))
          (start_index 1) (timeout 0)))
        (t.P.commit_index 0)
@@ -1607,10 +1631,10 @@ module Test = struct
               ((src 1) (term 4) (prev_log_index 0) (prev_log_term 0)
                (entries
                 (((command
-                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
                   (term 4))
                  ((command
-                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                   (term 4))))
                (entries_length 2) (leader_commit 0)))))
            (Send
@@ -1619,10 +1643,10 @@ module Test = struct
               ((src 1) (term 4) (prev_log_index 0) (prev_log_term 0)
                (entries
                 (((command
-                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
                   (term 4))
                  ((command
-                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                   (term 4))))
                (entries_length 2) (leader_commit 0)))))))
          (nonblock_sync true)))) |}] ;
@@ -1851,10 +1875,10 @@ module Test = struct
               ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
                (entries
                 (((command
-                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
                   (term 2))
                  ((command
-                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
                   (term 2))))
                (entries_length 2) (leader_commit 2)))))
            (Send
@@ -1863,10 +1887,10 @@ module Test = struct
               ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
                (entries
                 (((command
-                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
                   (term 2))
                  ((command
-                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
                   (term 2))))
                (entries_length 2) (leader_commit 2)))))))
          (nonblock_sync true)))) |}] ;
@@ -1927,9 +1951,9 @@ module Test = struct
       ((t.P.node_state
         (Candidate (quorum ((elts (1)) (n 1) (threshold 2) (eq <fun>)))
          (entries
-          (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+          (((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
             (term 2))
-           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
             (term 2))))
          (start_index 1) (timeout 0)))
        (t.P.commit_index 0)
@@ -1959,6 +1983,7 @@ module Test = struct
         | _ ->
             None )
     in
+    (* Send request vote to t3 *)
     let t3, actions = P.advance t3 (`Recv rv) |> get_ok in
     let t3 = print_state t3 actions in
     [%expect
@@ -1992,16 +2017,16 @@ module Test = struct
               ((src 3) (term 4) (vote_granted true)
                (entries
                 (((command
-                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
-                  (term 2))
-                 ((command
-                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
                   (term 2))
                  ((command
                    ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
                   (term 2))
                  ((command
-                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 2))
+                 ((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
                   (term 2))))
                (start_index 1)))))))
          (nonblock_sync false)))) |}] ;
@@ -2012,25 +2037,91 @@ module Test = struct
         | _ ->
             None )
     in
+    (* finish election of t1 *)
     let t1, actions = P.advance t1 (`Recv rvr) |> get_ok in
     let t1 = print_state t1 actions in
-    [%expect.unreachable] ;
+    [%expect
+      {|
+      ((t.P.node_state
+        (Leader (match_index ((1 0) (2 0) (3 0))) (next_index ((1 1) (2 5) (3 5)))
+         (heartbeat 0)))
+       (t.P.commit_index 0)
+       (store
+        ((data
+          ((current_term 4)
+           (log
+            ((store
+              (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                (term 4))
+               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                (term 4))
+               ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 4))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 4))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+               da9280e5-0845-4466-e4bb-94e2f401c14a
+               eed8f731-aab8-4baf-f515-521eff34be65))
+             (length 4)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 4))))
+           (Log
+            (Add
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 4))))
+           (Log
+            (Add
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 4))))
+           (Log
+            (Add
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 4))))
+           (Log (RemoveGEQ 1))))))
+       (actions
+        ((acts
+          ((Send
+            (3
+             (AppendEntries
+              ((src 1) (term 4) (prev_log_index 0) (prev_log_term 0)
+               (entries
+                (((command
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 4))
+                 ((command
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 4))
+                 ((command
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 4))
+                 ((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 4))))
+               (entries_length 4) (leader_commit 0)))))
+           (Send
+            (2
+             (AppendEntries
+              ((src 1) (term 4) (prev_log_index 0) (prev_log_term 0)
+               (entries
+                (((command
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 4))
+                 ((command
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 4))
+                 ((command
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 4))
+                 ((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 4))))
+               (entries_length 4) (leader_commit 0)))))))
+         (nonblock_sync true)))) |}] ;
     let _ts = (t1, t2, t3) in
     ()
-    [@@expect.uncaught_exn
-      {|
-    (* CR expect_test_collector: This test expectation appears to contain a backtrace.
-       This is strongly discouraged as backtraces are fragile.
-       Please change this test to not include a backtrace. *)
-
-    "Assert_failure paxos/paxos.ml:625:12"
-    Raised at Paxos_lib__Paxos.Make.merge_entries.loop in file "paxos/paxos.ml", line 625, characters 12-24
-    Called from Paxos_lib__Paxos.Make.merge_entries in file "paxos/paxos.ml", line 627, characters 6-22
-    Called from Paxos_lib__Paxos.Make.advance_raw.(fun) in file "paxos/paxos.ml", line 697, characters 12-77
-    Called from Paxos_lib__Paxos.Make.State.bind in file "paxos/paxos.ml", line 148, characters 11-16
-    Called from Paxos_lib__Paxos.Make.State.eval in file "paxos/paxos.ml" (inlined), line 143, characters 52-55
-    Called from Paxos_lib__Paxos.Make.StateR.eval in file "paxos/paxos.ml", line 215, characters 12-30
-    Called from Paxos_lib__Paxos.Make.advance in file "paxos/paxos.ml", line 744, characters 6-38
-    Called from Paxos_lib__Paxos.Test.(fun) in file "paxos/paxos.ml", line 2021, characters 22-46
-    Called from Expect_test_collector.Make.Instance.exec in file "collector/expect_test_collector.ml", line 244, characters 12-19 |}]
 end

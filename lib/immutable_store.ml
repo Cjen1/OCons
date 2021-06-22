@@ -81,13 +81,39 @@ module ILog = struct
 
   let mem_id t id = Set.mem t.I.command_set id
 
-  let entries_after_inc t index =
-    let drop = I.drop_of_index t index |> Int64.to_int_exn in
-    List.split_n t.store drop |> fst
+  let fold_geq t ~idx ~init ~f =
+    let drop = I.drop_of_index t idx |> Int64.to_int_exn in
+    let relevant_entries = List.split_n t.store drop |> fst |> List.rev in
+    List.fold_left relevant_entries ~init ~f
 
-  let entries_after_inc_size t index =
-    let size = Int64.(get_max_index t - index + one) in
-    (entries_after_inc t index, size)
+  let fold_until_geq ~idx ~init ~f ~finish t =
+    Container.fold_until ~fold:(fold_geq ~idx) ~init ~f ~finish t
+
+  let foldi_geq t ~idx ~init ~f =
+    let open Int64 in
+    snd
+      (fold_geq t ~idx ~init:(idx, init) ~f:(fun (i, acc) v ->
+           (succ i, f i acc v) ) )
+
+  let foldi_until_geq :
+         idx:log_index
+      -> init:'acc
+      -> f:(log_index -> 'acc -> log_entry -> ('b, 'final) Continue_or_stop.t)
+      -> finish:(log_index -> 'acc -> 'final)
+      -> t
+      -> 'final =
+   fun ~idx ~init ~f ~finish t ->
+    let open Continue_or_stop in
+    let open Int64 in
+    let finish (i, v) = finish i v in
+    let f (i, acc) v =
+      match f i acc v with
+      | Continue a ->
+          Continue (succ i, a)
+      | Stop v ->
+          Stop v
+    in
+    Container.fold_until ~fold:(fold_geq ~idx) ~init:(idx, init) ~f ~finish t
 
   let add_cmd t command term = add_entry t {command; term}
 
@@ -164,9 +190,15 @@ let get_max_index t = L.get_max_index t.data.log
 
 let mem_id t id = L.mem_id t.data.log id
 
-let entries_after_inc t index = L.entries_after_inc t.data.log index
+let fold_geq t = L.fold_geq t.data.log
 
-let entries_after_inc_size t index = L.entries_after_inc_size t.data.log index
+let foldi_geq t = L.foldi_geq t.data.log
+
+let fold_until_geq ~idx ~init ~f ~finish t =
+  L.fold_until_geq ~idx ~init ~f ~finish t.data.log
+
+let foldi_until_geq ~idx ~init ~f ~finish t =
+  L.foldi_until_geq ~idx ~init ~f ~finish t.data.log
 
 let to_string t = [%message (t : t)] |> Sexp.to_string_hum
 
