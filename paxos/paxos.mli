@@ -5,6 +5,8 @@ val logger : Async.Log.t
 
 val io_logger : Async.Log.t
 
+val log_logger : Async.Log.t
+
 type config =
   { phase1quorum: int
   ; phase2quorum: int

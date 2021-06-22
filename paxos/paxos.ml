@@ -20,6 +20,12 @@ let io_logger =
     ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core_io")])
     ()
 
+let log_logger =
+  let open Async_unix.Log in
+  create ~level:`Info ~output:[] ~on_error:`Raise
+    ~transform:(fun m -> Message.add_tags m [("src", "Paxos_core_log")])
+    ()
+
 type config =
   { phase1quorum: int
   ; phase2quorum: int
@@ -726,6 +732,7 @@ module Make (S : Immutable_store_intf.S) = struct
 
   let advance t event =
     [%log.debug io_logger "NEW EVENT" (event : event)] ;
+    [%log.debug log_logger (t.store : S.t)] ;
     let prog = advance_raw event in
     let%bind.Result (), State.{t; a= actions} =
       StateR.eval prog (State.empty t)
@@ -1660,4 +1667,370 @@ module Test = struct
          (nonblock_sync false)))) |}] ;
     let _ts = (t1, t2, t3) in
     ()
+
+  let%expect_test "loop triple, double leader election, asymetrical replication"
+      =
+    (* Create nodes *)
+    let s1 = S.init () in
+    let t1 = P.create_node three_config s1 in
+    let s2 = S.init () in
+    let t2 =
+      P.create_node {three_config with other_nodes= [1; 3]; node_id= 2} s2
+    in
+    let s3 = S.init () in
+    let t3 =
+      P.create_node {three_config with other_nodes= [1; 2]; node_id= 3} s3
+    in
+    (* Elect t2 *)
+    let t2, actions = P.advance t2 `Tick |> get_ok in
+    let t2, _ = P.pop_store t2 in
+    let rv =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (dst, rv) when dst = 1 ->
+            Some rv
+        | _ ->
+            None )
+    in
+    let t1, actions = P.advance t1 (`Recv rv) |> get_ok in
+    let t1, _ = P.pop_store t1 in
+    let rvr =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, rvr) when id = 2 ->
+            Some rvr
+        | _ ->
+            None )
+    in
+    let t2, _actions = P.advance t2 (`Recv rvr) |> get_ok in
+    let t2, _ = P.pop_store t2 in
+    (* Adding commands to system *)
+    let t2, actions =
+      P.advance t2 (`Commands [cmd_of_int 1; cmd_of_int 2]) |> get_ok
+    in
+    let t2, _ = P.pop_store t2 in
+    let ae1 =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, ae) when id = 1 ->
+            Some ae
+        | _ ->
+            None )
+    in
+    let ae3 =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, ae) when id = 3 ->
+            Some ae
+        | _ ->
+            None )
+    in
+    let t3 =
+      (* t3 recv append entries from t2 *)
+      let t3, actions = P.advance t3 (`Recv ae3) |> get_ok in
+      let t3 = print_state t3 actions in
+      [%expect
+        {|
+         ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 0)
+          (store
+           ((data
+             ((current_term 2)
+              (log
+               ((store
+                 (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                   (term 2))
+                  ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                   (term 2))))
+                (command_set
+                 (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+                  da9280e5-0845-4466-e4bb-94e2f401c14a))
+                (length 2)))))
+            (ops
+             ((Log
+               (Add
+                ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                 (term 2))))
+              (Log
+               (Add
+                ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                 (term 2))))
+              (Term 2)))))
+          (actions
+           ((acts
+             ((Send (2 (AppendEntriesResponse ((src 3) (term 2) (success (Ok 2))))))))
+            (nonblock_sync false)))) |}] ;
+      t3
+    in
+    let t1, aer =
+      (* t1 recv append entries from t2 *)
+      let t1, actions = P.advance t1 (`Recv ae1) |> get_ok in
+      let t1 = print_state t1 actions in
+      [%expect
+        {|
+      ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 0)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 2))))
+           (Log
+            (Add
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 2))))))))
+       (actions
+        ((acts
+          ((Send (2 (AppendEntriesResponse ((src 1) (term 2) (success (Ok 2))))))))
+         (nonblock_sync false)))) |}] ;
+      let aer =
+        List.find_map_exn actions.acts ~f:(function
+          | `Send (id, aer) when id = 2 ->
+              Some aer
+          | _ ->
+              None )
+      in
+      (t1, aer)
+    in
+    let t2, _actions = P.advance t2 (`Syncd (Int64.of_int 2)) |> get_ok in
+    let t2, _ = P.pop_store t2 in
+    (* Recv aer *)
+    let t2, _actions = P.advance t2 (`Recv aer) |> get_ok in
+    let t2, _ = P.pop_store t2 in
+    (* add more commands which are only replicated to t3 *)
+    let t2, actions =
+      P.advance t2 (`Commands [cmd_of_int 3; cmd_of_int 4]) |> get_ok
+    in
+    let t2 = print_state t2 actions in
+    [%expect
+      {|
+      ((t.P.node_state
+        (Leader (match_index ((1 2) (2 2) (3 0))) (next_index ((1 5) (2 1) (3 5)))
+         (heartbeat 0)))
+       (t.P.commit_index 2)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                (term 2))
+               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                (term 2))
+               ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+               da9280e5-0845-4466-e4bb-94e2f401c14a
+               eed8f731-aab8-4baf-f515-521eff34be65))
+             (length 4)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 2))))
+           (Log
+            (Add
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 2))))))))
+       (actions
+        ((acts
+          ((Send
+            (3
+             (AppendEntries
+              ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
+               (entries
+                (((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 2))
+                 ((command
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 2))))
+               (entries_length 2) (leader_commit 2)))))
+           (Send
+            (1
+             (AppendEntries
+              ((src 2) (term 2) (prev_log_index 2) (prev_log_term 2)
+               (entries
+                (((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 2))
+                 ((command
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 2))))
+               (entries_length 2) (leader_commit 2)))))))
+         (nonblock_sync true)))) |}] ;
+    let ae3 =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, ae) when id = 3 ->
+            Some ae
+        | _ ->
+            None )
+    in
+    (* Replicate to t3 but not to t1 *)
+    let t3, actions = P.advance t3 (`Recv ae3) |> get_ok in
+    let t3 = print_state t3 actions in
+    [%expect
+      {|
+      ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 2)
+       (store
+        ((data
+          ((current_term 2)
+           (log
+            ((store
+              (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                (term 2))
+               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                (term 2))
+               ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+               da9280e5-0845-4466-e4bb-94e2f401c14a
+               eed8f731-aab8-4baf-f515-521eff34be65))
+             (length 4)))))
+         (ops
+          ((Log
+            (Add
+             ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 2))))
+           (Log
+            (Add
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 2))))))))
+       (actions
+        ((acts
+          ((Send (2 (AppendEntriesResponse ((src 3) (term 2) (success (Ok 4))))))
+           (CommitIndexUpdate 2)))
+         (nonblock_sync false)))) |}] ;
+    (* t2 has now crashed so no further updates should occur *)
+    (* start election of t1 *)
+    let t1, _actions = P.advance t1 `Tick |> get_ok in
+    let t1, _ = P.pop_store t1 in
+    let t1, actions = P.advance t1 `Tick |> get_ok in
+    let t1 = print_state t1 actions in
+    [%expect
+      {|
+      ((t.P.node_state
+        (Candidate (quorum ((elts (1)) (n 1) (threshold 2) (eq <fun>)))
+         (entries
+          (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 2))
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 2))))
+         (start_index 1) (timeout 0)))
+       (t.P.commit_index 0)
+       (store
+        ((data
+          ((current_term 4)
+           (log
+            ((store
+              (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               da9280e5-0845-4466-e4bb-94e2f401c14a))
+             (length 2)))))
+         (ops ((Term 4)))))
+       (actions
+        ((acts
+          ((Send (2 (RequestVote ((src 1) (term 4) (leader_commit 0)))))
+           (Send (3 (RequestVote ((src 1) (term 4) (leader_commit 0)))))))
+         (nonblock_sync false)))) |}] ;
+    let rv =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, rv) when id = 3 ->
+            Some rv
+        | _ ->
+            None )
+    in
+    let t3, actions = P.advance t3 (`Recv rv) |> get_ok in
+    let t3 = print_state t3 actions in
+    [%expect
+      {|
+      ((t.P.node_state (Follower (timeout 0))) (t.P.commit_index 2)
+       (store
+        ((data
+          ((current_term 4)
+           (log
+            ((store
+              (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                (term 2))
+               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                (term 2))
+               ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 2))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 2))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+               da9280e5-0845-4466-e4bb-94e2f401c14a
+               eed8f731-aab8-4baf-f515-521eff34be65))
+             (length 4)))))
+         (ops ((Term 4)))))
+       (actions
+        ((acts
+          ((Send
+            (1
+             (RequestVoteResponse
+              ((src 3) (term 4) (vote_granted true)
+               (entries
+                (((command
+                   ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 2))
+                 ((command
+                   ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 2))
+                 ((command
+                   ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 2))
+                 ((command
+                   ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 2))))
+               (start_index 1)))))))
+         (nonblock_sync false)))) |}] ;
+    let rvr =
+      List.find_map_exn actions.acts ~f:(function
+        | `Send (id, rvr) when id = 1 ->
+            Some rvr
+        | _ ->
+            None )
+    in
+    let t1, actions = P.advance t1 (`Recv rvr) |> get_ok in
+    let t1 = print_state t1 actions in
+    [%expect.unreachable] ;
+    let _ts = (t1, t2, t3) in
+    ()
+    [@@expect.uncaught_exn
+      {|
+    (* CR expect_test_collector: This test expectation appears to contain a backtrace.
+       This is strongly discouraged as backtraces are fragile.
+       Please change this test to not include a backtrace. *)
+
+    "Assert_failure paxos/paxos.ml:625:12"
+    Raised at Paxos_lib__Paxos.Make.merge_entries.loop in file "paxos/paxos.ml", line 625, characters 12-24
+    Called from Paxos_lib__Paxos.Make.merge_entries in file "paxos/paxos.ml", line 627, characters 6-22
+    Called from Paxos_lib__Paxos.Make.advance_raw.(fun) in file "paxos/paxos.ml", line 697, characters 12-77
+    Called from Paxos_lib__Paxos.Make.State.bind in file "paxos/paxos.ml", line 148, characters 11-16
+    Called from Paxos_lib__Paxos.Make.State.eval in file "paxos/paxos.ml" (inlined), line 143, characters 52-55
+    Called from Paxos_lib__Paxos.Make.StateR.eval in file "paxos/paxos.ml", line 215, characters 12-30
+    Called from Paxos_lib__Paxos.Make.advance in file "paxos/paxos.ml", line 744, characters 6-38
+    Called from Paxos_lib__Paxos.Test.(fun) in file "paxos/paxos.ml", line 2021, characters 22-46
+    Called from Expect_test_collector.Make.Instance.exec in file "collector/expect_test_collector.ml", line 244, characters 12-19 |}]
 end
