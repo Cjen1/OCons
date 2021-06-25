@@ -9,11 +9,13 @@
 
 (library
  (name paxos_lib)
+ (instrumentation
+  (backend bisect_ppx))
  (libraries ocons-core core async async.log_extended)
  (inline_tests)
  (preprocess
   (pps ppx_jane ppx_log ppx_accessor))
- (modules paxos test))
+ (modules paxos))
 
 (env
  (dev

@@ -1,11 +1,6 @@
 open Types
 
 module type S = sig
-  val logger : Async.Log.t
-
-  (* More verbose logging for entry and exit of module *)
-  val io_logger : Async.Log.t
-
   (* Incomming and outgoing messages should be symmetrical *)
   type message [@@deriving sexp_of, bin_io]
 

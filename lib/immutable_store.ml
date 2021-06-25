@@ -4,14 +4,14 @@ open! Ppx_log_async
 module A = Accessor
 open! A.O
 
-let logger =
+let _logger =
   let open Async_unix.Log in
   create ~level:`Info ~output:[] ~on_error:`Raise
     ~transform:(fun m -> Message.add_tags m [("src", "ImmutableLog")])
     ()
 
 module ILog = struct
-  module IdSet = Set.Make (Id)
+  module IdSet = Set.Make (Uuid.Stable.V1)
 
   module I = struct
     (* store is in newest to oldest order*)
@@ -81,55 +81,39 @@ module ILog = struct
 
   let mem_id t id = Set.mem t.I.command_set id
 
-  let entries_after_inc t index =
-    let drop = I.drop_of_index t index |> Int64.to_int_exn in
-    List.split_n t.store drop |> fst
+  let fold_geq t ~idx ~init ~f =
+    let drop = I.drop_of_index t idx |> Int64.to_int_exn in
+    let relevant_entries = List.split_n t.store drop |> fst |> List.rev in
+    List.fold_left relevant_entries ~init ~f
 
-  let entries_after_inc_size t index =
-    let size = Int64.(get_max_index t - index + one) in
-    (entries_after_inc t index, size)
+  let fold_until_geq ~idx ~init ~f ~finish t =
+    Container.fold_until ~fold:(fold_geq ~idx) ~init ~f ~finish t
 
-  let add_entries_remove_conflicts t ~start_index new_entries =
-    let relevant_entries = entries_after_inc t start_index in
-    (* Takes two lists of entries lowest index first
-         iterates through the lists until there is a conflict
-         at which point it returns the conflict index and the entries to add
-    *)
-    let rec merge_y_into_x idx :
-        log_entry list * log_entry list -> int64 option * log_entry list =
-      function
-      | _, [] ->
-          (None, [])
-      | [], ys ->
-          (None, ys)
-      | x :: _, (y :: _ as ys) when not @@ [%compare.equal: term] x.term y.term
-        ->
-          [%log.debug
-            logger "Mismatch while merging" (x : log_entry) (y : log_entry)] ;
-          Logs.debug (fun m -> m "Mismatch at %a" Fmt.int64 idx) ;
-          (Some idx, ys)
-      | _ :: xs, _ :: ys ->
-          merge_y_into_x Int64.(succ idx) (xs, ys)
+  let foldi_geq t ~idx ~init ~f =
+    let open Int64 in
+    snd
+      (fold_geq t ~idx ~init:(idx, init) ~f:(fun (i, acc) v ->
+           (succ i, f i acc v) ) )
+
+  let foldi_until_geq :
+         idx:log_index
+      -> init:'acc
+      -> f:(log_index -> 'acc -> log_entry -> ('b, 'final) Continue_or_stop.t)
+      -> finish:(log_index -> 'acc -> 'final)
+      -> t
+      -> 'final =
+   fun ~idx ~init ~f ~finish t ->
+    let open Continue_or_stop in
+    let open Int64 in
+    let finish (i, v) = finish i v in
+    let f (i, acc) v =
+      match f i acc v with
+      | Continue a ->
+          Continue (succ i, a)
+      | Stop v ->
+          Stop v
     in
-    (* entries_to_add is in oldest first order *)
-    let removeGEQ_o, entries_to_add =
-      merge_y_into_x start_index
-        (List.rev relevant_entries, List.rev new_entries)
-    in
-    let t, ops =
-      match removeGEQ_o with
-      | Some i ->
-          let t', op' = apply_wrap t (RemoveGEQ i) in
-          (t', [op'])
-      | None ->
-          (t, [])
-    in
-    let t, ops =
-      List.fold_left entries_to_add ~init:(t, ops) ~f:(fun (t, ops) v ->
-          let t', ops' = apply_wrap t (Add v) in
-          (t', ops' :: ops) )
-    in
-    (t, ops)
+    Container.fold_until ~fold:(fold_geq ~idx) ~init:(idx, init) ~f ~finish t
 
   let add_cmd t command term = add_entry t {command; term}
 
@@ -206,18 +190,17 @@ let get_max_index t = L.get_max_index t.data.log
 
 let mem_id t id = L.mem_id t.data.log id
 
-let entries_after_inc t index = L.entries_after_inc t.data.log index
+let fold_geq t = L.fold_geq t.data.log
 
-let entries_after_inc_size t index = L.entries_after_inc_size t.data.log index
+let foldi_geq t = L.foldi_geq t.data.log
+
+let fold_until_geq ~idx ~init ~f ~finish t =
+  L.fold_until_geq ~idx ~init ~f ~finish t.data.log
+
+let foldi_until_geq ~idx ~init ~f ~finish t =
+  L.foldi_until_geq ~idx ~init ~f ~finish t.data.log
 
 let to_string t = [%message (t : t)] |> Sexp.to_string_hum
-
-let add_entries_remove_conflicts t ~start_index ~entries =
-  let l, ops' =
-    L.add_entries_remove_conflicts t.data.log ~start_index entries
-  in
-  A.set (data @> log) t ~to_:l
-  |> A.set ops ~to_:(List.map ~f:(fun op -> Log op) ops' @ t.ops)
 
 let add_cmd t ~cmd ~term =
   let l, op = L.add_cmd t.data.log cmd term in

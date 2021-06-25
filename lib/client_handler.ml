@@ -57,13 +57,13 @@ module T = struct
 
     let client_handler_impl =
       [ Rpc.Rpc.implement Types.client_rpc (fun t cr ->
-            [%log.global.debug "Received" (cr.id : Id.t)] ;
+            [%log.global.debug "Received" (cr.id : Uuid.t)] ;
             match H.find t.client_results cr.id with
             | Some result ->
                 return (Ok result)
             | None ->
                 Deferred.create (fun i ->
-                    [%log.global.debug "Adding to pipe" (cr.id : Id.t)] ;
+                    [%log.global.debug "Adding to pipe" (cr.id : Uuid.t)] ;
                     H.add_multi t.client_ivars ~key:cr.id ~data:i ;
                     Pipe.write_without_pushback t.cr_pipe.wr cr ) ) ]
 
@@ -77,8 +77,8 @@ module T = struct
         {rd; wr}
       in
       let t =
-        { client_ivars= H.create (module Id)
-        ; client_results= H.create (module Id)
+        { client_ivars= H.create (module Uuid)
+        ; client_results= H.create (module Uuid)
         ; cr_pipe
         ; batch_size
         ; batch_timeout }

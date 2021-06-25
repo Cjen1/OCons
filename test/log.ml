@@ -4,9 +4,12 @@ open Types
 module IS = Immutable_store
 module PS = Mutable_store.Make (IS)
 
+let uid_of_id id = Uuid.create_random (Random.State.make [|id|])
+
 let make_entry id term key =
-  let id = Types.Id.of_int_exn id in
-  let command = Types.Command.{op= Read (Int.to_string key); id} in
+  let command =
+    Types.Command.{op= Read (Int.to_string key); id= uid_of_id id}
+  in
   Types.{command; term}
 
 module IStorageTest = struct
@@ -35,16 +38,37 @@ module IStorageTest = struct
          ((current_term 0)
           (log
            ((store
-             (((command ((op (Read 4)) (id 4))) (term 3))
-              ((command ((op (Read 3)) (id 3))) (term 3))
-              ((command ((op (Read 2)) (id 2))) (term 1))
-              ((command ((op (Read 1)) (id 1))) (term 1))))
-            (command_set (1 2 3 4)) (length 4)))))
+             (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+               (term 3))
+              ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+               (term 3))
+              ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+               (term 1))
+              ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+               (term 1))))
+            (command_set
+             (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+              6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+              da9280e5-0845-4466-e4bb-94e2f401c14a
+              eed8f731-aab8-4baf-f515-521eff34be65))
+            (length 4)))))
         (ops
-         ((Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-          (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-          (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-          (Log (Add ((command ((op (Read 1)) (id 1))) (term 1)))))))) |}] ;
+         ((Log
+           (Add
+            ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+             (term 3))))
+          (Log
+           (Add
+            ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+             (term 3))))
+          (Log
+           (Add
+            ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+             (term 1))))
+          (Log
+           (Add
+            ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+             (term 1)))))))) |}] ;
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
     [%expect
       {|
@@ -52,16 +76,37 @@ module IStorageTest = struct
         ((current_term 0)
          (log
           ((store
-            (((command ((op (Read 4)) (id 4))) (term 3))
-             ((command ((op (Read 3)) (id 3))) (term 3))
-             ((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2 3 4)) (length 4)))))
+            (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 3))
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 3))
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+             da9280e5-0845-4466-e4bb-94e2f401c14a
+             eed8f731-aab8-4baf-f515-521eff34be65))
+           (length 4)))))
        (ops
-        ((Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-         (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-         (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))))) |}]
+        ((Log
+          (Add
+           ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))) |}]
 
   let%expect_test "get_ops" =
     let istate = IS.init () |> init_log in
@@ -69,10 +114,22 @@ module IStorageTest = struct
     |> print_endline ;
     [%expect
       {|
-      ((Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-       (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-       (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-       (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))) |}]
+      ((Log
+        (Add
+         ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+          (term 3))))
+       (Log
+        (Add
+         ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+          (term 3))))
+       (Log
+        (Add
+         ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+          (term 1))))
+       (Log
+        (Add
+         ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+          (term 1))))) |}]
 
   let%expect_test "reset_ops" =
     let istate = IS.init () |> init_log in
@@ -84,67 +141,130 @@ module IStorageTest = struct
         ((current_term 0)
          (log
           ((store
-            (((command ((op (Read 4)) (id 4))) (term 3))
-             ((command ((op (Read 3)) (id 3))) (term 3))
-             ((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2 3 4)) (length 4)))))
+            (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 3))
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 3))
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+             da9280e5-0845-4466-e4bb-94e2f401c14a
+             eed8f731-aab8-4baf-f515-521eff34be65))
+           (length 4)))))
        (ops ())) |}]
 
   let%expect_test "update_term" =
     let istate = IS.init () |> init_log in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
+    [%expect
+      {|
+      ((data
+        ((current_term 0)
+         (log
+          ((store
+            (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 3))
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 3))
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+             da9280e5-0845-4466-e4bb-94e2f401c14a
+             eed8f731-aab8-4baf-f515-521eff34be65))
+           (length 4)))))
+       (ops
+        ((Log
+          (Add
+           ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))) |}] ;
     let istate = IS.update_term istate ~term:5 in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
     [%expect
       {|
       ((data
-        ((current_term 0)
-         (log
-          ((store
-            (((command ((op (Read 4)) (id 4))) (term 3))
-             ((command ((op (Read 3)) (id 3))) (term 3))
-             ((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2 3 4)) (length 4)))))
-       (ops
-        ((Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-         (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-         (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 1)))))))
-      ((data
         ((current_term 5)
          (log
           ((store
-            (((command ((op (Read 4)) (id 4))) (term 3))
-             ((command ((op (Read 3)) (id 3))) (term 3))
-             ((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2 3 4)) (length 4)))))
+            (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 3))
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 3))
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+             da9280e5-0845-4466-e4bb-94e2f401c14a
+             eed8f731-aab8-4baf-f515-521eff34be65))
+           (length 4)))))
        (ops
-        ((Term 5) (Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-         (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-         (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))))) |}]
+        ((Term 5)
+         (Log
+          (Add
+           ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))) |}]
 
   let%expect_test "add_entry" =
     let istate = IS.init () in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
+    [%expect
+      {|
+      ((data ((current_term 0) (log ((store ()) (command_set ()) (length 0)))))
+       (ops ())) |}] ;
     let istate = IS.add_entry istate ~entry:(make_entry 5 4 3) in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
     [%expect
       {|
-      ((data ((current_term 0) (log ((store ()) (command_set ()) (length 0)))))
-       (ops ()))
       ((data
         ((current_term 0)
          (log
-          ((store (((command ((op (Read 3)) (id 5))) (term 4)))) (command_set (5))
-           (length 1)))))
-       (ops ((Log (Add ((command ((op (Read 3)) (id 5))) (term 4))))))) |}]
+          ((store
+            (((command ((op (Read 3)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+              (term 4))))
+           (command_set (dbb2a9af-5f11-427b-238c-63c074946538)) (length 1)))))
+       (ops
+        ((Log
+          (Add
+           ((command ((op (Read 3)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+            (term 4))))))) |}]
 
   let%expect_test "remove_geq" =
     let istate = IS.init () |> init_log in
+    [%expect {||}] ;
     let istate = IS.remove_geq istate ~index:Int64.(of_int 3) in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
     [%expect
@@ -153,15 +273,32 @@ module IStorageTest = struct
         ((current_term 0)
          (log
           ((store
-            (((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2)) (length 2)))))
+            (((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             da9280e5-0845-4466-e4bb-94e2f401c14a))
+           (length 2)))))
        (ops
         ((Log (RemoveGEQ 3))
-         (Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-         (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-         (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))))) |}]
+         (Log
+          (Add
+           ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))) |}]
 
   let%expect_test "get_index" =
     let istate = IS.init () |> init_log in
@@ -171,10 +308,16 @@ module IStorageTest = struct
     [%expect {| (Error (Not_found_s 0)) |}] ;
     IS.get_index_exn istate (Int64.of_int 1)
     |> [%sexp_of: Types.log_entry] |> Sexp.to_string_hum |> print_endline ;
-    [%expect {| ((command ((op (Read 1)) (id 1))) (term 1)) |}] ;
+    [%expect
+      {|
+      ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+       (term 1)) |}] ;
     IS.get_index_exn istate (Int64.of_int 2)
     |> [%sexp_of: Types.log_entry] |> Sexp.to_string_hum |> print_endline ;
-    [%expect {| ((command ((op (Read 2)) (id 2))) (term 1)) |}]
+    [%expect
+      {|
+      ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+       (term 1)) |}]
 
   let%expect_test "get_term" =
     let istate = IS.init () |> init_log in
@@ -204,86 +347,52 @@ module IStorageTest = struct
 
   let%expect_test "mem_id" =
     let istate = IS.init () in
-    IS.mem_id istate (Types.Id.of_int_exn 1) |> Bool.to_string |> print_endline ;
+    IS.mem_id istate (uid_of_id 1) |> Bool.to_string |> print_endline ;
     [%expect {| false |}] ;
     let istate = init_log istate in
-    IS.mem_id istate (Types.Id.of_int_exn 1) |> Bool.to_string |> print_endline ;
+    IS.mem_id istate (uid_of_id 1) |> Bool.to_string |> print_endline ;
     [%expect {| true |}]
 
-  let%expect_test "entries_after_inc" =
+  let%expect_test "fold_geq" =
     let istate = IS.init () |> init_log in
-    let entries = IS.entries_after_inc istate Int64.(of_int 2) in
-    entries |> [%sexp_of: log_entry list] |> Sexp.to_string_hum |> print_endline ;
+    let values =
+      IS.fold_geq istate ~idx:(Int64.of_int 2) ~init:[] ~f:(fun a v -> v :: a)
+    in
+    values |> [%sexp_of: log_entry list] |> Sexp.to_string_hum |> print_endline ;
     [%expect
       {|
-      (((command ((op (Read 4)) (id 4))) (term 3))
-       ((command ((op (Read 3)) (id 3))) (term 3))
-       ((command ((op (Read 2)) (id 2))) (term 1))) |}]
+      (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+        (term 3))
+       ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+        (term 3))
+       ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+        (term 1))) |}]
 
-  let%expect_test "entries_after_inc_size" =
+  let%expect_test "foldi_geq" =
     let istate = IS.init () |> init_log in
-    let entries = IS.entries_after_inc_size istate Int64.(of_int 2) in
-    entries |> [%sexp_of: log_entry list * int64] |> Sexp.to_string_hum
+    let values =
+      IS.foldi_geq istate ~idx:(Int64.of_int 2) ~init:[] ~f:(fun i a v ->
+          (i, v) :: a )
+    in
+    values |> [%sexp_of: (Int64.t * log_entry) list] |> Sexp.to_string_hum
     |> print_endline ;
     [%expect
       {|
-      ((((command ((op (Read 4)) (id 4))) (term 3))
-        ((command ((op (Read 3)) (id 3))) (term 3))
-        ((command ((op (Read 2)) (id 2))) (term 1)))
-       3) |}]
-
-  let%expect_test "add_entries_rem_conflicts" =
-    let istate = IS.init () |> init_log in
-    istate |> IS.to_string |> print_endline ;
-    [%expect
-      {|
-      (t
-       ((data
-         ((current_term 0)
-          (log
-           ((store
-             (((command ((op (Read 4)) (id 4))) (term 3))
-              ((command ((op (Read 3)) (id 3))) (term 3))
-              ((command ((op (Read 2)) (id 2))) (term 1))
-              ((command ((op (Read 1)) (id 1))) (term 1))))
-            (command_set (1 2 3 4)) (length 4)))))
-        (ops
-         ((Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-          (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-          (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-          (Log (Add ((command ((op (Read 1)) (id 1))) (term 1)))))))) |}] ;
-    let entries =
-      List.map [(3, 4, 3); (2, 1, 2)] ~f:(fun (a, b, c) -> make_entry a b c)
-    in
-    let istate =
-      IS.add_entries_remove_conflicts istate ~start_index:(Int64.of_int 2)
-        ~entries
-    in
-    istate |> IS.to_string |> print_endline ;
-    [%expect
-      {|
-      (t
-       ((data
-         ((current_term 0)
-          (log
-           ((store
-             (((command ((op (Read 3)) (id 3))) (term 4))
-              ((command ((op (Read 2)) (id 2))) (term 1))
-              ((command ((op (Read 1)) (id 1))) (term 1))))
-            (command_set (1 2 3)) (length 3)))))
-        (ops
-         ((Log (Add ((command ((op (Read 3)) (id 3))) (term 4))))
-          (Log (RemoveGEQ 3))
-          (Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-          (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-          (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-          (Log (Add ((command ((op (Read 1)) (id 1))) (term 1)))))))) |}]
+      ((4
+        ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+         (term 3)))
+       (3
+        ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+         (term 3)))
+       (2
+        ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+         (term 1)))) |}]
 
   let%expect_test "add_cmd" =
     let istate = IS.init () |> init_log in
     let istate =
       IS.add_cmd istate
-        ~cmd:Types.Command.{op= Read "cmd1"; id= Id.of_int_exn 11}
+        ~cmd:Types.Command.{op= Read "cmd1"; id= uid_of_id 11}
         ~term:10
     in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
@@ -293,18 +402,45 @@ module IStorageTest = struct
         ((current_term 0)
          (log
           ((store
-            (((command ((op (Read cmd1)) (id 11))) (term 10))
-             ((command ((op (Read 4)) (id 4))) (term 3))
-             ((command ((op (Read 3)) (id 3))) (term 3))
-             ((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2 3 4 11)) (length 5)))))
+            (((command
+               ((op (Read cmd1)) (id de051608-79c8-4077-8363-33f296ef67e7)))
+              (term 10))
+             ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 3))
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 3))
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+             da9280e5-0845-4466-e4bb-94e2f401c14a
+             de051608-79c8-4077-8363-33f296ef67e7
+             eed8f731-aab8-4baf-f515-521eff34be65))
+           (length 5)))))
        (ops
-        ((Log (Add ((command ((op (Read cmd1)) (id 11))) (term 10))))
-         (Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-         (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-         (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))))) |}]
+        ((Log
+          (Add
+           ((command ((op (Read cmd1)) (id de051608-79c8-4077-8363-33f296ef67e7)))
+            (term 10))))
+         (Log
+          (Add
+           ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))) |}]
 
   let%expect_test "add_cmds" =
     let istate = IS.init () |> init_log in
@@ -312,8 +448,8 @@ module IStorageTest = struct
       IS.add_cmds istate
         ~cmds:
           Types.Command.
-            [ {op= Read "cmd1"; id= Id.of_int_exn 11}
-            ; {op= Read "cmd2"; id= Id.of_int_exn 12} ]
+            [ {op= Read "cmd1"; id= uid_of_id 11}
+            ; {op= Read "cmd2"; id= uid_of_id 12} ]
         ~term:10
     in
     istate |> [%sexp_of: IS.t] |> Sexp.to_string_hum |> print_endline ;
@@ -323,20 +459,53 @@ module IStorageTest = struct
         ((current_term 0)
          (log
           ((store
-            (((command ((op (Read cmd2)) (id 12))) (term 10))
-             ((command ((op (Read cmd1)) (id 11))) (term 10))
-             ((command ((op (Read 4)) (id 4))) (term 3))
-             ((command ((op (Read 3)) (id 3))) (term 3))
-             ((command ((op (Read 2)) (id 2))) (term 1))
-             ((command ((op (Read 1)) (id 1))) (term 1))))
-           (command_set (1 2 3 4 11 12)) (length 6)))))
+            (((command
+               ((op (Read cmd2)) (id 279f4de6-d672-44fa-c70b-8750bc0619e3)))
+              (term 10))
+             ((command
+               ((op (Read cmd1)) (id de051608-79c8-4077-8363-33f296ef67e7)))
+              (term 10))
+             ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+              (term 3))
+             ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+              (term 3))
+             ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+              (term 1))
+             ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+              (term 1))))
+           (command_set
+            (279f4de6-d672-44fa-c70b-8750bc0619e3
+             63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+             6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+             da9280e5-0845-4466-e4bb-94e2f401c14a
+             de051608-79c8-4077-8363-33f296ef67e7
+             eed8f731-aab8-4baf-f515-521eff34be65))
+           (length 6)))))
        (ops
-        ((Log (Add ((command ((op (Read cmd2)) (id 12))) (term 10))))
-         (Log (Add ((command ((op (Read cmd1)) (id 11))) (term 10))))
-         (Log (Add ((command ((op (Read 4)) (id 4))) (term 3))))
-         (Log (Add ((command ((op (Read 3)) (id 3))) (term 3))))
-         (Log (Add ((command ((op (Read 2)) (id 2))) (term 1))))
-         (Log (Add ((command ((op (Read 1)) (id 1))) (term 1))))))) |}]
+        ((Log
+          (Add
+           ((command ((op (Read cmd2)) (id 279f4de6-d672-44fa-c70b-8750bc0619e3)))
+            (term 10))))
+         (Log
+          (Add
+           ((command ((op (Read cmd1)) (id de051608-79c8-4077-8363-33f296ef67e7)))
+            (term 10))))
+         (Log
+          (Add
+           ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+            (term 3))))
+         (Log
+          (Add
+           ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+            (term 1))))
+         (Log
+          (Add
+           ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+            (term 1))))))) |}]
 end
 
 module MStoreTest = struct
@@ -359,7 +528,7 @@ module MStoreTest = struct
     let f store =
       let istate = PS.get_state store in
       let entries =
-        List.map [(3, 4, 3); (2, 1, 2)] ~f:(fun (a, b, c) -> make_entry a b c)
+        List.map [(5, 10, 5); (6, 11, 6)] ~f:(fun (a, b, c) -> make_entry a b c)
       in
       let istate = istate |> init_log in
       PS.update store istate |> ignore ;
@@ -368,8 +537,8 @@ module MStoreTest = struct
       idx |> [%sexp_of: int64] |> Sexp.to_string_hum |> print_endline ;
       let%bind () = [%expect {| 4 |}] in
       let istate' =
-        IS.add_entries_remove_conflicts istate ~start_index:(Int64.of_int 2)
-          ~entries
+        List.fold_left entries ~init:istate ~f:(fun s entry ->
+            IS.add_entry s ~entry )
         |> IS.update_term ~term:100
       in
       let ops = List.rev @@ IS.get_ops istate' in
@@ -384,33 +553,81 @@ module MStoreTest = struct
             ((current_term 0)
              (log
               ((store
-                (((command ((op (Read 4)) (id 4))) (term 3))
-                 ((command ((op (Read 3)) (id 3))) (term 3))
-                 ((command ((op (Read 2)) (id 2))) (term 1))
-                 ((command ((op (Read 1)) (id 1))) (term 1))))
-               (command_set (1 2 3 4)) (length 4)))))
+                (((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 3))
+                 ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 3))
+                 ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 1))
+                 ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 1))))
+               (command_set
+                (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+                 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+                 da9280e5-0845-4466-e4bb-94e2f401c14a
+                 eed8f731-aab8-4baf-f515-521eff34be65))
+               (length 4)))))
            (ops ())))
          (istate'
           ((data
             ((current_term 100)
              (log
               ((store
-                (((command ((op (Read 3)) (id 3))) (term 4))
-                 ((command ((op (Read 2)) (id 2))) (term 1))
-                 ((command ((op (Read 1)) (id 1))) (term 1))))
-               (command_set (1 2 3)) (length 3)))))
+                (((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                  (term 11))
+                 ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                  (term 10))
+                 ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 3))
+                 ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 3))
+                 ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 1))
+                 ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 1))))
+               (command_set
+                (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+                 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+                 da9280e5-0845-4466-e4bb-94e2f401c14a
+                 dbb2a9af-5f11-427b-238c-63c074946538
+                 eed8f731-aab8-4baf-f515-521eff34be65
+                 f3ff37c6-ef29-4d50-6f65-48022624a717))
+               (length 6)))))
            (ops
-            ((Term 100) (Log (Add ((command ((op (Read 3)) (id 3))) (term 4))))
-             (Log (RemoveGEQ 3))))))
+            ((Term 100)
+             (Log
+              (Add
+               ((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                (term 11))))
+             (Log
+              (Add
+               ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                (term 10))))))))
          (istate''
           ((data
             ((current_term 100)
              (log
               ((store
-                (((command ((op (Read 3)) (id 3))) (term 4))
-                 ((command ((op (Read 2)) (id 2))) (term 1))
-                 ((command ((op (Read 1)) (id 1))) (term 1))))
-               (command_set (1 2 3)) (length 3)))))
+                (((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                  (term 11))
+                 ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                  (term 10))
+                 ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                  (term 3))
+                 ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                  (term 3))
+                 ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                  (term 1))
+                 ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                  (term 1))))
+               (command_set
+                (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+                 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+                 da9280e5-0845-4466-e4bb-94e2f401c14a
+                 dbb2a9af-5f11-427b-238c-63c074946538
+                 eed8f731-aab8-4baf-f515-521eff34be65
+                 f3ff37c6-ef29-4d50-6f65-48022624a717))
+               (length 6)))))
            (ops ())))) |}]
       in
       [%message
@@ -426,7 +643,7 @@ module MStoreTest = struct
       PS.update store istate' |> ignore ;
       let%bind idx = PS.datasync store in
       idx |> [%sexp_of: int64] |> Sexp.to_string_hum |> print_endline ;
-      [%expect {| 3 |}]
+      [%expect {| 6 |}]
     in
     let%bind () = with_file f "end-to-end" in
     let f' store =
@@ -438,10 +655,26 @@ module MStoreTest = struct
           ((current_term 100)
            (log
             ((store
-              (((command ((op (Read 3)) (id 3))) (term 4))
-               ((command ((op (Read 2)) (id 2))) (term 1))
-               ((command ((op (Read 1)) (id 1))) (term 1))))
-             (command_set (1 2 3)) (length 3)))))
+              (((command ((op (Read 6)) (id f3ff37c6-ef29-4d50-6f65-48022624a717)))
+                (term 11))
+               ((command ((op (Read 5)) (id dbb2a9af-5f11-427b-238c-63c074946538)))
+                (term 10))
+               ((command ((op (Read 4)) (id eed8f731-aab8-4baf-f515-521eff34be65)))
+                (term 3))
+               ((command ((op (Read 3)) (id 6c4ac624-e62a-45ee-c2f5-f327ad1a21f6)))
+                (term 3))
+               ((command ((op (Read 2)) (id da9280e5-0845-4466-e4bb-94e2f401c14a)))
+                (term 1))
+               ((command ((op (Read 1)) (id 63fe4ae3-a440-4e26-7774-3cf575ca5dd0)))
+                (term 1))))
+             (command_set
+              (63fe4ae3-a440-4e26-7774-3cf575ca5dd0
+               6c4ac624-e62a-45ee-c2f5-f327ad1a21f6
+               da9280e5-0845-4466-e4bb-94e2f401c14a
+               dbb2a9af-5f11-427b-238c-63c074946538
+               eed8f731-aab8-4baf-f515-521eff34be65
+               f3ff37c6-ef29-4d50-6f65-48022624a717))
+             (length 6)))))
          (ops ())) |}]
     in
     with_file f' "end-to-end"

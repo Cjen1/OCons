@@ -39,14 +39,33 @@ module type S = sig
 
   val mem_id : t -> command_id -> bool
 
-  val entries_after_inc : t -> log_index -> log_entry list
+  val fold_geq :
+    t -> idx:log_index -> init:'a -> f:('a -> log_entry -> 'a) -> 'a
 
-  val entries_after_inc_size : t -> log_index -> log_entry list * int64
+  val foldi_geq :
+       t
+    -> idx:log_index
+    -> init:'a
+    -> f:(log_index -> 'a -> log_entry -> 'a)
+    -> 'a
+
+  val fold_until_geq :
+       idx:log_index
+    -> init:'acc
+    -> f:('acc -> log_entry -> ('acc, 'final) Continue_or_stop.t)
+    -> finish:('acc -> 'final)
+    -> t
+    -> 'final
+
+  val foldi_until_geq :
+       idx:log_index
+    -> init:'acc
+    -> f:(log_index -> 'acc -> log_entry -> ('acc, 'final) Continue_or_stop.t)
+    -> finish:(log_index -> 'acc -> 'final)
+    -> t
+    -> 'final
 
   val to_string : t -> string
-
-  val add_entries_remove_conflicts :
-    t -> start_index:log_index -> entries:log_entry list -> t
 
   val add_cmd : t -> cmd:command -> term:term -> t
 

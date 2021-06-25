@@ -13,6 +13,10 @@ val op_read : t -> bytes -> op_result Deferred.t
 val op_write : t -> k:bytes -> v:bytes -> op_result Deferred.t
 (** [op_write t k v] writes [v] to key [k] *)
 
+val op_cas :
+  t -> key:bytes -> value:bytes -> value':bytes -> op_result Deferred.t
+(** [op_cas t k v v'] writes [v'] to key [k] if the previous value is [v] *)
+
 val new_client : ?retry_delay:Time.Span.t -> string list -> t
 (** [new_client addresses] Creates a new client connected to the servers listed in [addresses]. If a server is unreachable it will keep trying to reconnect to it. *)
 

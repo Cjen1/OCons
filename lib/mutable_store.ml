@@ -50,7 +50,8 @@ end = struct
         `NoSync
     | ops ->
         (* get oldest to newest ordering of ops *)
-        List.iter ~f:(P.write t.wal) (List.rev ops) ;
+        let ops = List.rev ops in
+        List.iter ~f:(P.write t.wal) ops ;
         `SyncPossible
 
   let of_path ?file_size path =
