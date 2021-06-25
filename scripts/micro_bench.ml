@@ -14,10 +14,6 @@ let set_core_profiler output = set_env "CORE_PROFILER" ("OUTPUT_FILE=" ^ output)
 
 let if_exists f file = if%bind file_exists file then f file else return ()
 
-let delay t p =
-  let%bind () = sleep t in
-  p
-
 let start_server service node_id =
   let data_dir = Fmt.str "%d.datadir" node_id in
   let%bind () = if_exists rm_rf data_dir in
@@ -28,8 +24,8 @@ let start_server service node_id =
   let%bind () = if_exists rm prof_file in
   let port = node_id + 4 |> Int.to_string in
   let node_id = Int.to_string node_id in
-  spawn "opam"
-  @@ ["exec"; "--"; "dune"; "exec"; service ^ "/main.exe"; "--"]
+  spawn "opam" @@ ["exec"; "--"]
+  @ ["_build/default/" ^ service ^ "/main.exe"]
   @ [node_id; "1:127.0.0.1:5002,2:127.0.0.1:6002,3:127.0.0.1:7002"; data_dir]
   @ [port ^ "001"; port ^ "002"]
   @ ["5"; "0.1"] @ ["-s"; "500"] @ ["-log-level"; "info"]
@@ -53,7 +49,7 @@ let client_test nodes rate =
   let nodes = List.map nodes ~f:(fun i -> ((i + 4) * 1000) + 1) in
   let nodes = nodes |> [%sexp_of: int list] |> Sexp.to_string in
   call_exit_code @@ ["timeout"; timeout] @ ["opam"; "exec"; "--"]
-  @ ["dune"; "exec"; "bin/bench.exe"; "--"]
+  @ ["_build/default/bin/bench.exe"]
   @ ["-p"; nodes] @ ["-t"; Int.to_string rate] @ ["-n"; Int.to_string n]
   @ ["-log-level"; "info"]
 
@@ -61,9 +57,8 @@ let print_summary file =
   call ["core-profiler-tool"; "summary"; "-filename"; file]
 
 let test service target_rate =
-  let%bind bgs =
-    fork_all [start_server service 1; delay 1. @@ start_server service 2]
-  in
+  let%bind bgs = fork_all [start_server service 1; start_server service 2] in
+  print_endline "Starting test" ;
   let%bind exit_code = client_test [1; 2] target_rate in
   let%bind () = List'.iter bgs ~f:kill in
   match exit_code with
@@ -86,7 +81,8 @@ let () =
         let () =
           eval
             ( call @@ ["opam"; "exec"; "--"] @ ["dune"; "build"]
-            @ [service ^ "/main.exe"; "scripts/micro_bench.exe"] )
+            @ [service ^ "/main.exe"; "scripts/micro_bench.exe"; "bin/bench.exe"]
+            )
         in
         let () = eval (sleep 5.) in
         let () = eval (print @@ Fmt.str "Built main\n") in
