@@ -50,4 +50,5 @@
     core_bench
     core_profiler
     bisect_ppx
+    ocons-core
     ))
