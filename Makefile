@@ -1,6 +1,5 @@
 .PHONY: build
-build:
-	eval `opam env` 
+build: clean
 	opam exec -- dune build @install 
 
 .PHONY: test
