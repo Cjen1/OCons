@@ -52,3 +52,8 @@
     bisect_ppx
     ocons-core
     ))
+
+(package
+  (name ocons-conn-mgr)
+  (synopsis "A unreliable messaging library")
+  (depends ))

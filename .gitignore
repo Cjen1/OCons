@@ -12,3 +12,5 @@ _coverage/
 logs/
 libpaxos/
 .merlin
+
+.direnv/

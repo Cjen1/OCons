@@ -1,0 +1,7 @@
+(library
+ (name ocons_conn_mgr)
+ (public_name ocons-conn-mgr)
+ (inline_tests)
+ (libraries base eio accessor core_profiler)
+ (preprocess
+  (pps ppx_jane ppx_accessor)))
