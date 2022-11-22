@@ -1,18 +1,10 @@
 open! Core
-open! Async
-open! Ppx_log_async
 module O = Owal
 module H = Hashtbl
 module CH = Client_handler
 open Types
 open Utils
 open Core_profiler_disabled.Std
-
-let logger =
-  let open Async_unix.Log in
-  create ~level:`Info ~output:[] ~on_error:`Raise
-    ~transform:(fun m -> Message.add_tags m [("src", "Infra")])
-    ()
 
 type infra_config =
   { node_id: node_id
@@ -25,7 +17,7 @@ type infra_config =
   ; batch_timeout: Time.Span.t }
 [@@deriving sexp_of]
 
-module Make (S : Immutable_store_intf.S) (C : Consensus_intf.F) = struct
+module Make (C : Consensus_intf.F) = struct
   module C = C (S)
   module MS = Mutable_store.Make (S)
 
