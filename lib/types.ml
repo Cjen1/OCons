@@ -1,5 +1,4 @@
-open! Core
-open! Async
+open Core
 module A = Accessor
 open! A.O
 
@@ -7,15 +6,39 @@ type time = float
 
 type node_addr = string
 
-type command_id = Uuid.Stable.V1.t [@@deriving bin_io, sexp, compare]
+module Uuid = struct
+  module BinIO = Bin_prot.Utils.Make_binable_with_uuid(struct
+    module Binable = struct
+      type t = Int64.t * Int64.t [@@deriving bin_io]
+    end
+    type t = Uuidm.t
+    let of_binable b =
+      let cs = Cstruct.create 16 in
+      Cstruct.BE.set_uint64 cs 0 (fst b);
+      Cstruct.BE.set_uint64 cs 8 (snd b);
+      cs |> Cstruct.to_bytes |> Bytes.to_string |> Uuidm.of_bytes |> Option.value_exn ~here:[%here]
 
-type client_id = Uuid.Stable.V1.t [@@deriving bin_io, sexp]
+    let to_binable t =
+      let cs = t |> Uuidm.to_bytes |> Cstruct.of_string in
+      Cstruct.BE.get_uint64 cs 0, Cstruct.BE.get_uint64 cs 8
 
-type node_id = int [@@deriving bin_io, sexp]
+    let caller_identity = Bin_prot.Shape.Uuid.of_string "test"
+  end)
 
-type key = string [@@deriving bin_io, sexp, compare]
+  include BinIO
+  include Uuidm
 
-type value = string [@@deriving bin_io, sexp, compare]
+  let compare_t = Uuidm.compare
+end
+
+type command_id = Uuid.t [@@deriving bin_io, compare]
+type client_id = Uuid.t [@@deriving bin_io]
+
+type node_id = int [@@deriving bin_io]
+
+type key = string [@@deriving bin_io, compare]
+
+type value = string [@@deriving bin_io, compare]
 
 type state_machine = (key, value) Hashtbl.t
 
@@ -23,20 +46,18 @@ type sm_op =
   | Read of key
   | Write of key * value
   | CAS of {key: key; value: value; value': value}
-[@@deriving bin_io, sexp, compare]
+[@@deriving bin_io, compare]
 
 module Command = struct
-  type t = {op: sm_op; id: command_id} [@@deriving bin_io, sexp, compare]
+  type t = {op: sm_op; id: command_id} [@@deriving bin_io, compare]
 
-  let compare a b = Uuid.compare a.id b.id
-
-  let hash t = Uuid.hash t.id
+  let compare a b = Uuidm.compare a.id b.id
 end
 
-type command = Command.t [@@deriving bin_io, sexp, compare]
+type command = Command.t [@@deriving bin_io, compare]
 
 type op_result = Success | Failure of string | ReadSuccess of key
-[@@deriving bin_io, sexp]
+[@@deriving bin_io]
 
 let op_result_failure s = Failure s
 
@@ -68,18 +89,14 @@ let update_state_machine : state_machine -> command -> op_result =
 
 let create_state_machine () = Hashtbl.create (module String)
 
-type log_index = int64 [@@deriving bin_io, sexp, compare]
+type log_index = int64 [@@deriving bin_io, compare]
 
-type term = int [@@deriving compare, compare, bin_io, sexp]
+type term = int [@@deriving compare, compare, bin_io]
 
 type log_entry = {command: command; term: term}
-[@@deriving bin_io, sexp, compare]
+[@@deriving bin_io, compare]
 
-type client_request = command [@@deriving bin_io, sexp]
+type client_request = command [@@deriving bin_io]
 
 type client_response = (op_result, [`Unapplied]) Result.t
-[@@deriving bin_io, sexp]
-
-let client_rpc =
-  Async.Rpc.Rpc.create ~name:"client_request" ~version:0
-    ~bin_query:bin_client_request ~bin_response:bin_client_response
+[@@deriving bin_io]

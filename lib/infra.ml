@@ -1,6 +1,3 @@
-open! Core
-module O = Owal
-module H = Hashtbl
 module CH = Client_handler
 open Types
 open Utils
