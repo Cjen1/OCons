@@ -1,18 +1,12 @@
-open Types
-
-type 'a iter = ('a -> unit) -> unit
-
+open! Types
 
 module type S = sig
-  type command
-
-  (* Incomming and outgoing messages should be symmetrical *)
+  (** Incomming and outgoing messages should be symmetrical *)
   type message [@@deriving sexp_of, bin_io]
 
   (** All the events incomming into the advance function *)
-  type event = [`Tick | `Recv of message | `Commands of command list]
+  type event = Tick | Recv of (message * node_id) | Commands of command iter
   [@@deriving sexp_of]
-
 
   (** Actions which can be emitted by the implementation *)
   type action =
@@ -24,12 +18,11 @@ module type S = sig
 
   type t
 
-  type store
+  val create_node : config -> t
+  (** [create_node config] returns the initialised state machine. *)
 
-  val create_node : config -> store -> t
-  (** [create_node config log term] returns the initialised state machine. *)
-
-  val advance : t -> event -> (t * action list, [> `Msg of string]) result
+  exception FailedAdvance of string
+  val advance : t -> event -> t * action list
   (** [advance t event] applies the event to the state machine and returns the updated state machine and any actions to take. If this fails it returns an error message *)
   (* If the event is new commands to add to the log, *)
 
