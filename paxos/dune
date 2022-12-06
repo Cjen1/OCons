@@ -1,21 +1,10 @@
-(executable
- (name main)
- (public_name ocons-paxos)
- (package ocons-variants)
- (libraries paxos_lib ocons-core core async async.log_extended)
- (preprocess
-  (pps ppx_jane ppx_log ppx_accessor))
- (modules main))
-
 (library
  (name paxos_lib)
- (instrumentation
-  (backend bisect_ppx))
- (libraries ocons-core core async async.log_extended)
+ (libraries ocons-core core iter)
  (inline_tests)
  (preprocess
   (pps ppx_jane ppx_log ppx_accessor))
- (modules paxos))
+ )
 
 (env
  (dev

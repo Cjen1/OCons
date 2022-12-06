@@ -1,4 +1,4 @@
-open! Core
+(*open! Core
 open! Async
 open! Paxos_lib
 module O = Ocons_core
@@ -85,3 +85,4 @@ let () =
   Fmt_tty.setup_std_outputs () ;
   Fmt.pr "%a" (Fmt.array ~sep:Fmt.sp Fmt.string) (Sys.get_argv ()) ;
   Rpc_parallel.start_app command
+  *)
