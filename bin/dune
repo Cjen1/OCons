@@ -16,7 +16,9 @@
   (pps ppx_jane ppx_deriving_yojson))
  (modules bench))
 
-(env
- (dev
-  (flags
-   (:standard -w -39-53-55))))
+(executable
+ (name internal_infra_test)
+ (libraries ocons-core core)
+ (preprocess
+  (pps ppx_jane))
+ (modules internal_infra_test))

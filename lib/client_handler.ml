@@ -1,4 +1,4 @@
-open! Core
+(*open! Core
 open! Async
 open! Ppx_log_async
 module H = Hashtbl
@@ -200,3 +200,4 @@ let spawn_client_handler ~external_port ~batch_size ~batch_timeout =
   |> don't_wait_for ;
   [%log.debug logger "Set up client"] ;
   return conn
+  *)

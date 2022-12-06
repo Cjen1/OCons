@@ -1,4 +1,4 @@
-open! Core
+(*open! Core
 open! Async
 open Types
 
@@ -22,3 +22,4 @@ val new_client : ?retry_delay:Time.Span.t -> string list -> t
 
 val close : t -> unit Deferred.t
 (** [close t] closes all outgoing connections that t has. *)
+*)

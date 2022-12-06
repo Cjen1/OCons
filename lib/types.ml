@@ -6,15 +6,15 @@ type time = float
 
 type node_addr = string
 
-type command_id = Uuid.t [@@deriving bin_io, compare]
+type command_id = Uuid.Stable.V1.t [@@deriving bin_io, compare, sexp]
 
 type client_id = Uuid.t [@@deriving bin_io]
 
-type node_id = int [@@deriving bin_io]
+type node_id = int [@@deriving sexp_of, bin_io]
 
-type key = string [@@deriving bin_io, compare]
+type key = string [@@deriving bin_io, compare, sexp]
 
-type value = string [@@deriving bin_io, compare]
+type value = string [@@deriving bin_io, compare, sexp]
 
 type state_machine = (key, value) Hashtbl.t
 
@@ -22,16 +22,30 @@ type sm_op =
   | Read of key
   | Write of key * value
   | CAS of {key: key; value: value; value': value}
-[@@deriving bin_io, compare]
+  [@@deriving bin_io, compare, sexp]
+
+let sm_op_pp ppf v =(match v with
+| Read k ->  Fmt.pf ppf "Read %s" k
+| Write (k,v) -> Fmt.pf ppf "Write (%s, %s)" k v
+| CAS s-> Fmt.pf ppf "CAS(%s, %s, %s)" s.key s.value s.value'
+)
 
 module Command = struct
-  type t = {op: sm_op; id: command_id} [@@deriving bin_io, compare]
+  type t = {op: sm_op; id: command_id} [@@deriving bin_io, compare, sexp]
+
+  let pp ppf v = Fmt.pf ppf "Command(%a, %s)" sm_op_pp v.op (Uuid.to_string v.id)
 end
 
-type command = Command.t [@@deriving bin_io, compare]
+type command = Command.t [@@deriving bin_io, compare, sexp]
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]
+
+let op_result_pp ppf v =(match v with
+| Success ->  Fmt.pf ppf "Success"
+| Failure (s) -> Fmt.pf ppf "Failure(%s)" s
+| ReadSuccess (s) -> Fmt.pf ppf "ReadSuccess(%s)" s
+)
 
 let op_result_failure s = Failure s
 

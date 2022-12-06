@@ -246,7 +246,8 @@ module Make (S : Immutable_store_intf.S) = struct
            Thus taking the quorum'th gives the match index known by at least a quorum
         *)
         let calculated_commit_index =
-          Map.fold s.match_index ~init:[S.get_max_index current_store]
+          Map.fold s.match_index
+            ~init:[S.get_max_index current_store]
             ~f:(fun ~key:_ ~data acc -> data :: acc)
           |> List.sort ~compare:Int64.compare
           |> List.rev
@@ -677,8 +678,8 @@ module Make (S : Immutable_store_intf.S) = struct
         let%bind () = StateR.map_t @@ A.map store ~f:(S.update_term ~term) in
         let%bind () = transition_to_follower () in
         advance_raw event
-    | `Recv (RequestVote msg), _
-      when Int.(msg.term < S.get_current_term t.store) ->
+    | `Recv (RequestVote msg), _ when Int.(msg.term < S.get_current_term t.store)
+      ->
         StateR.append @@ send msg.src
         @@ RequestVoteResponse
              { src= t.config.node_id

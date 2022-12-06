@@ -27,13 +27,16 @@ let rec do_if_open ?default t f =
       Fiber.yield () ;
       do_if_open ?default t f )
 
-let send ?(block_until_open = false) t cs =
-  let write (w, _) = Buf_write.cstruct w cs in
+let send_blit ?(block_until_open = false) t bf =
+  let write (w, _) = bf w in
   match block_until_open with
   | true ->
       do_if_open t write
   | false ->
       do_if_open ~default:() t write |> ignore
+
+let send ?(block_until_open = false) t cs =
+  send_blit ~block_until_open t (fun b -> Buf_write.cstruct b cs)
 
 let recv ?default t parse =
   let read (_, r) = parse r in
@@ -61,6 +64,7 @@ let create ~sw (f : unit -> Flow.two_way) =
   in
   Fiber.fork ~sw (fun () ->
       while not t.should_close do
+        Fiber.check ();
         let flow = f () in
         Buf_write.with_flow flow
         @@ fun w ->
@@ -72,7 +76,7 @@ let create ~sw (f : unit -> Flow.two_way) =
         done
       done ;
       Promise.resolve (snd t.closed_promise) () ) ;
-  Switch.on_release sw (fun () -> close t);
+  Switch.on_release sw (fun () -> close t) ;
   Fiber.yield () ;
   t
 
@@ -105,8 +109,8 @@ let%expect_test "PersistantConn" =
       3|}] ;
   print_endline (recv c p_line) ;
   [%expect {|
-      +PConn: read "4\n"
-      4|}] ;
+    +PConn: read "4\n"
+    4 |}] ;
   send c (Cstruct.of_string "1") ;
   send c (Cstruct.of_string "2") ;
   send c (Cstruct.of_string "3") ;

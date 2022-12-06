@@ -118,6 +118,6 @@ let () =
       +> flag "-n" ~doc:" Number of requests to send"
            (optional_with_default 10000 int)
       +> flag "-l" ~doc:" Log location prefix" (optional string)
-      +> flag "-o" ~doc:" Output file" (optional string))
+      +> flag "-o" ~doc:" Output file" (optional string) )
     (fun write_sizes n l o () -> main n write_sizes l o)
   |> Command.run

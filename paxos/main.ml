@@ -20,7 +20,7 @@ let node_list =
 let log_param =
   Log_extended.Command.(
     setup_via_params ~log_to_console_by_default:(Stderr Color)
-      ~log_to_syslog_by_default:false ())
+      ~log_to_syslog_by_default:false () )
 
 let command =
   Command.async_spec ~summary:"A Paxos implementation in OCaml"
@@ -36,7 +36,7 @@ let command =
       +> flag "-s" ~doc:" Size limit of batches" (optional_with_default 1 int)
       +> flag "-d" ~doc:" Time limit of batches in ms"
            (optional_with_default 50. float)
-      +> log_param)
+      +> log_param )
     (fun node_id node_list datadir external_port internal_port election_timeout
          tick_speed batch_size batch_timeout () () ->
       let global_level = Async.Log.Global.level () in

@@ -1,4 +1,4 @@
-open! Core
+(*open! Core
 open! Async
 open! Utils
 open! Ppx_log_async
@@ -77,3 +77,4 @@ let new_client ?(retry_delay = Time.Span.of_sec 1.) addresses =
   {conns; retry_delay}
 
 let close t = Deferred.List.iter ~how:`Parallel t.conns ~f:PC.Rpc.close
+*)

@@ -22,7 +22,7 @@ let print_res res = res |> [%sexp_of: O.Types.op_result] |> Sexp.to_string_hum
 let log_param =
   Log_extended.Command.(
     setup_via_params ~log_to_console_by_default:(Stderr Color)
-      ~log_to_syslog_by_default:false ())
+      ~log_to_syslog_by_default:false () )
 
 let timeout_or_succeed ?(timeout = 30.) v =
   let timeout = after (Time.Span.of_sec timeout) in
@@ -39,7 +39,7 @@ let put =
       +> anon ("node_list" %: node_list)
       +> anon ("key" %: bytes)
       +> anon ("value" %: bytes)
-      +> log_param)
+      +> log_param )
     (fun ps k v () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
@@ -62,7 +62,7 @@ let get =
       empty
       +> anon ("node_list" %: node_list)
       +> anon ("key" %: bytes)
-      +> log_param)
+      +> log_param )
     (fun ps k () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
@@ -88,7 +88,7 @@ let cas =
       +> anon ("key" %: bytes)
       +> anon ("value" %: bytes)
       +> anon ("new_value" %: bytes)
-      +> log_param)
+      +> log_param )
     (fun ps key value value' () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in

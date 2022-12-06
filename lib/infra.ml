@@ -1,4 +1,4 @@
-module CH = Client_handler
+(*module CH = Client_handler
 open Types
 open Utils
 open Core_profiler_disabled.Std
@@ -333,3 +333,4 @@ module Make (C : Consensus_intf.F) = struct
     |> Deferred.List.iter ~how:`Parallel ~f:(fun (_, conn) ->
            Async_rpc_kernel.Persistent_connection.Rpc.close conn )
 end
+*)

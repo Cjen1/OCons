@@ -118,7 +118,7 @@ let main target_throughput n output portss =
 let log_param =
   Log_extended.Command.(
     setup_via_params ~log_to_console_by_default:(Stderr Color)
-      ~log_to_syslog_by_default:false ())
+      ~log_to_syslog_by_default:false () )
 
 let () =
   Command.async_spec ~summary:"Benchmark for main.ml"
@@ -129,7 +129,7 @@ let () =
       +> flag "-o" ~doc:" Output file" (optional string)
       +> flag "-p" ~doc:" ports list" (listed sexp)
       +> flag "-t" ~doc:" Throughput" (optional_with_default 100000. float)
-      +> log_param)
+      +> log_param )
     (fun n o ps t () () ->
       let global_level = Async.Log.Global.level () in
       let global_output = Async.Log.Global.get_output () in
