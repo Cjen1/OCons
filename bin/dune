@@ -15,10 +15,3 @@
  (preprocess
   (pps ppx_jane ppx_deriving_yojson))
  (modules bench))
-
-(executable
- (name internal_infra_test)
- (libraries ocons-core core)
- (preprocess
-  (pps ppx_jane))
- (modules internal_infra_test))
