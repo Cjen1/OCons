@@ -9,9 +9,9 @@ type message =
   | RequestVote of {term: term; leader_commit: log_index}
   | RequestVoteResponse of
       { term: term
-      ; vote_granted: bool
       ; start_index: log_index
-      ; entries: log_entry Array.t }
+      ; commit_index: log_index
+      ; entries: log_entry Iter.t * int }
   | AppendEntries of
       { term: term
       ; leader_commit: log_index
@@ -68,7 +68,12 @@ type node_state =
       ; heartbeat: int }
 [@@deriving accessors]
 
-type t = {log: log_entry Utils.RBuf.t; config: config; node_state: node_state}
+type t =
+  { log: log_entry Utils.RBuf.t
+  ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
+  ; config: config
+  ; node_state: node_state
+  ; current_term: term }
 [@@deriving accessors]
 
 module type ActionSig = sig
@@ -78,9 +83,7 @@ module type ActionSig = sig
 
   val commit : upto:int -> unit
 
-  val get : unit -> t
-
-  val update : t -> unit
+  val t : ('i -> t -> t, 'i -> unit -> unit, [< A.field]) A.General.t
 
   val run : (event -> unit) -> t -> event -> t * action list
 end
@@ -96,33 +99,92 @@ module Make (Act : ActionSig) = struct
 
   open Act
 
+  (*TODO*)
+  let transit_follower () = assert false
+
+  (*TODO*)
   let transit_candidate () = assert false
 
+  (*TODO*)
   let make_append_entries () = assert false
 
-  let advance_raw e =
-    let t = get () in
-    match (e, t.node_state) with
-    (* When should ticking result in an action? *)
-    | Tick, Follower {timeout} when timeout >= t.config.election_timeout ->
-        transit_candidate ()
-    | Tick, Candidate {timeout; _} when timeout >= t.config.election_timeout ->
-        transit_candidate ()
-    | Tick, Leader {heartbeat; _} when heartbeat > 0 ->
-        broadcast (make_append_entries ()) ;
-        update @@ A.set (node_state @> Leader.heartbeat) ~to_:0 (get ())
+  let if_recv_advance_term e =
+    match e with
+    | Recv ((AppendEntries {term; _} | AppendEntries {term; _} | RequestVote {term; _} | RequestVoteResponse {term; _}), _)
+      when term > A.get A.(t @> current_term) () ->
+        transit_follower term
+    | _ ->
+        ()
+
+  let resolve_event e =
+    if_recv_advance_term e ;
+    match (e, A.get A.(t @> node_state) ()) with
     (* Increment ticks *)
     | Tick, Follower {timeout} ->
-        update
-        @@ A.set (node_state @> Follower.timeout) ~to_:(timeout + 1) (get ())
+        A.set (t @> node_state @> Follower.timeout) ~to_:(timeout + 1) ()
     | Tick, Candidate {timeout; _} ->
-        update
-        @@ A.set (node_state @> Candidate.timeout) ~to_:(timeout + 1) (get ())
+        A.set (t @> node_state @> Candidate.timeout) ~to_:(timeout + 1) ()
     | Tick, Leader {heartbeat; _} ->
-        update
-        @@ A.set (node_state @> Leader.heartbeat) ~to_:(heartbeat + 1) (get ())
-    | (Recv _ | Commands _), _ ->
+        A.set (t @> node_state @> Leader.heartbeat) ~to_:(heartbeat + 1) ()
+    | Commands cs, Leader _ ->
+        cs (fun c ->
+            Utils.RBuf.push
+              (A.get (t @> log) ())
+              {command= c; term= A.get (t @> current_term) ()} )
+    | Commands cs, _ ->
+        cs |> assert false (*TODO*)
+    (* Ignore msgs from lower terms *)
+    | ( Recv
+          ( ( RequestVote {term; _}
+            | RequestVoteResponse {term; _}
+            | AppendEntries {term; _}
+            | AppendEntriesResponse {term; _} )
+          , _ )
+      , _ )
+      when term < t.current_term ->
+        ()
+    (* Recv msgs from this term*)
+    (* Leader *)
+    | Recv (RequestVoteResponse _, _), Leader s ->
+        () (*Already*)
+    | Recv (AppendEntriesResponse _, _), Leader s ->
         assert false
+    (* Follower *)
+    | Recv (RequestVote, candidate), Follower s ->
+        let t = A.get t () in
+        let start_index = max t.commit_index (Utils.RBuf.lowest t.log) in
+        let entries =
+          let log = A.get (t @> log) () in
+          Utils.RBuf.iter ~lo:start_index log
+        in
+        send
+        @@ { term= t.current_term
+           ; start_index
+           ; entries
+           ; commit_index= t.commit_index }
+    | Recv (AppendEntries _, _), _ ->
+        ()
+    (*Invalid or already handled *)
+    | Recv (RequestVotes, candidate), _ ->
+        ()
+
+  let resolve_timeouts () =
+    match (get ()).node_state with
+    (* When should ticking result in an action? *)
+    | Follower {timeout} when timeout >= t.config.election_timeout ->
+        transit_candidate ()
+    | Candidate {timeout; _} when timeout >= t.config.election_timeout ->
+        transit_candidate ()
+    | Leader {heartbeat; _} when heartbeat > 0 ->
+        broadcast (make_append_entries ()) ;
+        update @@ A.set (node_state @> Leader.heartbeat) ~to_:0 (get ())
+    | _ ->
+        ()
+
+  (*TODO*)
+  let check_commit () = assert false
+
+  let advance_raw e = resolve_event e ; resolve_timeouts () ; check_commit ()
 
   let rec advance t e = run advance_raw t e
 end
@@ -148,9 +210,8 @@ module Actions = struct
     | Some u ->
         !s.commit_upto <- Some (max u upto)
 
-  let get () = !s.t
-
-  let update t = !s.t <- t
+  let t =
+    [%accessor A.field ~get:(fun () -> !s.t) ~set:(fun () t' -> !s.t <- t)]
 
   let run f (t : t) (e : event) =
     s := s_init t ;

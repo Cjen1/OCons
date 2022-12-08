@@ -48,11 +48,16 @@ module RBuf = struct
     check t i ;
     Array.set t.buf (vidx_to_idx t i) v
 
-  let iter t ?(lo = t.vlo) ?(hi = t.vhi - 1) : 'a Iter.t =
+  let iter_unsafe t ?(lo = t.vlo) ?(hi = t.vhi - 1) () =
+    let iter = 
    fun f ->
     for i = lo to hi do
       f (get t i)
     done
+    in iter, (hi - lo + 1)
+
+  let iter t ?(lo = t.vlo) ?(hi = t.vhi - 1) () =
+    iter_unsafe t ~lo:(max lo t.vlo) ~hi:(min hi (t.vhi - 1))
 
   let pop t =
     if t.vidx > t.vlo then None
@@ -68,28 +73,40 @@ module RBuf = struct
     v
 
   let pop_iter t ?(hi = t.vhi - 1) : 'a Iter.t =
-    fun f ->
-      for i = t.vlo to hi do
-        f (get t i)
-      done;
-      truncate t t.vhi
+   fun f ->
+    for i = t.vlo to hi do
+      f (get t i)
+    done ;
+    truncate t t.vhi
 
   let push t v =
     set t t.vidx v ;
     t.vidx <- t.vidx + 1
 
+  let length t = t.vhi - t.vlo
+
+  let space t = Array.length t.buf - length t
+
+  let lowest t = t.vlo
+
+  let highest t = t.vhi
+
   let create len default =
     {buf= Array.init len (fun _ -> default); vlo= 0; vhi= 0; vidx= 0}
 end
 
-module IntMap = Map.Make(struct type t = int ;; let compare = Int.compare end)
+module IntMap = Map.Make (struct
+  type t = int
+
+  let compare = Int.compare
+end)
 
 module Quorum = struct
   type t = {elts: unit IntMap.t; threshold: int}
 
   let empty threshold = {elts= IntMap.empty; threshold}
 
-  let add v t = {t with elts = IntMap.add v () t.elts}
+  let add v t = {t with elts= IntMap.add v () t.elts}
 
   let satisified t = IntMap.cardinal t.elts >= t.threshold
 end
