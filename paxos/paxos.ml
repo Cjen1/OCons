@@ -2,6 +2,7 @@ module C = Ocons_core
 open! C.Types
 open! Utils
 module A = Accessor
+module Log = Utils.SegmentLog
 
 let ( @> ) = A.( @> )
 
@@ -69,7 +70,7 @@ type node_state =
 [@@deriving accessors]
 
 type t =
-  { log: log_entry Utils.RBuf.t
+  { log: log_entry SegmentLog.t
   ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
   ; config: config
   ; node_state: node_state
@@ -100,17 +101,25 @@ module Make (Act : ActionSig) = struct
   open Act
 
   (*TODO*)
-  let transit_follower () = assert false
+  let transit_follower term = term |> assert false
 
   (*TODO*)
   let transit_candidate () = assert false
+
+  (*TODO*)
+  let transit_leader () = assert false
 
   (*TODO*)
   let make_append_entries () = assert false
 
   let if_recv_advance_term e =
     match e with
-    | Recv ((AppendEntries {term; _} | AppendEntries {term; _} | RequestVote {term; _} | RequestVoteResponse {term; _}), _)
+    | Recv
+        ( ( AppendEntries {term; _}
+          | AppendEntries {term; _}
+          | RequestVote {term; _}
+          | RequestVoteResponse {term; _} )
+        , _ )
       when term > A.get A.(t @> current_term) () ->
         transit_follower term
     | _ ->
@@ -128,7 +137,7 @@ module Make (Act : ActionSig) = struct
         A.set (t @> node_state @> Leader.heartbeat) ~to_:(heartbeat + 1) ()
     | Commands cs, Leader _ ->
         cs (fun c ->
-            Utils.RBuf.push
+            Log.add
               (A.get (t @> log) ())
               {command= c; term= A.get (t @> current_term) ()} )
     | Commands cs, _ ->
@@ -141,16 +150,32 @@ module Make (Act : ActionSig) = struct
             | AppendEntriesResponse {term; _} )
           , _ )
       , _ )
-      when term < t.current_term ->
+      when term < A.get A.(t @> current_term) () ->
         ()
     (* Recv msgs from this term*)
+    (* Candidate*)
+    | Recv (RequestVoteResponse m, src), Candidate s ->
+        assert (m.term = A.get (t @> current_term) ());
+        let entries, _ = m.entries in
+        (* Updating entries is safe because we only do so if we also increase the term *)
+        entries |> Iter.zip_i
+        |> Iter.map (fun (i, e) -> (i + m.start_index, e))
+        |> Iter.iter (fun (idx, le) ->
+               let log = A.get A.(t @> log) () in
+               if log.Log.vhi < idx || (Log.get log idx).term < le.term then
+                 Log.set log idx le ) ;
+        (* Update commit index *)
+        let ci = A.get A.(t @> commit_index) () in
+        if ci < m.commit_index then (
+          commit ~upto:ci;
+          A.set A.(t @> commit_index) ~to_:ci ()
+        );
+        A.map A.(t @> node_state @> Candidate.quorum) ~f:(Quorum.add src) ();
     (* Leader *)
-    | Recv (RequestVoteResponse _, _), Leader s ->
-        () (*Already*)
     | Recv (AppendEntriesResponse _, _), Leader s ->
         assert false
     (* Follower *)
-    | Recv (RequestVote, candidate), Follower s ->
+    | Recv (RequestVote, candidate_node), Follower s ->
         let t = A.get t () in
         let start_index = max t.commit_index (Utils.RBuf.lowest t.log) in
         let entries =
@@ -165,8 +190,15 @@ module Make (Act : ActionSig) = struct
     | Recv (AppendEntries _, _), _ ->
         ()
     (*Invalid or already handled *)
-    | Recv (RequestVotes, candidate), _ ->
+    | _ ->
         ()
+
+  let check_conditions () =
+    (* check if can become leader *)
+    match A.get A.(t @> node_state) () with
+    | Candidate {quorum; _} when Quorum.satisified quorum ->
+        transit_leader ()
+    | _ -> ()
 
   let resolve_timeouts () =
     match (get ()).node_state with
@@ -184,7 +216,11 @@ module Make (Act : ActionSig) = struct
   (*TODO*)
   let check_commit () = assert false
 
-  let advance_raw e = resolve_event e ; resolve_timeouts () ; check_commit ()
+  let advance_raw e = 
+    resolve_event e ;
+    check_conditions () ;
+    resolve_timeouts () ;
+    check_commit ()
 
   let rec advance t e = run advance_raw t e
 end

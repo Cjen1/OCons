@@ -49,12 +49,12 @@ module RBuf = struct
     Array.set t.buf (vidx_to_idx t i) v
 
   let iter_unsafe t ?(lo = t.vlo) ?(hi = t.vhi - 1) () =
-    let iter = 
-   fun f ->
-    for i = lo to hi do
-      f (get t i)
-    done
-    in iter, (hi - lo + 1)
+    let iter f =
+      for i = lo to hi do
+        f (get t i)
+      done
+    in
+    (iter, hi - lo + 1)
 
   let iter t ?(lo = t.vlo) ?(hi = t.vhi - 1) () =
     iter_unsafe t ~lo:(max lo t.vlo) ~hi:(min hi (t.vhi - 1))
@@ -93,6 +93,51 @@ module RBuf = struct
 
   let create len default =
     {buf= Array.init len (fun _ -> default); vlo= 0; vhi= 0; vidx= 0}
+end
+
+module SegmentLog = struct
+  type 'a t =
+    { segmentsize: int
+    ; mutable segments: 'a array list
+    ; mutable allocated: int
+    ; mutable vlo_seg: int
+    ; mutable vhi: int
+    ; init: 'a }
+
+  let allocate t i =
+    if t.allocated * t.segmentsize <= i && i < (t.allocated + 1) * t.segmentsize
+    then (
+      t.segments <- Array.make t.segmentsize t.init :: t.segments ;
+      t.allocated <- t.allocated + 1 )
+
+  let check t i =
+    match () with
+    | () when i < t.allocated * t.segmentsize ->
+        ()
+    | _ ->
+        raise (Invalid_argument "Segment out of bounds")
+
+  let id_to_seg t i = t.allocated - Int.div i t.segmentsize
+
+  let get t i =
+    check t i ;
+    Array.get (List.nth t.segments (id_to_seg t i)) (i mod t.segmentsize)
+
+  let set t i v =
+    allocate t i ;
+    Array.set (List.nth t.segments (id_to_seg t i)) (i mod t.segmentsize) v ;
+    if t.vhi < i then t.vhi <- i
+
+  let iteri t ?(lo = 0) ?(hi = t.vhi) f =
+    for i = lo to hi do
+      f i (get t i)
+    done
+
+  let iter t ?(lo = 0) ?(hi = t.vhi) f = iteri t ~lo ~hi (fun _ x -> f x)
+
+  let add t v = set t t.vhi v
+
+  let mem t i = i <= t.vhi 
 end
 
 module IntMap = Map.Make (struct
