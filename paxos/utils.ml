@@ -101,7 +101,7 @@ module SegmentLog = struct
     ; mutable segments: 'a array list
     ; mutable allocated: int
     ; mutable vlo_seg: int
-    ; mutable vhi: int
+    ; mutable vhi: int (* highest allocated index *)
     ; init: 'a }
 
   let allocate t i =
@@ -128,16 +128,26 @@ module SegmentLog = struct
     Array.set (List.nth t.segments (id_to_seg t i)) (i mod t.segmentsize) v ;
     if t.vhi < i then t.vhi <- i
 
-  let iteri t ?(lo = 0) ?(hi = t.vhi) f =
+  let iteri t ?(lo = 0) ?(hi = t.vhi) : (int * 'a) Iter.t =
+   fun f ->
     for i = lo to hi do
-      f i (get t i)
+      f (i, get t i)
     done
 
-  let iter t ?(lo = 0) ?(hi = t.vhi) f = iteri t ~lo ~hi (fun _ x -> f x)
+  let iteri_len t ?(lo = 0) ?(hi = t.vhi) () : (int * 'a) Iter.t * int =
+    ((fun f -> iteri t ~lo ~hi f), hi - lo + 1)
+
+  let iter t ?(lo = 0) ?(hi = t.vhi) f = iteri t ~lo ~hi (fun (_, x) -> f x)
+
+  let iter_len t ?(lo = 0) ?(hi = t.vhi) () : 'a Iter.t * int =
+    let iter, len = iteri_len t ~lo ~hi () in
+    ((fun f -> iter (fun (_, x) -> f x)), len)
 
   let add t v = set t t.vhi v
 
-  let mem t i = i <= t.vhi 
+  let mem t i = i <= t.vhi
+
+  let highest t = t.vhi
 end
 
 module IntMap = Map.Make (struct
@@ -147,11 +157,11 @@ module IntMap = Map.Make (struct
 end)
 
 module Quorum = struct
-  type t = {elts: unit IntMap.t; threshold: int}
+  type 'a t = {elts: 'a IntMap.t; threshold: int}
 
   let empty threshold = {elts= IntMap.empty; threshold}
 
-  let add v t = {t with elts= IntMap.add v () t.elts}
+  let add id e t = {t with elts= IntMap.add id e t.elts}
 
   let satisified t = IntMap.cardinal t.elts >= t.threshold
 end
