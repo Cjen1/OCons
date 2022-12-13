@@ -76,7 +76,7 @@ module Make (C : Consensus_intf.S) = struct
       t.cons <- tcons ;
       handle_actions t actions
 
-  let ensure_sent t = Fiber.yield();CMgr.flush_all t.cmgr
+  let ensure_sent t = Fiber.yield () ; CMgr.flush_all t.cmgr
 
   let tick t () =
     let tcons, actions = C.advance t.cons Tick in
@@ -132,13 +132,35 @@ module Test = struct
   module CT = struct
     type message = Core.String.t [@@deriving sexp]
 
+    let message_pp = Fmt.string
+
     (** All the events incomming into the advance function *)
     type event = Tick | Recv of (message * node_id) | Commands of command iter
+
+    let event_pp ppf v =
+      let open Fmt in
+      match v with
+      | Tick ->
+          pf ppf "Tick"
+      | Recv (m, src) ->
+          pf ppf "Recv(%a, %d)" message_pp m src
+      | Commands _ ->
+          pf ppf "Commands"
 
     type action =
       | Send of int * message
       | Broadcast of message
       | CommitCommands of command iter
+
+    let action_pp ppf v =
+      let open Fmt in
+      match v with
+      | Send (d, m) ->
+          pf ppf "Send(%d, %a)" d message_pp m
+      | Broadcast m ->
+          pf ppf "Broadcast(%a)" message_pp m
+      | CommitCommands _ ->
+          pf ppf "CommitCommands"
 
     let parse buf =
       let r = Eio.Buf_read.line buf in
@@ -150,7 +172,13 @@ module Test = struct
 
     type config = Core.Unit.t [@@deriving sexp_of]
 
+    let config_pp : config Fmt.t = Fmt.any "config"
+
     type t = {arr: command option Array.t; mutable len: int}
+
+    let t_pp = fun ppf _ ->
+      Fmt.pf ppf "T"
+
 
     let create_node () = {arr= Array.make 10 None; len= 0}
 
@@ -193,7 +221,7 @@ module Test = struct
     let resolvers = [(1, fun () -> (f1 :> Eio.Flow.two_way))] in
     (* Start of actual test *)
     let t = create ~sw () (clk :> Eio.Time.clock) 1. resolvers c_rx c_tx in
-    Fiber.yield();
+    Fiber.yield () ;
     (* No errors or msgs on startup *)
     [%expect {||}] ;
     (* Can take remote messages *)

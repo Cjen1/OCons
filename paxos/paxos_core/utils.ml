@@ -164,4 +164,9 @@ module Quorum = struct
   let add id e t = {t with elts= IntMap.add id e t.elts}
 
   let satisified t = IntMap.cardinal t.elts >= t.threshold
+
+  let pp : _ t Fmt.t = fun ppf t ->
+    Fmt.pf ppf "{threshold %d, elts: %a}" t.threshold
+      Fmt.(brackets @@ list ~sep:(const string ", ") int)
+      (t.elts |> IntMap.bindings |> List.map fst)
 end

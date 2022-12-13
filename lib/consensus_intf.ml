@@ -4,10 +4,14 @@ exception FailedAdvance of string
 
 module type S = sig
   (** Incomming and outgoing messages should be symmetrical *)
-  type message [@@deriving sexp_of]
+  type message
+
+  val message_pp : message Fmt.t
 
   (** All the events incomming into the advance function *)
   type event = Tick | Recv of (message * node_id) | Commands of command iter
+
+  val event_pp : event Fmt.t
 
   (** Actions which can be emitted by the implementation *)
   type action =
@@ -15,15 +19,21 @@ module type S = sig
     | Broadcast of message
     | CommitCommands of command iter
 
+  val action_pp : action Fmt.t
+
   val parse : Eio.Buf_read.t -> message
   (** Reads the message from the buf_read*)
 
   val serialise : message -> Eio.Buf_write.t -> unit
   (** Allows for copy-less serialisation of the message to the buf_write *)
 
-  type config [@@deriving sexp_of]
+  type config
+
+  val config_pp : config Fmt.t
 
   type t
+
+  val t_pp : t Fmt.t
 
   val create_node : config -> t
   (** [create_node config] returns the initialised state machine. *)

@@ -78,7 +78,7 @@ let update_state_machine : state_machine -> command -> op_result =
 
 let create_state_machine () = Hashtbl.create (module String)
 
-type log_index = int64 [@@deriving bin_io, compare]
+type log_index = int [@@deriving bin_io, compare]
 
 type term = int [@@deriving compare, compare, bin_io]
 

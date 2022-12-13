@@ -1,0 +1,7 @@
+(library
+ (name paxos_core)
+ (libraries ocons-core core iter)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_log ppx_accessor))
+ )
