@@ -121,7 +121,7 @@ module SegmentLog = struct
     | () when i < t.allocated * t.segmentsize ->
         ()
     | _ ->
-        raise (Invalid_argument "Segment out of bounds")
+        raise (Invalid_argument (Fmt.str "Segment out of bounds: idx = %d, allocated_upto (non-inc) = %d" i (t.allocated * t.segmentsize)))
 
   let id_to_seg t i = t.allocated - Int.div i t.segmentsize
 
@@ -141,7 +141,7 @@ module SegmentLog = struct
     done
 
   let iteri_len t ?(lo = 0) ?(hi = t.vhi) () : (int * 'a) Iter.t * int =
-    ((fun f -> iteri t ~lo ~hi f), hi - lo + 1)
+    ((fun f -> iteri t ~lo ~hi f), hi - lo)
 
   let iter t ?(lo = 0) ?(hi = t.vhi) f = iteri t ~lo ~hi (fun (_, x) -> f x)
 
@@ -156,6 +156,8 @@ module SegmentLog = struct
   let highest t = t.vhi
 
   let copy t = {t with segments= t.segments |> List.map Array.copy}
+
+  let cut_after t idx = t.vhi <- idx
 
   let create ?(segmentsize = 4096) init =
     {segmentsize; segments= []; allocated= 0; vhi= -1; init}

@@ -140,7 +140,7 @@ type t =
 let create config =
   let log = SegmentLog.create {term= -1; command= empty_command} in
   { log
-  ; commit_index= 0
+  ; commit_index= -1
   ; config
   ; node_state= Follower {timeout= 0}
   ; current_term= 0 }
@@ -179,10 +179,12 @@ module ImperativeActions : ActionSig = struct
 
   let commit ~upto =
     match !s.commit_upto with
-    | None ->
+    | None when upto >= 0 ->
+        !s.commit_upto <- Some upto;
+    | Some u when upto > u ->
         !s.commit_upto <- Some upto
-    | Some u ->
-        !s.commit_upto <- Some (max u upto)
+    | _ ->
+        ()
 
   let t =
     [%accessor A.field ~get:(fun () -> !s.t) ~set:(fun () t' -> !s.t <- t')]

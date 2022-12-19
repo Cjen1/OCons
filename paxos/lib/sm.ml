@@ -25,6 +25,8 @@ module Make (Act : ActionSig) = struct
 
   open Act
 
+  let get_log_term t idx = if idx < 0 then 0 else (Log.get t.log idx).term
+
   let send_append_entries ?(force = false) () =
     let ct = A.get t () in
     match ct.node_state with
@@ -33,18 +35,18 @@ module Make (Act : ActionSig) = struct
         s.rep_sent <-
           s.rep_sent
           |> IntMap.mapi (fun id start ->
-                 ( if start < highest || force then
-                   (* May want to limit max msg sent *)
-                   let upper = highest in
+                 let upper = max start highest in
+                 if start < upper || force then (
+                   (* May want to limit max msg size *)
                    send id
                    @@ AppendEntries
                         { term= ct.current_term
                         ; leader_commit= A.get (t @> commit_index) ()
                         ; prev_log_index= start - 1
-                        ; prev_log_term= (Log.get ct.log (start - 1)).term
+                        ; prev_log_term= get_log_term ct (start - 1)
                         ; entries_length= upper - start
                         ; entries= Log.iter ct.log ~lo:start ~hi:upper } ) ;
-                 highest )
+                 upper )
     | _ ->
         assert false
 
@@ -81,7 +83,7 @@ module Make (Act : ActionSig) = struct
         in
         let rep_sent =
           ct.config.other_nodes |> List.to_seq
-          |> Seq.map (fun i -> (i, ct.commit_index + 1))
+          |> Seq.map (fun i -> (i, ct.commit_index))
           |> IntMap.of_seq
         in
         A.set (t @> node_state) ()
@@ -179,12 +181,22 @@ module Make (Act : ActionSig) = struct
                ; success=
                    Error (min (prev_log_index - 1) (Log.highest ct.log - 1)) }
         else
-          entries |> Iter.zip_i
-          |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
+          let index_iter =
+            entries |> Iter.zip_i
+            |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
+          in
+          index_iter
           |> Iter.iter (fun (idx, le) ->
                  if (Log.get ct.log idx).term < le.term then
                    Log.set ct.log idx le ) ;
-        commit ~upto:leader_commit
+          let max_entry = index_iter |> Iter.map fst |> Iter.fold max (-1) in
+          Log.cut_after ct.log max_entry ;
+          commit ~upto:leader_commit ;
+          send lid
+          @@ AppendEntriesResponse
+               { term= ct.current_term
+               ; success= Ok (min (prev_log_index - 1) (Log.highest ct.log - 1))
+               }
     (*Invalid or already handled *)
     | _ ->
         ()
@@ -236,7 +248,7 @@ module Make (Act : ActionSig) = struct
     check_conditions () ;
     check_commit ()
 
-  let advance t e = run_side_effects (fun () -> advance_raw e) t 
+  let advance t e = run_side_effects (fun () -> advance_raw e) t
 end
 
-module Impl = Make(ImperativeActions)
+module Impl = Make (ImperativeActions)
