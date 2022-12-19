@@ -137,6 +137,14 @@ type t =
   ; current_term: term }
 [@@deriving accessors]
 
+let create config =
+  let log = SegmentLog.create {term= -1; command= empty_command} in
+  { log
+  ; commit_index= 0
+  ; config
+  ; node_state= Follower {timeout= 0}
+  ; current_term= 0 }
+
 let t_pp : t Fmt.t =
  fun ppf t ->
   Fmt.pf ppf "{log: _; commit_index:%d; current_term: %d; node_state:%a}"
@@ -152,10 +160,10 @@ module type ActionSig = sig
 
   val t : ('i -> t -> t, 'i -> unit -> unit, [< A.field]) A.General.t
 
-  val run : (event -> unit) -> t -> event -> t * action list
+  val run_side_effects : (unit -> unit) -> t -> t * action list
 end
 
-module ImperativeActions = struct
+module ImperativeActions : ActionSig = struct
   type s =
     { mutable action_acc: action list
     ; mutable commit_upto: int option
@@ -179,21 +187,21 @@ module ImperativeActions = struct
   let t =
     [%accessor A.field ~get:(fun () -> !s.t) ~set:(fun () t' -> !s.t <- t')]
 
-  let run f (t : t) (e : event) =
-    s := s_init t ;
-    let start_upto = t.commit_index in
-    f e ;
-    let t = !s.t in
-    let actions =
-      let open Iter in
-      let make_command_iter upto =
-        Log.iter t.log ~lo:start_upto ~hi:upto |> Iter.map (fun l -> l.command)
-      in
-      append_l
-        [ of_list !s.action_acc
-        ; !s.commit_upto |> of_opt |> Iter.map make_command_iter
-          |> Iter.map (fun i -> CommitCommands i) ]
-      |> Iter.to_rev_list
+  let get_actions init_commit_index =
+    let open Iter in
+    let make_command_iter upto =
+      Log.iter !s.t.log ~lo:init_commit_index ~hi:upto
+      |> Iter.map (fun l -> l.command)
     in
-    (t, actions)
+    append_l
+      [ of_list !s.action_acc
+      ; !s.commit_upto |> of_opt |> Iter.map make_command_iter
+        |> Iter.map (fun i -> CommitCommands i) ]
+    |> Iter.to_rev_list
+
+  let run_side_effects f t =
+    s := s_init t ;
+    let init_commit_index = t.commit_index in
+    f () ;
+    (!s.t, get_actions init_commit_index)
 end

@@ -100,15 +100,21 @@ module SegmentLog = struct
     { segmentsize: int
     ; mutable segments: 'a array list
     ; mutable allocated: int
-    ; mutable vlo_seg: int
     ; mutable vhi: int (* highest allocated index *)
     ; init: 'a }
 
   let allocate t i =
-    if t.allocated * t.segmentsize <= i && i < (t.allocated + 1) * t.segmentsize
-    then (
-      t.segments <- Array.make t.segmentsize t.init :: t.segments ;
-      t.allocated <- t.allocated + 1 )
+    let already_allocd = i < t.allocated * t.segmentsize in
+    let within_one_alloc = i < (t.allocated + 1) * t.segmentsize in
+    match () with
+    | () when already_allocd ->
+        ()
+    | () when within_one_alloc ->
+        t.segments <- Array.make t.segmentsize t.init :: t.segments ;
+        t.allocated <- t.allocated + 1
+    | _ ->
+        raise
+          (Invalid_argument (Fmt.str "Could not allocate new segment for %d" i))
 
   let check t i =
     match () with
@@ -148,6 +154,11 @@ module SegmentLog = struct
   let mem t i = i <= t.vhi
 
   let highest t = t.vhi
+
+  let copy t = {t with segments= t.segments |> List.map Array.copy}
+
+  let create ?(segmentsize = 4096) init =
+    {segmentsize; segments= []; allocated= 0; vhi= -1; init}
 end
 
 module IntMap = Map.Make (struct
@@ -165,7 +176,8 @@ module Quorum = struct
 
   let satisified t = IntMap.cardinal t.elts >= t.threshold
 
-  let pp : _ t Fmt.t = fun ppf t ->
+  let pp : _ t Fmt.t =
+   fun ppf t ->
     Fmt.pf ppf "{threshold %d, elts: %a}" t.threshold
       Fmt.(brackets @@ list ~sep:(const string ", ") int)
       (t.elts |> IntMap.bindings |> List.map fst)

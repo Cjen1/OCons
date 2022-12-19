@@ -236,5 +236,7 @@ module Make (Act : ActionSig) = struct
     check_conditions () ;
     check_commit ()
 
-  let rec advance t e = run advance_raw t e
+  let advance t e = run_side_effects (fun () -> advance_raw e) t 
 end
+
+module Impl = Make(ImperativeActions)
