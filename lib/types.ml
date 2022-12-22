@@ -39,13 +39,20 @@ let sm_op_pp ppf v =
 module Command = struct
   type t = {op: sm_op; id: command_id} [@@deriving bin_io, compare, sexp]
 
-  let pp ppf v =
+  let pp_mach ppf v =
     Fmt.pf ppf "Command(%a, %s)" sm_op_pp v.op (Uuid.to_string v.id)
+
+  let pp ppf v =
+    Fmt.pf ppf "Command(%a, _)" sm_op_pp v.op 
 end
 
 type command = Command.t [@@deriving bin_io, compare, sexp]
 
-let empty_command = Command.{op= NoOp; id= Uuid.create_random (Base.Random.State.make [||])}
+let empty_command =
+  Command.{op= NoOp; id= Uuid.create_random (Base.Random.State.make [||])}
+
+let make_command c =
+  Command.{op= c; id= Uuid.create_random Base.Random.State.default}
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]
@@ -69,7 +76,8 @@ let op_cas_match_fail k v v' =
 let update_state_machine : state_machine -> command -> op_result =
  fun t cmd ->
   match cmd.op with
-  | NoOp -> Success
+  | NoOp ->
+      Success
   | Read key -> (
     match Hashtbl.find t key with
     | Some v ->
@@ -96,6 +104,12 @@ type log_index = int [@@deriving bin_io, compare]
 type term = int [@@deriving compare, compare, bin_io]
 
 type log_entry = {command: command; term: term} [@@deriving bin_io, compare]
+
+let log_entry_pp ppf v =
+  Fmt.pf ppf "{command: %a; term : %d}" Command.pp v.command v.term
+
+let log_entry_pp_mach ppf v =
+  Fmt.pf ppf "{command: %a; term : %d}" Command.pp_mach v.command v.term
 
 type client_request = command [@@deriving bin_io]
 

@@ -34,9 +34,11 @@ module Make (Act : ActionSig) = struct
         let highest = Log.highest ct.log in
         s.rep_sent <-
           s.rep_sent
-          |> IntMap.mapi (fun id start ->
-                 let upper = max start highest in
-                 if start < upper || force then (
+          |> IntMap.mapi (fun id highest_sent ->
+                 let start = highest_sent + 1 in
+                 let upper = highest in
+                 ( if start <= upper || force then
+                   let entries = Log.iter_len ct.log ~lo:start ~hi:upper () in
                    (* May want to limit max msg size *)
                    send id
                    @@ AppendEntries
@@ -44,8 +46,7 @@ module Make (Act : ActionSig) = struct
                         ; leader_commit= A.get (t @> commit_index) ()
                         ; prev_log_index= start - 1
                         ; prev_log_term= get_log_term ct (start - 1)
-                        ; entries_length= upper - start
-                        ; entries= Log.iter ct.log ~lo:start ~hi:upper } ) ;
+                        ; entries } ) ;
                  upper )
     | _ ->
         assert false
@@ -57,10 +58,17 @@ module Make (Act : ActionSig) = struct
   let transit_candidate () =
     let cterm = A.get (t @> current_term) () in
     let num_nodes = (A.get (t @> config) ()).num_nodes in
-    let quot, rem = (Int.div cterm num_nodes, cterm mod num_nodes) in
-    let new_term = ((quot + 1) * num_nodes) + rem in
+    let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
+    let curr_epoch_term =
+      (quot * num_nodes) + A.get (t @> config @> node_id) ()
+    in
+    let new_term =
+      if cterm < curr_epoch_term then curr_epoch_term
+      else curr_epoch_term + num_nodes
+    in
     A.set (t @> node_state) ()
-      ~to_:(Candidate {quorum= Quorum.empty (num_nodes - 1); timeout= 0}) ;
+      ~to_:
+        (Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0}) ;
     A.set (t @> current_term) () ~to_:new_term ;
     broadcast
     @@ RequestVote {term= new_term; leader_commit= A.get (t @> commit_index) ()}
@@ -69,16 +77,21 @@ module Make (Act : ActionSig) = struct
     let ct = A.get t () in
     match ct.node_state with
     | Candidate {quorum; _} ->
-        let resps = quorum.Quorum.elts |> IntMap.to_seq in
-        resps
-        |> Seq.iter (fun (_, entry_seq) ->
-               entry_seq
-               |> Iter.iter (fun (idx, le) ->
-                      if (Log.get ct.log idx).term < le.term then
-                        Log.set ct.log idx le ) ) ;
+        let per_seq (_, seq) =
+          seq
+          |> Iter.iter (fun (idx, le) ->
+                 if (Log.get ct.log idx).term < le.term then
+                   Log.set ct.log idx le )
+        in
+        quorum.Quorum.elts |> IntMap.to_seq |> Seq.iter per_seq ;
+        (* replace term with current term since we are re-proposing it *)
+        for idx = ct.commit_index + 1 to Log.highest ct.log do
+          let le = Log.get ct.log idx in
+          Log.set ct.log idx {le with term= ct.current_term}
+        done ;
         let rep_ackd =
           ct.config.other_nodes |> List.to_seq
-          |> Seq.map (fun i -> (i, 0))
+          |> Seq.map (fun i -> (i, -1))
           |> IntMap.of_seq
         in
         let rep_sent =
@@ -152,51 +165,50 @@ module Make (Act : ActionSig) = struct
       ->
         (* This case happens if a message is lost *)
         assert (m.term = A.get (t @> current_term) ()) ;
-        A.map
-          A.(t @> node_state @> Leader.rep_sent)
-          ()
-          ~f:(IntMap.add src (idx - 1))
+        A.map A.(t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _ ->
         let t = A.get t () in
-        let entries = Log.iter_len t.log ~lo:m.leader_commit () in
+        let start = m.leader_commit + 1 in
+        let entries = Log.iter_len t.log ~lo:start () in
         send cid
         @@ RequestVoteResponse
-             {term= t.current_term; start_index= m.leader_commit; entries}
+             {term= t.current_term; start_index= start; entries}
     | ( Recv
           ( AppendEntries
               {prev_log_term; prev_log_index; entries; leader_commit; _}
           , lid )
       , Follower _ ) ->
         let ct = A.get t () in
-        if
-          (not @@ Log.mem ct.log prev_log_index)
+        let rooted_at_start = prev_log_index = -1 && prev_log_term = 0 in
+        let matching_index_and_term () =
+          Log.mem ct.log prev_log_index
           && (Log.get ct.log prev_log_index).term = prev_log_term
-        then
+        in
+        if not (rooted_at_start || matching_index_and_term ()) then
           (* Reply with the highest index known not to be replicated *)
           (* This will be the prev_log_index of the next msg *)
           send lid
           @@ AppendEntriesResponse
                { term= ct.current_term
-               ; success=
-                   Error (min (prev_log_index - 1) (Log.highest ct.log - 1)) }
+               ; success= Error (min (prev_log_index - 1) (Log.highest ct.log))
+               }
         else
           let index_iter =
-            entries |> Iter.zip_i
+            fst entries |> Iter.zip_i
             |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
           in
           index_iter
           |> Iter.iter (fun (idx, le) ->
-                 if (Log.get ct.log idx).term < le.term then
-                   Log.set ct.log idx le ) ;
+                 if
+                   (not (Log.mem ct.log idx))
+                   || (Log.get ct.log idx).term < le.term
+                 then Log.set ct.log idx le ) ;
           let max_entry = index_iter |> Iter.map fst |> Iter.fold max (-1) in
           Log.cut_after ct.log max_entry ;
-          commit ~upto:leader_commit ;
+          A.map (t @> commit_index) ~f:(max leader_commit) () ;
           send lid
-          @@ AppendEntriesResponse
-               { term= ct.current_term
-               ; success= Ok (min (prev_log_index - 1) (Log.highest ct.log - 1))
-               }
+          @@ AppendEntriesResponse {term= ct.current_term; success= Ok max_entry}
     (*Invalid or already handled *)
     | _ ->
         ()
@@ -237,8 +249,8 @@ module Make (Act : ActionSig) = struct
           |> List.of_seq
           |> List.sort (fun a b -> Int.neg @@ Int.compare a b)
         in
-        let majority_rep = List.nth acks (Int.div ct.config.num_nodes 2) in
-        commit ~upto:majority_rep
+        let majority_rep = List.nth acks (Int.div ct.config.num_nodes 2 - 1) in
+        A.set (t @> commit_index) ~to_:majority_rep ()
     | _ ->
         ()
 

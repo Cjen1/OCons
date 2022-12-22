@@ -15,8 +15,7 @@ type message =
       ; leader_commit: log_index
       ; prev_log_index: log_index
       ; prev_log_term: term
-      ; entries_length: log_index
-      ; entries: log_entry Iter.t }
+      ; entries: log_entry Iter.t * int }
   | AppendEntriesResponse of
       {term: term; success: (log_index, log_index) Result.t}
 
@@ -25,15 +24,21 @@ let message_pp ppf v =
   match v with
   | RequestVote {term; leader_commit} ->
       pf ppf "RequestVote {term:%d; leader_commit:%d}" term leader_commit
-  | RequestVoteResponse {term; start_index; entries= _, len} ->
-      pf ppf "RequestVoteResponse {term:%d; start_index:%d; entries_length:%d}"
+  | RequestVoteResponse {term; start_index; entries= entries, len} ->
+      pf ppf
+        "RequestVoteResponse {term:%d; start_index:%d; entries_length:%d; \
+         entries: %a}"
         term start_index len
-  | AppendEntries
-      {term; leader_commit; prev_log_index; prev_log_term; entries_length; _} ->
+        (brackets @@ list ~sep:(const char ',') log_entry_pp)
+        (entries |> Iter.to_list)
+  | AppendEntries {term; leader_commit; prev_log_index; prev_log_term; entries}
+    ->
       pf ppf
         "AppendEntries {term: %d; leader_commit: %d; prev_log_index: %d; \
-         prev_log_term: %d; entries_length: %d}"
-        term leader_commit prev_log_index prev_log_term entries_length
+         prev_log_term: %d; entries_length: %d; entries: %a}"
+        term leader_commit prev_log_index prev_log_term (snd entries)
+        (brackets @@ list ~sep:(const char ',') log_entry_pp)
+        (fst entries |> Iter.to_list)
   | AppendEntriesResponse {term; success} ->
       pf ppf "AppendEntriesResponse {term: %d; success: %a}" term
         (result
@@ -65,8 +70,8 @@ let action_pp ppf v =
       pf ppf "Send(%d, %a)" d message_pp m
   | Broadcast m ->
       pf ppf "Broadcast(%a)" message_pp m
-  | CommitCommands _ ->
-      pf ppf "CommitCommands"
+  | CommitCommands i ->
+      pf ppf "CommitCommands[%a]" (list ~sep:sp Command.pp) (i |> Iter.to_list)
 
 type config =
   { phase1quorum: int
@@ -75,6 +80,7 @@ type config =
   ; num_nodes: int
   ; node_id: node_id
   ; election_timeout: int }
+[@@deriving accessors]
 
 let config_pp : config Fmt.t =
  fun ppf v ->
@@ -126,8 +132,8 @@ let node_state_pp : node_state Fmt.t =
           (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
           elts
       in
-      pf ppf "{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat format_rep_map
-        rep_ackd format_rep_map rep_sent
+      pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
+        format_rep_map rep_ackd format_rep_map rep_sent
 
 type t =
   { log: log_entry SegmentLog.t
@@ -147,16 +153,15 @@ let create config =
 
 let t_pp : t Fmt.t =
  fun ppf t ->
-  Fmt.pf ppf "{log: _; commit_index:%d; current_term: %d; node_state:%a}"
+  Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
+    Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
+    (t.log |> Log.iter |> Iter.to_list)
     t.commit_index t.current_term node_state_pp t.node_state
 
 module type ActionSig = sig
   val send : node_id -> message -> unit
 
   val broadcast : message -> unit
-
-  val commit : upto:int -> unit
-  (* if upto is greater than t commit index then update it and mark to emit action *)
 
   val t : ('i -> t -> t, 'i -> unit -> unit, [< A.field]) A.General.t
 
@@ -165,45 +170,47 @@ end
 
 module ImperativeActions : ActionSig = struct
   type s =
-    { mutable action_acc: action list
-    ; mutable commit_upto: int option
-    ; mutable t: t }
+    {mutable action_acc: action list; mutable starting_cid: int; mutable t: t}
 
-  let s_init t = {action_acc= []; commit_upto= None; t}
+  let s = ref None
 
-  let s = ref (s_init @@ Obj.magic ())
+  let s_init t = {action_acc= []; starting_cid= t.commit_index; t}
 
-  let send d m = !s.action_acc <- Send (d, m) :: !s.action_acc
+  let send d m =
+    (!s |> Option.get).action_acc <-
+      Send (d, m) :: (!s |> Option.get).action_acc
 
-  let broadcast m = !s.action_acc <- Broadcast m :: !s.action_acc
-
-  let commit ~upto =
-    match !s.commit_upto with
-    | None when upto >= 0 ->
-        !s.commit_upto <- Some upto;
-    | Some u when upto > u ->
-        !s.commit_upto <- Some upto
-    | _ ->
-        ()
+  let broadcast m =
+    (!s |> Option.get).action_acc <-
+      Broadcast m :: (!s |> Option.get).action_acc
 
   let t =
-    [%accessor A.field ~get:(fun () -> !s.t) ~set:(fun () t' -> !s.t <- t')]
+    [%accessor
+      A.field
+        ~get:(fun () -> (!s |> Option.get).t)
+        ~set:(fun () t' -> (!s |> Option.get).t <- t')]
 
   let get_actions init_commit_index =
     let open Iter in
+    let commit_upto =
+      let ct = (!s |> Option.get).t in
+      if ct.commit_index > (!s |> Option.get).starting_cid then
+        Some ct.commit_index
+      else None
+    in
     let make_command_iter upto =
-      Log.iter !s.t.log ~lo:init_commit_index ~hi:upto
+      Log.iter (!s |> Option.get).t.log ~lo:init_commit_index ~hi:upto
       |> Iter.map (fun l -> l.command)
     in
     append_l
-      [ of_list !s.action_acc
-      ; !s.commit_upto |> of_opt |> Iter.map make_command_iter
+      [ of_list (!s |> Option.get).action_acc
+      ; commit_upto |> of_opt |> Iter.map make_command_iter
         |> Iter.map (fun i -> CommitCommands i) ]
     |> Iter.to_rev_list
 
   let run_side_effects f t =
-    s := s_init t ;
+    s := Some (s_init t) ;
     let init_commit_index = t.commit_index in
     f () ;
-    (!s.t, get_actions init_commit_index)
+    ((!s |> Option.get).t, get_actions init_commit_index)
 end

@@ -2,7 +2,7 @@
  (name paxos_core)
  (libraries ocons-core accessor iter)
  (inline_tests)
- (instrumentation (backend bisect_ppx))
+ (instrumentation
+  (backend bisect_ppx))
  (preprocess
-  (pps ppx_jane ppx_log ppx_accessor))
- )
+  (pps ppx_jane ppx_log ppx_accessor)))

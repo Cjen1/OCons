@@ -104,8 +104,8 @@ module SegmentLog = struct
     ; init: 'a }
 
   let allocate t i =
-    let already_allocd = i < t.allocated * t.segmentsize in
-    let within_one_alloc = i < (t.allocated + 1) * t.segmentsize in
+    let already_allocd = i < (t.allocated + 1) * t.segmentsize in
+    let within_one_alloc = i < (t.allocated + 2) * t.segmentsize in
     match () with
     | () when already_allocd ->
         ()
@@ -114,14 +114,22 @@ module SegmentLog = struct
         t.allocated <- t.allocated + 1
     | _ ->
         raise
-          (Invalid_argument (Fmt.str "Could not allocate new segment for %d" i))
+          (Invalid_argument
+             (Fmt.str
+                "Could not allocate new segment for %d, already allocated %d" i
+                t.allocated ) )
 
   let check t i =
     match () with
-    | () when i < t.allocated * t.segmentsize ->
+    | () when i < (t.allocated + 1) * t.segmentsize ->
         ()
     | _ ->
-        raise (Invalid_argument (Fmt.str "Segment out of bounds: idx = %d, allocated_upto (non-inc) = %d" i (t.allocated * t.segmentsize)))
+        raise
+          (Invalid_argument
+             (Fmt.str
+                "Segment out of bounds: idx = %d, allocated_upto (non-inc) = %d"
+                i
+                (t.allocated * t.segmentsize) ) )
 
   let id_to_seg t i = t.allocated - Int.div i t.segmentsize
 
@@ -135,13 +143,14 @@ module SegmentLog = struct
     if t.vhi < i then t.vhi <- i
 
   let iteri t ?(lo = 0) ?(hi = t.vhi) : (int * 'a) Iter.t =
-   fun f ->
-    for i = lo to hi do
-      f (i, get t i)
-    done
+    let lo = max 0 lo in
+    fun f ->
+      for i = lo to hi do
+        f (i, get t i)
+      done
 
   let iteri_len t ?(lo = 0) ?(hi = t.vhi) () : (int * 'a) Iter.t * int =
-    ((fun f -> iteri t ~lo ~hi f), hi - lo)
+    ((fun f -> iteri t ~lo ~hi f), hi - lo + 1)
 
   let iter t ?(lo = 0) ?(hi = t.vhi) f = iteri t ~lo ~hi (fun (_, x) -> f x)
 
@@ -149,7 +158,7 @@ module SegmentLog = struct
     let iter, len = iteri_len t ~lo ~hi () in
     ((fun f -> iter (fun (_, x) -> f x)), len)
 
-  let add t v = set t t.vhi v
+  let add t v = set t (t.vhi + 1) v
 
   let mem t i = i <= t.vhi
 
@@ -160,7 +169,7 @@ module SegmentLog = struct
   let cut_after t idx = t.vhi <- idx
 
   let create ?(segmentsize = 4096) init =
-    {segmentsize; segments= []; allocated= 0; vhi= -1; init}
+    {segmentsize; segments= []; allocated= -1; vhi= -1; init}
 end
 
 module IntMap = Map.Make (struct
