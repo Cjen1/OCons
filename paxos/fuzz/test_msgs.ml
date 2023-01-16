@@ -19,6 +19,24 @@ module Gen = struct
 
   let log_entry =
     map [command; int] (fun command term -> Ocons_core.Types.{command; term})
+
+  let entries =
+    map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
+
+  let msg =
+    let open Paxos_core.Types in
+    choose
+      [ map [int; int] (fun term leader_commit ->
+            RequestVote {term; leader_commit} )
+      ; map [int; int; entries] (fun term start_index entries ->
+            RequestVoteResponse {term; start_index; entries} )
+      ; map [int; int; int; int; entries]
+          (fun term leader_commit prev_log_index prev_log_term entries ->
+            AppendEntries
+              {term; leader_commit; prev_log_index; prev_log_term; entries} )
+      ; map [int; bool; int] (fun term success index ->
+            AppendEntriesResponse
+              {term; success= (if success then Ok index else Error index)} ) ]
 end
 
 module LP = Paxos_core.Line_prot
@@ -85,6 +103,38 @@ let test_entry_equality les =
   let r_entries = LP.DeserPrim.entries br in
   check_eq ~eq:entries_equal w_entries r_entries
 
+let msg_equal a b =
+  let open Paxos_core.Types in
+  match (a, b) with
+  | RequestVote a, RequestVote b ->
+      a.term = b.term && a.leader_commit = b.leader_commit
+  | RequestVoteResponse a, RequestVoteResponse b ->
+      a.term = b.term
+      && a.start_index = b.start_index
+      && entries_equal a.entries b.entries
+  | AppendEntries a, AppendEntries b ->
+      a.term = b.term
+      && a.leader_commit = b.leader_commit
+      && a.prev_log_index = b.prev_log_index
+      && a.prev_log_term = b.prev_log_term
+      && entries_equal a.entries b.entries
+  | AppendEntriesResponse a, AppendEntriesResponse b ->
+      a.term = b.term && a.success = b.success
+  | _ ->
+      false
+
+let test_msg_equality msg =
+  let open Crowbar in
+  Eio_mock.Backend.run
+  @@ fun () ->
+  let fr, fw = mock_flow () in
+  let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+  Eio.Buf_write.with_flow fw
+  @@ fun bw ->
+  LP.serialise msg bw ;
+  let msg' = LP.parse br in
+  check_eq ~pp:Paxos_core.Types.message_pp ~eq:msg_equal msg msg'
+
 let () =
   let open Crowbar in
   add_test ~name:"entries_equal"
@@ -92,4 +142,5 @@ let () =
     (fun l ->
       let e = (Iter.of_list l, List.length l) in
       check_eq ~eq:entries_equal e e ) ;
-  add_test ~name:"entries_ser_deser" [list Gen.log_entry] test_entry_equality
+  add_test ~name:"entries_ser_deser" [list Gen.log_entry] test_entry_equality ;
+  add_test ~name:"msg_passing" [Gen.msg] test_msg_equality
