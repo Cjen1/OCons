@@ -3,4 +3,4 @@
  (inline_tests)
  (libraries core core_bench async ocons-core)
  (preprocess
-  (pps ppx_jane -allow-unannotated-ignores)))
+  (pps ppx_jane)))

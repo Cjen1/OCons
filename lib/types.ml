@@ -6,9 +6,9 @@ type time = float
 
 type node_addr = string
 
-type command_id = Uuid.Stable.V1.t [@@deriving bin_io, compare, sexp]
+type command_id = int [@@deriving bin_io, compare, sexp]
 
-type client_id = Uuid.t [@@deriving bin_io]
+type client_id = int [@@deriving bin_io]
 
 type node_id = int [@@deriving sexp_of, bin_io]
 
@@ -39,20 +39,16 @@ let sm_op_pp ppf v =
 module Command = struct
   type t = {op: sm_op; id: command_id} [@@deriving bin_io, compare, sexp]
 
-  let pp_mach ppf v =
-    Fmt.pf ppf "Command(%a, %s)" sm_op_pp v.op (Uuid.to_string v.id)
+  let pp_mach ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 
-  let pp ppf v =
-    Fmt.pf ppf "Command(%a, _)" sm_op_pp v.op 
+  let pp ppf v = Fmt.pf ppf "Command(%a, _)" sm_op_pp v.op
 end
 
 type command = Command.t [@@deriving bin_io, compare, sexp]
 
-let empty_command =
-  Command.{op= NoOp; id= Uuid.create_random (Base.Random.State.make [||])}
+let empty_command = Command.{op= NoOp; id= -1}
 
-let make_command c =
-  Command.{op= c; id= Uuid.create_random Base.Random.State.default}
+let make_command c = Command.{op= c; id= Random.int Int.max_value}
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]

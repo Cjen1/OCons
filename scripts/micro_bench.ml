@@ -50,7 +50,9 @@ let client_test nodes rate =
   let nodes = nodes |> [%sexp_of: int list] |> Sexp.to_string in
   call_exit_code @@ ["timeout"; timeout] @ ["opam"; "exec"; "--"]
   @ ["_build/default/bin/bench.exe"]
-  @ ["-p"; nodes] @ ["-t"; Int.to_string rate] @ ["-n"; Int.to_string n]
+  @ ["-p"; nodes]
+  @ ["-t"; Int.to_string rate]
+  @ ["-n"; Int.to_string n]
   @ ["-log-level"; "info"]
 
 let print_summary file =

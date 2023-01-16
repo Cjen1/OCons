@@ -2,6 +2,6 @@
  (name ocons_core)
  (public_name ocons-core)
  (inline_tests)
- (libraries base core core_kernel.uuid core_unix eio accessor core_profiler ocons_conn_mgr iter)
+ (libraries base core core_kernel.uuid core_unix eio accessor ocons_conn_mgr iter)
  (preprocess
   (pps ppx_jane ppx_accessor)))

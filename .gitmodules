@@ -1,0 +1,3 @@
+[submodule "vendor/eio"]
+	path = vendor/eio
+	url = git@github.com:cjen1/eio

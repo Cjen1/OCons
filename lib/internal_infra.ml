@@ -104,7 +104,7 @@ module Make (C : Consensus_intf.S) = struct
           ; cmgr
           ; cons
           ; state_machine
-          ; inflight_txns= Core.Hash_set.create (module Uuid)
+          ; inflight_txns= Core.Hash_set.create (module Core.Int)
           ; ticker
           ; should_close= false
           ; closed_p= Promise.create () }
@@ -123,11 +123,9 @@ module Make (C : Consensus_intf.S) = struct
 end
 
 module Test = struct
-  let rand = Base.Random.State.make_self_init ~allow_in_tests:true ()
+  let w k n = Command.{op= Write (k, n); id= Core.Random.int Core.Int.max_value}
 
-  let w k n = Command.{op= Write (k, n); id= Uuid.create_random rand}
-
-  let r n = Command.{op= Read n; id= Uuid.create_random rand}
+  let r n = Command.{op= Read n; id= Core.Random.int Core.Int.max_value}
 
   module CT = struct
     type message = Core.String.t [@@deriving sexp]
