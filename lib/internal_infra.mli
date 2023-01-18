@@ -2,12 +2,13 @@ open Types
 
 module Make (C : Consensus_intf.S) : sig
   type t
+
   val create :
-       sw: Eio.Switch.t
+       sw:Eio.Switch.t
     -> C.config
-    -> Eio.Time.clock
+    -> #Eio.Time.clock
     -> time
-    -> (connection_creater) list
+    -> connection_creater list
     -> command Eio.Stream.t
     -> (command_id * op_result) Eio.Stream.t
     -> t

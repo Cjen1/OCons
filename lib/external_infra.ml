@@ -44,7 +44,7 @@ let accept_handler t sock addr =
         Line_prot.External_infra.serialise_response res bw
       done )
 
-let run net port cmd_str res_str =
+let run (net : #Eio.Net.t) port cmd_str res_str =
   Switch.run
   @@ fun sw ->
   let t =

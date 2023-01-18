@@ -6,7 +6,9 @@ module Ticker = struct
   type t = {mutable next_tick: float; period: float; clock: Eio.Time.clock}
 
   let create clock period =
-    {next_tick= Core.Float.(Eio.Time.now clock + period); period; clock}
+    { next_tick= Core.Float.(Eio.Time.now clock + period)
+    ; period
+    ; clock}
 
   let tick t f =
     let now = Eio.Time.now t.clock in
@@ -97,7 +99,7 @@ module Make (C : Consensus_intf.S) = struct
         let cmgr = Ocons_conn_mgr.create ~sw resolvers C.parse in
         let cons = C.create_node config in
         let state_machine = Core.Hashtbl.create (module Core.String) in
-        let ticker = Ticker.create clock period in
+        let ticker = Ticker.create (clock :> Eio.Time.clock) period in
         let t =
           { c_tx= client_resps
           ; c_rx= client_msgs
@@ -133,7 +135,10 @@ module Test = struct
     let message_pp = Fmt.string
 
     (** All the events incomming into the advance function *)
-    type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
+    type event =
+      | Tick
+      | Recv of (message * node_id)
+      | Commands of command Iter.t
 
     let event_pp ppf v =
       let open Fmt in
@@ -174,9 +179,7 @@ module Test = struct
 
     type t = {arr: command option Array.t; mutable len: int}
 
-    let t_pp = fun ppf _ ->
-      Fmt.pf ppf "T"
-
+    let t_pp ppf _ = Fmt.pf ppf "T"
 
     let create_node () = {arr= Array.make 10 None; len= 0}
 
