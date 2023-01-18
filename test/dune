@@ -1,6 +1,0 @@
-(library
- (name tests)
- (inline_tests)
- (libraries core core_bench async ocons-core)
- (preprocess
-  (pps ppx_jane)))
