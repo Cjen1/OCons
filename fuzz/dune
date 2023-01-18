@@ -1,0 +1,3 @@
+(test
+ (name lib_line_prot)
+ (libraries paxos_core crowbar))
