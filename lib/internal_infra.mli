@@ -7,7 +7,7 @@ module Make (C : Consensus_intf.S) : sig
     -> C.config
     -> Eio.Time.clock
     -> time
-    -> (node_id * Ocons_conn_mgr.resolver) list
+    -> (connection_creater) list
     -> command Eio.Stream.t
     -> (command_id * op_result) Eio.Stream.t
     -> t

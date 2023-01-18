@@ -46,7 +46,7 @@ let message_pp ppf v =
            ~error:(const string "Error: " ++ int) )
         success
 
-type event = Tick | Recv of (message * node_id) | Commands of command iter
+type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
 
 let event_pp ppf v =
   let open Fmt in

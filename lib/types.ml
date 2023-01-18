@@ -18,6 +18,8 @@ type value = string [@@deriving bin_io, compare, sexp]
 
 type state_machine = (key, value) Hashtbl.t
 
+type connection_creater = node_id * Ocons_conn_mgr.resolver
+
 type sm_op =
   | Read of key
   | Write of key * value
@@ -110,5 +112,3 @@ let log_entry_pp_mach ppf v =
 type client_request = command [@@deriving bin_io]
 
 type client_response = (op_result, [`Unapplied]) Result.t [@@deriving bin_io]
-
-type 'a iter = ('a -> unit) -> unit

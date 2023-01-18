@@ -133,7 +133,7 @@ module Test = struct
     let message_pp = Fmt.string
 
     (** All the events incomming into the advance function *)
-    type event = Tick | Recv of (message * node_id) | Commands of command iter
+    type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
 
     let event_pp ppf v =
       let open Fmt in
@@ -148,7 +148,7 @@ module Test = struct
     type action =
       | Send of int * message
       | Broadcast of message
-      | CommitCommands of command iter
+      | CommitCommands of command Iter.t
 
     let action_pp ppf v =
       let open Fmt in
