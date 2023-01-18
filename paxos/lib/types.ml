@@ -79,18 +79,20 @@ type config =
   ; other_nodes: node_id list
   ; num_nodes: int
   ; node_id: node_id
-  ; election_timeout: int }
+  ; election_timeout: int
+  ; max_outstanding: int }
 [@@deriving accessors]
 
 let config_pp : config Fmt.t =
  fun ppf v ->
   let open Fmt in
-  pf ppf "{P1Q:%d,P2Q:%d,#Nodes:%d,Id:%d,eT:%d,%a}" v.phase1quorum
-    v.phase2quorum v.num_nodes v.node_id v.election_timeout
+  pf ppf "{P1Q:%d,P2Q:%d,#Nodes:%d,Id:%d,eT:%d,mO:%d,%a}" v.phase1quorum
+    v.phase2quorum v.num_nodes v.node_id v.election_timeout v.max_outstanding
     (braces @@ list ~sep:comma int)
     v.other_nodes
 
-let make_config ~node_id ~node_list ~election_timeout =
+let make_config ~node_id ~node_list ~election_timeout ?(max_outstanding = 8192)
+    () =
   let length = List.length node_list in
   let phase1quorum = (length + 1) / 2 in
   let phase2quorum = (length + 1) / 2 in
@@ -102,7 +104,8 @@ let make_config ~node_id ~node_list ~election_timeout =
   ; other_nodes
   ; num_nodes= length
   ; node_id
-  ; election_timeout }
+  ; election_timeout
+  ; max_outstanding }
 
 type node_state =
   | Follower of {timeout: int}
