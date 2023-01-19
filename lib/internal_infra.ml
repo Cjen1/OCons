@@ -6,9 +6,7 @@ module Ticker = struct
   type t = {mutable next_tick: float; period: float; clock: Eio.Time.clock}
 
   let create clock period =
-    { next_tick= Core.Float.(Eio.Time.now clock + period)
-    ; period
-    ; clock}
+    {next_tick= Core.Float.(Eio.Time.now clock + period); period; clock}
 
   let tick t f =
     let now = Eio.Time.now t.clock in
@@ -95,7 +93,9 @@ module Make (C : Consensus_intf.S) = struct
 
   let create ~sw config clock period resolvers client_msgs client_resps =
     let t_p, t_u = Promise.create () in
-    Fiber.fork_sub ~sw ~on_error:raise (fun sw ->
+    Fiber.fork ~sw (fun () ->
+        Switch.run
+        @@ fun sw ->
         let cmgr = Ocons_conn_mgr.create ~sw resolvers C.parse in
         let cons = C.create_node config in
         let state_machine = Core.Hashtbl.create (module Core.String) in

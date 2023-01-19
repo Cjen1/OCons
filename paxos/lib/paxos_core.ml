@@ -2,7 +2,7 @@ open! Types
 module Line_prot = Line_prot
 module Types = Types
 
-module Imperative : Ocons_core.Consensus_intf.S = struct
+module Imperative = struct
   include Sm.Impl
   include Types
 

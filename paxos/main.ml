@@ -1,88 +1,156 @@
-(*open! Core
-open! Async
-open! Paxos_lib
-module O = Ocons_core
-module I = O.Infra.Make (O.Immutable_store) (Paxos.Make)
+open! Ocons_core
+open! Ocons_core.Types
+open! Paxos_core.Types
+module Cli = Ocons_core.Client
+module Paxos = Paxos_core
+module Main = Infra.Make (Paxos_core)
 
-let network_address =
-  let parse s =
-    match String.split ~on:':' s with
-    | [id; addr; port] ->
-        (Int.of_string id, Fmt.str "%s:%s" addr port)
-    | _ ->
-        Fmt.failwith "Expected ip:port | path rather than %s " s
+let run node_id node_addresses internal_port external_port tick_period
+    election_timeout max_outstanding stream_length =
+  let other_nodes =
+    node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
-  Command.Arg_type.create parse
+  let cons_config =
+    let num_nodes = List.length node_addresses in
+    let majority_quorums = (num_nodes + 1) / 2 in
+    { phase1quorum= majority_quorums
+    ; phase2quorum= majority_quorums
+    ; other_nodes= List.map fst other_nodes
+    ; num_nodes
+    ; node_id
+    ; election_timeout
+    ; max_outstanding }
+  in
+  let config =
+    Main.
+      { cons_config
+      ; internal_port
+      ; external_port
+      ; stream_length
+      ; tick_period
+      ; nodes= other_nodes
+      ; node_id }
+  in
+  Fmt.pr "Starting Paxos system:\nconfig = %a\n" Paxos.Types.config_pp cons_config;
+  Eio_main.run @@ fun env -> Main.run env config
 
-let node_list =
-  Command.Arg_type.comma_separated ~allow_empty:false network_address
+open Cmdliner
 
-let log_param =
-  Log_extended.Command.(
-    setup_via_params ~log_to_console_by_default:(Stderr Color)
-      ~log_to_syslog_by_default:false () )
+let ipv4 =
+  let conv = Arg.(t4 ~sep:'.' int int int int) in
+  let parse s =
+    let ( let+ ) = Result.bind in
+    let+ res = Arg.conv_parser conv s in
+    let check v = v >= 0 && v < 256 in
+    match res with
+    | v0, v1, v2, v3 when check v0 && check v1 && check v2 && check v3 ->
+        let raw = Bytes.create 4 in
+        Bytes.set_uint8 raw 0 v0 ;
+        Bytes.set_uint8 raw 1 v1 ;
+        Bytes.set_uint8 raw 2 v2 ;
+        Bytes.set_uint8 raw 3 v3 ;
+        Ok (Eio.Net.Ipaddr.of_raw (Bytes.to_string raw))
+    | v0, v1, v2, v3 ->
+        Error
+          (`Msg
+            Fmt.(
+              str "Invalid IP address: %a"
+                (list ~sep:(const string ".") int)
+                [v0; v1; v2; v3] ) )
+  in
+  Arg.conv ~docv:"IPv4" (parse, Eio.Net.Ipaddr.pp)
 
-let command =
-  Command.async_spec ~summary:"A Paxos implementation in OCaml"
-    Command.Spec.(
-      empty
-      +> anon ("node_id" %: int)
-      +> anon ("node_list" %: node_list)
-      +> anon ("datadir" %: string)
-      +> anon ("external_port" %: int)
-      +> anon ("internal_port" %: int)
-      +> anon ("election_timeout" %: int)
-      +> anon ("tick_speed" %: float)
-      +> flag "-s" ~doc:" Size limit of batches" (optional_with_default 1 int)
-      +> flag "-d" ~doc:" Time limit of batches in ms"
-           (optional_with_default 50. float)
-      +> log_param )
-    (fun node_id node_list datadir external_port internal_port election_timeout
-         tick_speed batch_size batch_timeout () () ->
-      let global_level = Async.Log.Global.level () in
-      let global_output = Async.Log.Global.get_output () in
-      List.iter
-        [ O.Infra.logger
-        ; O.Utils.logger
-        ; O.Owal.logger
-        ; O.Client_handler.logger
-        ; Paxos_lib.Paxos.logger
-        ; Paxos_lib.Paxos.log_logger
-        ; Paxos_lib.Paxos.io_logger ] ~f:(fun log ->
-          Async.Log.set_level log global_level ;
-          Async.Log.set_output log global_output ) ;
-      let tick_speed = Time.Span.of_sec tick_speed in
-      let batch_timeout = Time.Span.of_ms batch_timeout in
-      let%bind () =
-        match%bind Sys.file_exists_exn datadir with
-        | true ->
-            return ()
-        | false ->
-            Unix.mkdir datadir
-      in
-      let p_config =
-        Paxos.make_config ~node_id
-          ~node_list:(List.map ~f:fst node_list)
-          ~election_timeout
-      in
-      let i_config =
-        O.Infra.
-          { node_id
-          ; node_list
-          ; datadir
-          ; external_port
-          ; internal_port
-          ; tick_speed
-          ; batch_size
-          ; batch_timeout }
-      in
-      let%bind (_ : I.t) = I.create i_config p_config in
-      let i = Ivar.create () in
-      Signal.handle Signal.terminating ~f:(fun _ -> Ivar.fill i ()) ;
-      Ivar.read i )
+let sockv4 =
+  let conv = Arg.(pair ~sep:':' ipv4 int) in
+  let parse s =
+    let (let+) = Result.bind in
+    let+ ip,port = Arg.conv_parser conv s in
+    Ok(`Tcp (ip,port) : Eio.Net.Sockaddr.stream)
+  in
+  Arg.conv ~docv:"TCP" (parse, Eio.Net.Sockaddr.pp)
 
-let () =
-  Fmt_tty.setup_std_outputs () ;
-  Fmt.pr "%a" (Fmt.array ~sep:Fmt.sp Fmt.string) (Sys.get_argv ()) ;
-  Rpc_parallel.start_app command
-  *)
+let address_a = Arg.(pair ~sep:':' int sockv4)
+
+let election_timeout_ot =
+  let open Arg in
+  let i =
+    info ~docv:"ELECTION_TICK_INTERVAL"
+      ~doc:"Number of ticks before an election is triggered."
+      ["election-timeout"]
+  in
+  opt int 5 i
+
+let election_tick_period_ot =
+  let open Arg in
+  let i =
+    info ~docv:"TICK_PERIOD"
+      ~doc:"Number of seconds before an election tick is generated."
+      ["t"; "tick-period"; "election-tick-period"]
+  in
+  opt float 0.1 i
+
+let max_outstanding_ot =
+  let open Arg in
+  let i =
+    info ~docv:"MAX_OUTSTANDING"
+      ~doc:
+        "Number of outstanding requests between the leader's highest log index \
+         and the highest committed value."
+      ["o"; "outstanding"; "max-outstanding"]
+  in
+  opt int 1024 i
+
+let stream_length_ot =
+  let open Arg in
+  let i =
+    info ~docv:"STREAM_LENGTH"
+      ~doc:
+        "Maximum number of requests in the stream between the external and \
+         internal infrastructure."
+      ["s"; "stream-length"]
+  in
+  opt int 1024 i
+
+let internal_port_ot =
+  let open Arg in
+  let i =
+    info ~docv:"INTERNAL_PORT" ~doc:"Port for internal traffic between nodes."
+      ["p"; "internal"; "internal-port"]
+  in
+  opt int 5000 i
+
+let external_port_ot =
+  let open Arg in
+  let i =
+    info ~docv:"EXTERNAL_PORT"
+      ~doc:"Port for external traffic between nodes and clients."
+      ["q"; "external"; "external-port"]
+  in
+  opt int 5001 i
+
+let address_info =
+  Arg.(
+    info ~docv:"ADDR"
+      ~doc:
+        "This is a comma separated list of ip addresses and ports eg: \
+         \"0:192.168.0.1,1:192.168.0.2\""
+      [] )
+
+let cmd =
+  let node_id_t =
+    Arg.(required & pos 0 (some int) None (info ~docv:"ID" ~doc:"NODE_ID" []))
+  in
+  let node_addresses_t =
+    Arg.(required & pos 1 (some @@ list address_a) None address_info)
+  in
+  let info = Cmd.info "ocons_main" in
+  Cmd.v info
+    Term.(
+      const run $ node_id_t $ node_addresses_t $ Arg.value internal_port_ot
+      $ Arg.value external_port_ot
+      $ Arg.value election_tick_period_ot
+      $ Arg.value election_timeout_ot
+      $ Arg.value max_outstanding_ot
+      $ Arg.value stream_length_ot )
+
+let () = exit Cmd.(eval cmd)

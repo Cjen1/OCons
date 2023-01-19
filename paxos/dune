@@ -1,4 +1,3 @@
-(env
- (dev
-  (flags
-   (:standard -w -39-53-55))))
+(executable
+  (name main)
+  (libraries paxos_core cmdliner))

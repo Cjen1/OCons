@@ -247,9 +247,10 @@ module Make (Act : ActionSig) = struct
           rep_ackd |> IntMap.to_seq
           |> Seq.map (fun (_, v) -> v)
           |> List.of_seq
+          |> List.cons (A.get (t @> log) () |> Log.highest)
           |> List.sort (fun a b -> Int.neg @@ Int.compare a b)
         in
-        let majority_rep = List.nth acks (Int.div ct.config.num_nodes 2 - 1) in
+        let majority_rep = List.nth acks (ct.config.phase2quorum - 1) in
         A.set (t @> commit_index) ~to_:majority_rep ()
     | _ ->
         ()

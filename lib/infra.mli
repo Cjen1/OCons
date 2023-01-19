@@ -7,7 +7,7 @@ module Make (C : Consensus_intf.S) : sig
     ; external_port: int
     ; stream_length: int
     ; tick_period: float
-    ; nodes: (int * Eio.Net.Ipaddr.v4v6) list
+    ; nodes: (int * Eio.Net.Sockaddr.stream) list
     ; node_id: int }
 
   type 'a env = < clock: #Eio.Time.clock ; net: #Eio.Net.t ; .. > as 'a
