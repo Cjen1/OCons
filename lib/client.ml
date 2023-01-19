@@ -52,7 +52,7 @@ let create_rpc ~sw env resolvers id retry_period =
   let t =
     { cmgr= create_cmgr ~sw resolvers id
     ; request_state= Hashtbl.create 1024
-    ; clock= Eio.Stdenv.clock env
+    ; clock= env#clock
     ; next_id= next_cid }
   in
   (* retry any missing requests *)

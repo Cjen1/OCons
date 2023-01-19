@@ -1,0 +1,4 @@
+(executables
+  (names cli)
+  (modules cli)
+  (libraries ocons-core cmdliner))
