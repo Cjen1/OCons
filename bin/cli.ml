@@ -52,23 +52,25 @@ let ipv4 =
 let sockv4 =
   let conv = Arg.(pair ~sep:':' ipv4 int) in
   let parse s =
-    let (let+) = Result.bind in
-    let+ ip,port = Arg.conv_parser conv s in
-    Ok(`Tcp (ip,port) : Eio.Net.Sockaddr.stream)
+    let ( let+ ) = Result.bind in
+    let+ ip, port = Arg.conv_parser conv s in
+    Ok (`Tcp (ip, port) : Eio.Net.Sockaddr.stream)
   in
   Arg.conv ~docv:"TCP" (parse, Eio.Net.Sockaddr.pp)
-
 
 let const_cmd info start op_t =
   let id_t =
     Arg.(
-      value
-      & pos start int (-1) (info ~docv:"ID" ~doc:"The id of the client" []) )
+      required
+      & pos start (some int) None
+          (info ~docv:"ID" ~doc:"The id of the client" []) )
   in
   let sockaddrs_t =
     Arg.(
-      value
-      & pos (start + 1) (list sockv4) []
+      required
+      & pos (start + 1)
+          (some @@ list sockv4)
+          None
           (info ~docv:"SOCKADDRS"
              ~doc:
                "This is a comma separated list of ip addresses and ports eg: \
@@ -87,25 +89,29 @@ let const_cmd info start op_t =
 let write_cmd =
   let open Term in
   let info = Cmd.info "write" in
-  let key_t = Arg.(value & pos 0 string "MISSING" (info ~docv:"KEY" [])) in
-  let value_t = Arg.(value & pos 1 string "MISSING" (info ~docv:"VALUE" [])) in
+  let key_t = Arg.(required & pos 0 (some string) None (info ~docv:"KEY" [])) in
+  let value_t =
+    Arg.(required & pos 1 (some string) None (info ~docv:"VALUE" []))
+  in
   let op_t = const (fun k v -> Types.Write (k, v)) $ key_t $ value_t in
   const_cmd info 2 op_t
 
 let read_cmd =
   let open Term in
   let info = Cmd.info "read" in
-  let key_t = Arg.(value & pos 0 string "MISSING" (info ~docv:"KEY" [])) in
+  let key_t = Arg.(required & pos 0 (some string) None (info ~docv:"KEY" [])) in
   let op_t = const (fun k -> Types.Read k) $ key_t in
   const_cmd info 1 op_t
 
 let cas_cmd =
   let open Term in
   let info = Cmd.info "cas" in
-  let key_t = Arg.(value & pos 0 string "MISSING" (info ~docv:"KEY" [])) in
-  let value_t = Arg.(value & pos 1 string "MISSING" (info ~docv:"VALUE" [])) in
+  let key_t = Arg.(required & pos 0 (some string) None (info ~docv:"KEY" [])) in
+  let value_t =
+    Arg.(required & pos 1 (some string) None (info ~docv:"VALUE" []))
+  in
   let new_value_t =
-    Arg.(value & pos 2 string "MISSING" (info ~docv:"NEW_VALUE" []))
+    Arg.(required & pos 2 (some string) None (info ~docv:"NEW_VALUE" []))
   in
   let op_t =
     const (fun key value value' -> Types.CAS {key; value; value'})
