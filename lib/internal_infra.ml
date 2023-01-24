@@ -1,6 +1,7 @@
 open Eio.Std
 open Types
 module CMgr = Ocons_conn_mgr
+open Utils
 
 module Ticker = struct
   type t = {mutable next_tick: float; period: float; clock: Eio.Time.clock}
@@ -32,25 +33,29 @@ module Make (C : Consensus_intf.S) = struct
     update_state_machine t.state_machine cmd
 
   let handle_actions t actions =
-    (* TODO move over to blit interface *)
     let f : C.action -> unit = function
       | C.Send (dst, msg) ->
-          traceln "sending" ;
           CMgr.send_blit t.cmgr dst (C.serialise msg) ;
-          traceln "sent"
+          dtraceln "Sent to %d: %a" dst C.message_pp msg
       | C.Broadcast msg ->
-          CMgr.broadcast_blit t.cmgr (C.serialise msg)
+          CMgr.broadcast_blit t.cmgr (C.serialise msg) ;
+          dtraceln "Broadcast %a" C.message_pp msg
       | C.CommitCommands citer ->
           citer (fun cmd ->
               let res = apply t cmd in
-              Eio.Stream.add t.c_tx (cmd.id, res) )
+              Eio.Stream.add t.c_tx (cmd.id, res) ) ;
+          dtraceln "Committed %a"
+            (Fmt.braces @@ Iter.pp_seq ~sep:", " Types.Command.pp)
+            citer
     in
     List.iter f actions
 
   (** If any msgs to internal port exist then read and apply them *)
   let internal_msgs t =
+    (* May not return anything *)
     let msg_iter = CMgr.recv_any t.cmgr in
     let iterf (src, msg) =
+      dtraceln "Receiving msg from %d: %a" src C.message_pp msg ;
       let tcons, actions = C.advance t.cons (Recv (msg, src)) in
       t.cons <- tcons ;
       handle_actions t actions
@@ -62,23 +67,34 @@ module Make (C : Consensus_intf.S) = struct
     let num_to_take =
       min (C.available_space_for_commands t.cons) (Eio.Stream.length t.c_rx)
     in
-    if num_to_take <= 0 then ()
-    else
-      let iter f =
-        for _ = 1 to num_to_take do
-          let v = Eio.Stream.take t.c_rx in
-          if Core.Hash_set.mem t.inflight_txns v.id |> not then (
-            Core.Hash_set.add t.inflight_txns v.id ;
-            f v )
-        done
-      in
-      let tcons, actions = C.advance t.cons (Commands iter) in
+    let non_empty = ref false in
+    let iter =
+      Iter.unfoldr
+        (function
+          | 0 ->
+              None
+          | rem ->
+              let c_o = Eio.Stream.take_nonblocking t.c_rx in
+              Option.bind c_o (function
+                | c when Core.Hash_set.mem t.inflight_txns c.id ->
+                    None
+                | c ->
+                    Core.Hash_set.add t.inflight_txns c.id ;
+                    non_empty := true ;
+                    Some (c, rem - 1) ) )
+        num_to_take
+    in
+    if !non_empty then (
+      let p_iter = Iter.persistent iter in
+      dtraceln "Passing commands: %a" (Iter.pp_seq ~sep:"," Command.pp) p_iter ;
+      let tcons, actions = C.advance t.cons (Commands p_iter) in
       t.cons <- tcons ;
-      handle_actions t actions
+      handle_actions t actions )
 
   let ensure_sent t = Fiber.yield () ; CMgr.flush_all t.cmgr
 
   let tick t () =
+    dtraceln "Tick" ;
     let tcons, actions = C.advance t.cons Tick in
     t.cons <- tcons ;
     handle_actions t actions
@@ -93,9 +109,7 @@ module Make (C : Consensus_intf.S) = struct
 
   let create ~sw config clock period resolvers client_msgs client_resps =
     let t_p, t_u = Promise.create () in
-    Fiber.fork ~sw (fun () ->
-        Switch.run
-        @@ fun sw ->
+    Fiber.fork_sub ~on_error:raise ~sw (fun sw ->
         let cmgr = Ocons_conn_mgr.create ~sw resolvers C.parse in
         let cons = C.create_node config in
         let state_machine = Core.Hashtbl.create (module Core.String) in
@@ -219,7 +233,7 @@ module Test = struct
     let c_rx = Eio.Stream.create 10 in
     let c_tx = Eio.Stream.create 10 in
     let f1 = Eio_mock.Flow.make "f1" in
-    let resolvers = [(1, fun () -> (f1 :> Eio.Flow.two_way))] in
+    let resolvers = [(1, fun _ -> (f1 :> Eio.Flow.two_way))] in
     (* Start of actual test *)
     let t = create ~sw () (clk :> Eio.Time.clock) 1. resolvers c_rx c_tx in
     Fiber.yield () ;

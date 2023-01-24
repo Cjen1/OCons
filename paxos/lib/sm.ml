@@ -2,6 +2,8 @@ open Types
 open Utils
 open C.Types
 
+let dtraceln = C.Utils.dtraceln
+
 module Make (Act : ActionSig) = struct
   type nonrec config = config
 
@@ -52,6 +54,7 @@ module Make (Act : ActionSig) = struct
         assert false
 
   let transit_follower term =
+    dtraceln "Follower for term %d" term;
     A.set (t @> node_state) () ~to_:(Follower {timeout= 0}) ;
     A.set (t @> current_term) () ~to_:term
 
@@ -66,6 +69,7 @@ module Make (Act : ActionSig) = struct
       if cterm < curr_epoch_term then curr_epoch_term
       else curr_epoch_term + num_nodes
     in
+    dtraceln "Candidate for term %d" new_term;
     A.set (t @> node_state) ()
       ~to_:
         (Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0}) ;
@@ -77,6 +81,7 @@ module Make (Act : ActionSig) = struct
     let ct = A.get t () in
     match ct.node_state with
     | Candidate {quorum; _} ->
+        dtraceln "Leader for term %d" ct.current_term;
         let per_seq (_, seq) =
           seq
           |> Iter.iter (fun (idx, le) ->

@@ -2,6 +2,8 @@ open! Types
 open! Eio.Std
 module Cmgr = Ocons_conn_mgr
 
+let dtraceln = Utils.dtraceln
+
 type request = Line_prot.External_infra.request
 
 type response = Line_prot.External_infra.response
@@ -12,10 +14,11 @@ let ser_req req = Line_prot.External_infra.serialise_request req
 
 let parse_resp = Line_prot.External_infra.parse_response
 
-let resolver_with_handshake ~id (res : Cmgr.resolver) () =
-  let f = res () in
-  Eio.Buf_write.with_flow f (fun bw ->
-      Eio.Buf_write.BE.uint64 bw (Int64.of_int id) ) ;
+let resolver_with_handshake ~id (res : Cmgr.resolver) sw =
+  let f = res sw in
+  let cst = Cstruct.create 8 in
+  Cstruct.BE.set_uint64 cst 0 (Int64.of_int id);
+  Eio.Flow.write f [cst];
   f
 
 (* Add the handshake *)
@@ -58,6 +61,7 @@ let create_rpc ~sw env resolvers id retry_period =
   (* retry any missing requests *)
   Eio.Fiber.fork_daemon ~sw (fun () ->
       while true do
+        Switch.check sw;
         let now = Eio.Time.now (Eio.Stdenv.clock env) in
         t.request_state
         |> Hashtbl.iter (fun _ rstate ->
@@ -70,6 +74,7 @@ let create_rpc ~sw env resolvers id retry_period =
   (* Resolve any incoming results *)
   Eio.Fiber.fork_daemon ~sw (fun () ->
       while true do
+        Switch.check sw;
         let resps = recv_resp t.cmgr in
         resps
         |> Iter.iter (fun (id, res) ->

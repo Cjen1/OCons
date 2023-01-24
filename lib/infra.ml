@@ -20,7 +20,7 @@ module Make (C : Consensus_intf.S) = struct
     Switch.run (fun sw ->
         let command_stream = Eio.Stream.create config.stream_length in
         let result_stream = Eio.Stream.create (config.stream_length * 64) in
-        let create_conn addr () =
+        let create_conn addr sw =
           (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)
         in
         let conns : connection_creater list =

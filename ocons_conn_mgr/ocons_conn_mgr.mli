@@ -4,14 +4,14 @@ type 'a t
 
 type 'a iter = ('a -> unit) -> unit
 
-type resolver = unit -> Flow.two_way
+type resolver = Switch.t -> Flow.two_way
 
 type id = int
 
 val create :
      ?max_recv_buf:id
   -> sw:Switch.t
-  -> (id * (unit -> Flow.two_way)) list
+  -> (id * resolver) list
   -> (Buf_read.t -> 'a)
   -> 'a t
 

@@ -13,15 +13,15 @@ let run op sockaddrs id retry_timeout =
     sockaddrs
     |> List.mapi (fun idx addr ->
            ( idx
-           , fun () -> (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way) ) )
+           , fun sw -> (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way) ) )
   in
-  Fmt.pr "Creating conn to: %a\n"
+  Eio.traceln "Creating conn to: %a"
     Fmt.(braces @@ list ~sep:comma Eio.Net.Sockaddr.pp)
     sockaddrs ;
   let cli = Cli.create_rpc ~sw env con_ress id retry_timeout in
-  Fmt.pr "Submitting request %a\n" sm_op_pp op ;
+  Eio.traceln "Submitting request %a" sm_op_pp op ;
   let res = Cli.send_request cli op in
-  Fmt.pr "Received: %a\n" op_result_pp res
+  Eio.traceln "Received: %a" op_result_pp res
 
 open Cmdliner
 

@@ -2,7 +2,7 @@ open! Eio
 module P = Persistent_conn
 module IdMap = Map.Make (Int)
 
-type resolver = unit -> Flow.two_way
+type resolver = P.resolver
 
 type id = int
 

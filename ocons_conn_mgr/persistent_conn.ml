@@ -2,9 +2,10 @@ open Eio
 
 type conn_state = Open of {w: Buf_write.t; r: Buf_read.t} | Closed
 
+type resolver = Switch.t -> Eio.Flow.two_way
+
 type t =
-  { f: unit -> Flow.two_way
-  ; mutable conn_state: conn_state
+  { mutable conn_state: conn_state
   ; mutable encountered_failure: bool
   ; has_failed_cond: Condition.t
   ; has_recovered_cond: Condition.t
@@ -52,32 +53,42 @@ let flush t =
 
 let is_open t = not t.should_close
 
-let create ~sw (f : unit -> Flow.two_way) =
+let switch_run ~on_error f = try Switch.run f with e -> on_error e
+
+let create ~sw (f : Switch.t -> Flow.two_way) =
   let t =
-    { f
-    ; conn_state= Closed
+    { conn_state= Closed
     ; should_close= false
     ; encountered_failure= false
     ; has_failed_cond= Condition.create ()
     ; has_recovered_cond= Condition.create ()
     ; closed_promise= Promise.create () }
   in
-  Fiber.fork ~sw (fun () ->
-      while not t.should_close do
-        Fiber.check ();
-        let flow = f () in
-        Buf_write.with_flow flow
-        @@ fun w ->
-        let r = Buf_read.of_flow flow ~max_size:1_000_000 in
-        t.conn_state <- Open {w; r} ;
-        t.encountered_failure <- false ;
-        while not (t.encountered_failure || t.should_close) do
-          Condition.await_no_mutex t.has_failed_cond
-        done
-      done ;
-      Promise.resolve (snd t.closed_promise) () ) ;
+  let on_error e =
+    Eio.traceln "Failed with %a" Fmt.exn e ;
+    raise e
+  in
+  (let p, r = Promise.create () in
+   Fiber.fork ~sw (fun () ->
+       (* Continually retry the connection until it connects *)
+       while not t.should_close do
+         switch_run ~on_error
+         @@ fun sw ->
+         let flow = f sw in
+         if Promise.is_resolved p |> not then Promise.resolve r () ;
+         Buf_write.with_flow flow (fun w ->
+             let r = Buf_read.of_flow flow ~max_size:1_000_000 in
+             t.conn_state <- Open {w; r} ;
+             t.encountered_failure <- false ;
+             Eio.traceln "Connection now open" ;
+             while not (t.encountered_failure || t.should_close) do
+               Condition.await_no_mutex t.has_failed_cond
+             done ) ;
+         Eio.traceln "Finished with conn"
+       done ;
+       Promise.resolve (snd t.closed_promise) () ) ;
+   Promise.await p ) ;
   Switch.on_release sw (fun () -> close t) ;
-  Fiber.yield () ;
   t
 
 let%expect_test "PersistantConn" =
@@ -93,7 +104,7 @@ let%expect_test "PersistantConn" =
     ; `Return "3\n"
     ; `Return "4\n"
     ; `Raise End_of_file ] ;
-  let c = create ~sw (fun () -> (!f :> Eio.Flow.two_way)) in
+  let c = create ~sw (fun _ -> (!f :> Eio.Flow.two_way)) in
   let p_line = Buf_read.line in
   print_endline (recv c p_line) ;
   [%expect {|
@@ -117,4 +128,34 @@ let%expect_test "PersistantConn" =
   send c (Cstruct.of_string "4") ;
   flush c ;
   [%expect {| +PConn: wrote "1234" |}] ;
+  close c
+
+let%expect_test "Exn in resolver" =
+  let p_line = Buf_read.line in
+  Eio_main.run
+  @@ fun _ ->
+  Switch.run
+  @@ fun sw ->
+  let f = ref @@ Eio_mock.Flow.make "PConn" in
+  Eio_mock.Flow.on_read !f
+    [ `Return "1\n"
+    ; `Return "2\n"
+    ; `Raise End_of_file
+    ; `Return "3\n"
+    ; `Return "4\n"
+    ; `Raise End_of_file ] ;
+  let toggle = ref false in
+  let c =
+    create ~sw (fun sw ->
+        toggle := not !toggle ;
+        ( if !toggle then (
+            Eio.Switch.fail sw (invalid_arg "asdf") ;
+            !f )
+          else !f
+          :> Eio.Flow.two_way ) )
+  in
+  print_endline (recv c p_line) ;
+  print_endline (recv c p_line) ;
+  print_endline (recv c p_line) ;
+  [%expect {||}] ;
   close c
