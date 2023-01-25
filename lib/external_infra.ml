@@ -8,8 +8,8 @@ type request = Line_prot.External_infra.request
 type response = Line_prot.External_infra.response
 
 type t =
-  { conn_tbl: (int, response Eio.Stream.t) Hashtbl.t
-  ; req_tbl: (int, int) Hashtbl.t
+  { conn_tbl: (client_id, response Eio.Stream.t) Hashtbl.t
+  ; req_tbl: (command_id, client_id) Hashtbl.t
   ; cmd_str: request Eio.Stream.t
   ; res_str: response Eio.Stream.t }
 
@@ -21,23 +21,24 @@ let accept_handler t sock addr =
   Switch.run
   @@ fun sw ->
   let br = Eio.Buf_read.of_flow ~max_size:8192 sock in
-  let id = Eio.Buf_read.BE.uint64 br |> Int64.to_int in
-  dtraceln "Setting up conns for %d" id;
+  let cid = Eio.Buf_read.BE.uint64 br |> Int64.to_int in
+  dtraceln "Setting up conns for %d" cid;
   let res_str = Eio.Stream.create 16 in
   (* If an error occurs, remove the conn and then drain it
      This ensures that pending writes to the stream are flushed
      thus preventing deadlock
   *)
   Switch.on_release sw (fun () ->
-      Hashtbl.remove t.conn_tbl id ;
+      Hashtbl.remove t.conn_tbl cid ;
       drain res_str ) ;
-  Hashtbl.add t.conn_tbl id res_str ;
+  Hashtbl.add t.conn_tbl cid res_str ;
   (* request fiber *)
   Fiber.fork ~sw (fun () ->
       while true do
-        dtraceln "Waiting for request from: %d" id ;
+        dtraceln "Waiting for request from: %d" cid ;
         let r = Line_prot.External_infra.parse_request br in
-        dtraceln "Got request from %d: %a" id Command.pp r ;
+        dtraceln "Got request from %d: %a" cid Command.pp r ;
+        Hashtbl.add t.req_tbl r.id cid;
         Eio.Stream.add t.cmd_str r
       done ) ;
   (* result fiber *)
@@ -46,10 +47,11 @@ let accept_handler t sock addr =
       @@ fun bw ->
       while true do
         let res = Eio.Stream.take res_str in
-        dtraceln "Got response for %d: %a" id
+        dtraceln "Got response for %d: %a" cid
           Fmt.(pair ~sep:comma int op_result_pp)
           res ;
-        Line_prot.External_infra.serialise_response res bw
+        Line_prot.External_infra.serialise_response res bw;
+        dtraceln "Sent response for %d" cid
       done )
 
 let run (net : #Eio.Net.t) port cmd_str res_str =
@@ -65,6 +67,7 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
   Fiber.fork ~sw (fun () ->
       (* Guaranteed to get at most one result per registered request *)
       while true do
+        dtraceln "Waiting for response" ;
         let ((cid, _) as res) = Eio.Stream.take res_str in
         dtraceln "Got response for %d" cid ;
         (let ( let* ) m f = Option.iter f m in

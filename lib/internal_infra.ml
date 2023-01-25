@@ -29,7 +29,10 @@ module Make (C : Consensus_intf.S) = struct
     ; closed_p: unit Promise.t * unit Promise.u }
 
   let apply (t : t) (cmd : command) : op_result =
-    Core.Hash_set.remove t.inflight_txns cmd.id ;
+    (* TODO truncate more sensibly
+          ie from each client record the high water mark of results and remove lower than that
+       Core.Hash_set.remove t.inflight_txns cmd.id ;
+    *)
     update_state_machine t.state_machine cmd
 
   let handle_actions t actions =
@@ -43,7 +46,8 @@ module Make (C : Consensus_intf.S) = struct
       | C.CommitCommands citer ->
           citer (fun cmd ->
               let res = apply t cmd in
-              Eio.Stream.add t.c_tx (cmd.id, res) ) ;
+              Eio.Stream.add t.c_tx (cmd.id, res) ;
+              dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ;
           dtraceln "Committed %a"
             (Fmt.braces @@ Iter.pp_seq ~sep:", " Types.Command.pp)
             citer
@@ -64,10 +68,12 @@ module Make (C : Consensus_intf.S) = struct
 
   (** Recv client msgs *)
   let admit_client_requests t =
+    (* length = 0 => num_to_take = 0
+       By contrapositive: num_to_take > 0 then length > 0
+    *)
     let num_to_take =
       min (C.available_space_for_commands t.cons) (Eio.Stream.length t.c_rx)
     in
-    let non_empty = ref false in
     let iter =
       Iter.unfoldr
         (function
@@ -77,21 +83,22 @@ module Make (C : Consensus_intf.S) = struct
               let c_o = Eio.Stream.take_nonblocking t.c_rx in
               Option.bind c_o (function
                 | c when Core.Hash_set.mem t.inflight_txns c.id ->
+                    dtraceln "Already received %d" c.id ;
                     None
                 | c ->
+                    dtraceln "Received cmd %d" c.id ;
                     Core.Hash_set.add t.inflight_txns c.id ;
-                    non_empty := true ;
                     Some (c, rem - 1) ) )
         num_to_take
     in
-    if !non_empty then (
+    if num_to_take > 0 then (
       let p_iter = Iter.persistent iter in
       dtraceln "Passing commands: %a" (Iter.pp_seq ~sep:"," Command.pp) p_iter ;
       let tcons, actions = C.advance t.cons (Commands p_iter) in
       t.cons <- tcons ;
       handle_actions t actions )
 
-  let ensure_sent t = Fiber.yield () ; CMgr.flush_all t.cmgr
+  let ensure_sent t = CMgr.flush_all t.cmgr ; Fiber.yield ()
 
   let tick t () =
     dtraceln "Tick" ;

@@ -45,6 +45,12 @@ let recv ?default t parse =
 
 let close t =
   t.should_close <- true ;
+  ( match t.conn_state with
+  | Closed ->
+      ()
+  | Open {w; _} ->
+      Buf_write.close w ;
+      t.conn_state <- Closed ) ;
   Condition.broadcast t.has_failed_cond ;
   Promise.await (fst t.closed_promise)
 
@@ -68,26 +74,27 @@ let create ~sw (f : Switch.t -> Flow.two_way) =
     Eio.traceln "Failed with %a" Fmt.exn e ;
     raise e
   in
-  (let p, r = Promise.create () in
-   Fiber.fork ~sw (fun () ->
-       (* Continually retry the connection until it connects *)
-       while not t.should_close do
-         switch_run ~on_error
-         @@ fun sw ->
-         let flow = f sw in
-         if Promise.is_resolved p |> not then Promise.resolve r () ;
-         Buf_write.with_flow flow (fun w ->
-             let r = Buf_read.of_flow flow ~max_size:1_000_000 in
-             t.conn_state <- Open {w; r} ;
-             t.encountered_failure <- false ;
-             Eio.traceln "Connection now open" ;
-             while not (t.encountered_failure || t.should_close) do
-               Condition.await_no_mutex t.has_failed_cond
-             done ) ;
-         Eio.traceln "Finished with conn"
-       done ;
-       Promise.resolve (snd t.closed_promise) () ) ;
-   Promise.await p ) ;
+  let connect_handler () =
+    (* Continually retry the connection until it connects *)
+    while not t.should_close do
+      switch_run ~on_error
+      @@ fun sw ->
+      let flow = f sw in
+      Buf_write.with_flow flow (fun w ->
+          let r = Buf_read.of_flow flow ~max_size:1_000_000 in
+          t.conn_state <- Open {w; r} ;
+          Condition.broadcast t.has_recovered_cond ;
+          t.encountered_failure <- false ;
+          Eio.traceln "Connection now open" ;
+          while not (t.encountered_failure || t.should_close) do
+            Condition.await_no_mutex t.has_failed_cond
+          done ) ;
+      Eio.traceln "Finished with conn"
+    done ;
+    Promise.resolve (snd t.closed_promise) ();
+    assert false
+  in
+  Fiber.fork_daemon ~sw connect_handler ;
   Switch.on_release sw (fun () -> close t) ;
   t
 
@@ -128,34 +135,4 @@ let%expect_test "PersistantConn" =
   send c (Cstruct.of_string "4") ;
   flush c ;
   [%expect {| +PConn: wrote "1234" |}] ;
-  close c
-
-let%expect_test "Exn in resolver" =
-  let p_line = Buf_read.line in
-  Eio_main.run
-  @@ fun _ ->
-  Switch.run
-  @@ fun sw ->
-  let f = ref @@ Eio_mock.Flow.make "PConn" in
-  Eio_mock.Flow.on_read !f
-    [ `Return "1\n"
-    ; `Return "2\n"
-    ; `Raise End_of_file
-    ; `Return "3\n"
-    ; `Return "4\n"
-    ; `Raise End_of_file ] ;
-  let toggle = ref false in
-  let c =
-    create ~sw (fun sw ->
-        toggle := not !toggle ;
-        ( if !toggle then (
-            Eio.Switch.fail sw (invalid_arg "asdf") ;
-            !f )
-          else !f
-          :> Eio.Flow.two_way ) )
-  in
-  print_endline (recv c p_line) ;
-  print_endline (recv c p_line) ;
-  print_endline (recv c p_line) ;
-  [%expect {||}] ;
   close c

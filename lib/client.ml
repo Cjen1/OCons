@@ -17,8 +17,8 @@ let parse_resp = Line_prot.External_infra.parse_response
 let resolver_with_handshake ~id (res : Cmgr.resolver) sw =
   let f = res sw in
   let cst = Cstruct.create 8 in
-  Cstruct.BE.set_uint64 cst 0 (Int64.of_int id);
-  Eio.Flow.write f [cst];
+  Cstruct.BE.set_uint64 cst 0 (Int64.of_int id) ;
+  Eio.Flow.write f [cst] ;
   f
 
 (* Add the handshake *)
@@ -30,7 +30,7 @@ let create_cmgr ~sw resolvers id =
 
 let submit_request cmgr req = Cmgr.broadcast_blit cmgr (ser_req req)
 
-let recv_resp cmgr = Cmgr.recv_any cmgr |> Iter.map snd
+let recv_resp cmgr = Cmgr.recv_any ~force:true cmgr |> Iter.map snd
 
 type request_state =
   {resolver: op_result Promise.u; retry: unit -> unit; mutable last_sent: float}
@@ -61,7 +61,7 @@ let create_rpc ~sw env resolvers id retry_period =
   (* retry any missing requests *)
   Eio.Fiber.fork_daemon ~sw (fun () ->
       while true do
-        Switch.check sw;
+        Fiber.check () ;
         let now = Eio.Time.now (Eio.Stdenv.clock env) in
         t.request_state
         |> Hashtbl.iter (fun _ rstate ->
@@ -74,18 +74,20 @@ let create_rpc ~sw env resolvers id retry_period =
   (* Resolve any incoming results *)
   Eio.Fiber.fork_daemon ~sw (fun () ->
       while true do
-        Switch.check sw;
-        let resps = recv_resp t.cmgr in
+        Fiber.check () ;
+        let resps = recv_resp t.cmgr |> Iter.persistent in
         resps
         |> Iter.iter (fun (id, res) ->
+               dtraceln "Received result for %d: %a" id op_result_pp res ;
                match Hashtbl.find_opt t.request_state id with
                | None ->
                    ()
                | Some s ->
                    Promise.resolve s.resolver res ;
-                   Hashtbl.remove t.request_state id )
+                   Hashtbl.remove t.request_state id ) ;
       done ;
       assert false ) ;
+  dtraceln "Dispatched daemons" ;
   t
 
 let send_request t op =
@@ -98,3 +100,6 @@ let send_request t op =
   Hashtbl.add t.request_state command.id request_state ;
   send () ;
   Promise.await res_t
+
+let close t =
+  Cmgr.close t.cmgr

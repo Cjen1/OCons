@@ -25,7 +25,7 @@ val send_blit :
 val broadcast_blit :
   ?max_fibers:int -> 'a t -> (Eio.Buf_write.t -> unit) -> unit
 
-val recv_any : 'a t -> (id * 'a) iter
+val recv_any : ?force:bool -> 'a t -> (id * 'a) iter
 
 val flush_all : 'a t -> unit
 

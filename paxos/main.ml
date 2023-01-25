@@ -31,7 +31,7 @@ let run node_id node_addresses internal_port external_port tick_period
       ; nodes= other_nodes
       ; node_id }
   in
-  Fmt.pr "Starting Paxos system:\nconfig = %a\n" Paxos.Types.config_pp cons_config;
+  Eio.traceln "Starting Paxos system:\nconfig = %a" Paxos.Types.config_pp cons_config;
   Eio_main.run @@ fun env -> Main.run env config
 
 open Cmdliner
