@@ -10,6 +10,7 @@ type id = int
 
 val create :
      ?max_recv_buf:id
+  -> ?connected:((unit Promise.t * unit Promise.u))
   -> sw:Switch.t
   -> (id * resolver) list
   -> (Buf_read.t -> 'a)

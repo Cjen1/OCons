@@ -151,7 +151,7 @@ let create config =
   { log
   ; commit_index= -1
   ; config
-  ; node_state= Follower {timeout= 0}
+  ; node_state= Follower {timeout= config.election_timeout}
   ; current_term= 0 }
 
 let t_pp : t Fmt.t =

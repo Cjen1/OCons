@@ -14,6 +14,9 @@
         devShell = with pkgs; mkShell {
           buildInputs = [
             opam
+            zlib
+            openblas
+            pkgconfig
           ];
           shellHook = ''
           eval "$(opam env)"

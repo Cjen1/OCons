@@ -1,4 +1,5 @@
 open Eio
+open! Util
 
 type conn_state = Open of {w: Buf_write.t; r: Buf_read.t} | Closed
 
@@ -61,7 +62,7 @@ let is_open t = not t.should_close
 
 let switch_run ~on_error f = try Switch.run f with e -> on_error e
 
-let create ~sw (f : Switch.t -> Flow.two_way) =
+let create ?connected ~sw (f : Switch.t -> Flow.two_way) =
   let t =
     { conn_state= Closed
     ; should_close= false
@@ -70,31 +71,33 @@ let create ~sw (f : Switch.t -> Flow.two_way) =
     ; has_recovered_cond= Condition.create ()
     ; closed_promise= Promise.create () }
   in
-  let on_error e =
-    Eio.traceln "Failed with %a" Fmt.exn e ;
-    raise e
-  in
+  let on_error e = dtraceln "Connection failed with\n%a" Fmt.exn e in
   let connect_handler () =
     (* Continually retry the connection until it connects *)
     while not t.should_close do
+      Fiber.check ();
       switch_run ~on_error
       @@ fun sw ->
       let flow = f sw in
       Buf_write.with_flow flow (fun w ->
           let r = Buf_read.of_flow flow ~max_size:1_000_000 in
           t.conn_state <- Open {w; r} ;
+          (* Notify upwards of connection status *)
+          Option.iter
+            (fun (p, u) ->
+              if not (Promise.is_resolved p) then Promise.resolve u () )
+            connected ;
           Condition.broadcast t.has_recovered_cond ;
           t.encountered_failure <- false ;
-          Eio.traceln "Connection now open" ;
+          dtraceln "Connection now open" ;
           while not (t.encountered_failure || t.should_close) do
             Condition.await_no_mutex t.has_failed_cond
           done ) ;
-      Eio.traceln "Finished with conn"
+      dtraceln "Finished with conn"
     done ;
-    Promise.resolve (snd t.closed_promise) ();
-    assert false
+    Promise.resolve (snd t.closed_promise) ()
   in
-  Fiber.fork_daemon ~sw connect_handler ;
+  Fiber.fork ~sw connect_handler ;
   Switch.on_release sw (fun () -> close t) ;
   t
 

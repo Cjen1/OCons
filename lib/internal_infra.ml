@@ -188,7 +188,7 @@ module Test = struct
 
     let parse buf =
       let r = Eio.Buf_read.line buf in
-      traceln "read %s" r ; r
+      dtraceln "read %s" r ; r
 
     let serialise v buf =
       Eio.Buf_write.string buf v ;
@@ -250,10 +250,10 @@ module Test = struct
     Eio_mock.Flow.on_read f1 [`Return "1\n"] ;
     Fiber.yield () ;
     Fiber.yield () ;
-    traceln "Read from stream: %a"
+    dtraceln "Read from stream: %a"
       (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
       (Option.map snd @@ Eio.Stream.take_nonblocking c_tx) ;
-    traceln "Read from stream: %a"
+    dtraceln "Read from stream: %a"
       (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
       (Option.map snd @@ Eio.Stream.take_nonblocking c_tx) ;
     Fiber.yield () ;
@@ -273,7 +273,7 @@ module Test = struct
     Eio.Stream.add c_rx (w "Tick" "Tick") ;
     Fiber.yield () ;
     for _ = 0 to 4 do
-      traceln "Read from stream: %a"
+      dtraceln "Read from stream: %a"
         (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
         (Option.map snd @@ Eio.Stream.take_nonblocking c_tx)
     done ;
@@ -288,7 +288,7 @@ module Test = struct
     Eio_mock.Clock.set_time clk 2. ;
     Fiber.yield () ;
     for _ = 1 to 2 do
-      traceln "Read from stream: %a"
+      dtraceln "Read from stream: %a"
         (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
         (Option.map snd @@ Eio.Stream.take_nonblocking c_tx)
     done ;
