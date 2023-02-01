@@ -3,10 +3,13 @@ open Types
 module Make (C : Consensus_intf.S) : sig
   type t
 
+  type 'a env = < clock: #Eio.Time.clock ; net: #Eio.Net.t ; .. > as 'a
+
   val create :
        sw:Eio.Switch.t
+    -> _ env
+    -> node_id
     -> C.config
-    -> #Eio.Time.clock
     -> time
     -> connection_creater list
     -> command Eio.Stream.t

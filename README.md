@@ -15,3 +15,18 @@ The log, state machine and RPC protocol is given in `lib/types.ml`.
 
 These library components are put together in `bin/client.ml`, `bin/main.ml` and `bin/bench.ml`.
 
+### Exemplar (Template) usage
+
+```
+dune exec paxos/main.exe -- ID 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 50ID0 -q 50ID1 
+```
+
+```
+dune exec paxos/main.exe -- 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5000 -q 5001 
+dune exec paxos/main.exe -- 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5010 -q 5011 
+dune exec paxos/main.exe -- 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5020 -q 5021 
+```
+
+```
+dune exec bin/cli.exe -- write 1 1 0 127.0.0.1:5001,127.0.0.1:5011,127.0.0.1:5021 -r 10
+```

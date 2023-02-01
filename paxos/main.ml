@@ -133,7 +133,7 @@ let address_info =
     info ~docv:"ADDR"
       ~doc:
         "This is a comma separated list of ip addresses and ports eg: \
-         \"0:192.168.0.1,1:192.168.0.2\""
+         \"0:192.168.0.1:5000,1:192.168.0.2:5000\""
       [] )
 
 let cmd =
