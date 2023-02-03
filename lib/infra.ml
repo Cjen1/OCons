@@ -32,8 +32,9 @@ module Make (C : Consensus_intf.S) = struct
                    Some (id, create_conn addr) )
         in
         let internal =
-          Internal.create ~sw env config.node_id config.cons_config 
+          Internal.create ~sw env config.node_id config.cons_config
             config.tick_period conns command_stream result_stream
+            config.internal_port
         in
         ExInfra.run env#net config.external_port command_stream result_stream ;
         Internal.close internal )

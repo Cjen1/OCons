@@ -13,42 +13,50 @@ type 'a t =
   { conns_map: P.t IdMap.t
   ; conns_list: (id * P.t) list
   ; reader_channel: (id * 'a) Stream.t
-  ; recv_cond: Condition.t }
+  ; recv_cond: Condition.t
+  ; mutex: Eio.Mutex.t }
 
 let connect_connected ~sw conns_list connected =
   connected
   |> Option.iter (fun connected ->
          Fiber.fork ~sw (fun () ->
-             conns_list
-             |> List.map (fun p () -> Promise.await p)
-             |> Fiber.any ;
+             conns_list |> List.map (fun p () -> Promise.await p) |> Fiber.any ;
              Promise.resolve (snd connected) () ) )
 
-let create ?(max_recv_buf = 1024) ?connected ~sw resolvers parse =
+let create ?(max_recv_buf = 1024) ?connected ~sw resolvers parse delayer =
   let conns_list_prom =
     Fiber.List.map
       (fun (id, r) ->
         let conn = Promise.create () in
-        ((id, P.create ~connected:conn ~sw r), fst conn) )
+        ((id, P.create ~connected:conn ~sw r delayer), fst conn) )
       resolvers
   in
   let prom_list = List.map snd conns_list_prom in
-  connect_connected ~sw (prom_list) connected ;
+  connect_connected ~sw prom_list connected ;
   let conns_list = List.map fst conns_list_prom in
   let conns_map = conns_list |> List.to_seq |> IdMap.of_seq in
   let reader_channel = Stream.create max_recv_buf in
   let t =
-    {conns_list; conns_map; reader_channel; recv_cond= Condition.create ()}
+    { conns_list
+    ; conns_map
+    ; reader_channel
+    ; recv_cond= Condition.create ()
+    ; mutex= Eio.Mutex.create () }
   in
   List.iter
     (fun (id, c) ->
       Fiber.fork_daemon ~sw (fun () ->
           while P.is_open c do
-            dtraceln "Waiting to recv on %d" id ;
-            let v = P.recv c parse in
-            dtraceln "Recvd a value" ;
-            Stream.add reader_channel (id, v) ;
-            Condition.broadcast t.recv_cond
+            Fiber.check () ;
+            try
+              let v = P.recv c parse in
+              Stream.add reader_channel (id, v) ;
+              Condition.broadcast t.recv_cond
+            with
+            | Eio.Cancel.Cancelled _ as e ->
+                raise e
+            | e ->
+                dtraceln "Failed parse from %d with %a" id Fmt.exn e
           done ;
           assert false ) )
     conns_list ;

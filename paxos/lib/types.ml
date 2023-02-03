@@ -118,6 +118,25 @@ type node_state =
       ; heartbeat: int }
 [@@deriving accessors]
 
+let timeout_a =
+  [%accessor
+    A.field
+      ~get:(function
+        | Follower {timeout} ->
+            timeout
+        | Candidate {timeout; _} ->
+            timeout
+        | Leader {heartbeat; _} ->
+            heartbeat )
+      ~set:(fun ns v ->
+        match ns with
+        | Follower _ ->
+            A.set Follower.timeout ~to_:v ns
+        | Candidate _ ->
+            A.set Candidate.timeout ~to_:v ns
+        | Leader _ ->
+            A.set Leader.heartbeat ~to_:v ns )]
+
 let node_state_pp : node_state Fmt.t =
  fun ppf v ->
   let open Fmt in

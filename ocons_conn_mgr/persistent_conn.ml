@@ -62,7 +62,7 @@ let is_open t = not t.should_close
 
 let switch_run ~on_error f = try Switch.run f with e -> on_error e
 
-let create ?connected ~sw (f : Switch.t -> Flow.two_way) =
+let create ?connected ~sw (f : Switch.t -> Flow.two_way) delayer =
   let t =
     { conn_state= Closed
     ; should_close= false
@@ -71,29 +71,33 @@ let create ?connected ~sw (f : Switch.t -> Flow.two_way) =
     ; has_recovered_cond= Condition.create ()
     ; closed_promise= Promise.create () }
   in
-  let on_error e = dtraceln "Connection failed with\n%a" Fmt.exn e in
+  let on_error e =
+    ignore e (*dtraceln "Connection failed with\n%a" Fmt.exn e*)
+  in
   let connect_handler () =
     (* Continually retry the connection until it connects *)
     while not t.should_close do
-      Fiber.check ();
-      switch_run ~on_error
-      @@ fun sw ->
-      let flow = f sw in
-      Buf_write.with_flow flow (fun w ->
-          let r = Buf_read.of_flow flow ~max_size:1_000_000 in
-          t.conn_state <- Open {w; r} ;
-          (* Notify upwards of connection status *)
-          Option.iter
-            (fun (p, u) ->
-              if not (Promise.is_resolved p) then Promise.resolve u () )
-            connected ;
-          Condition.broadcast t.has_recovered_cond ;
-          t.encountered_failure <- false ;
-          dtraceln "Connection now open" ;
-          while not (t.encountered_failure || t.should_close) do
-            Condition.await_no_mutex t.has_failed_cond
-          done ) ;
-      dtraceln "Finished with conn"
+      Fiber.check () ;
+      switch_run ~on_error (fun sw ->
+          let flow = f sw in
+          Buf_write.with_flow flow (fun w ->
+              let r = Buf_read.of_flow flow ~max_size:1_000_000 in
+              Fiber.check();
+              t.conn_state <- Open {w; r} ;
+              (* Notify upwards of connection status *)
+              Option.iter
+                (fun (p, u) ->
+                  if not (Promise.is_resolved p) then Promise.resolve u () )
+                connected ;
+              Condition.broadcast t.has_recovered_cond ;
+              t.encountered_failure <- false ;
+              dtraceln "Connection now open" ;
+              while not (t.encountered_failure || t.should_close) do
+                Condition.await_no_mutex t.has_failed_cond
+              done ) ;
+          dtraceln "Finished with conn" ) ;
+      Fiber.yield () ;
+      delayer ()
     done ;
     Promise.resolve (snd t.closed_promise) ()
   in
@@ -114,7 +118,7 @@ let%expect_test "PersistantConn" =
     ; `Return "3\n"
     ; `Return "4\n"
     ; `Raise End_of_file ] ;
-  let c = create ~sw (fun _ -> (!f :> Eio.Flow.two_way)) in
+  let c = create ~sw (fun _ -> (!f :> Eio.Flow.two_way)) (fun () -> ()) in
   let p_line = Buf_read.line in
   print_endline (recv c p_line) ;
   [%expect {|

@@ -34,27 +34,32 @@ module Make (Act : ActionSig) = struct
     match ct.node_state with
     | Leader s ->
         let highest = Log.highest ct.log in
-        s.rep_sent <-
-          s.rep_sent
-          |> IntMap.mapi (fun id highest_sent ->
-                 let start = highest_sent + 1 in
-                 let upper = highest in
-                 ( if start <= upper || force then
-                   let entries = Log.iter_len ct.log ~lo:start ~hi:upper () in
-                   (* May want to limit max msg size *)
-                   send id
-                   @@ AppendEntries
-                        { term= ct.current_term
-                        ; leader_commit= A.get (t @> commit_index) ()
-                        ; prev_log_index= start - 1
-                        ; prev_log_term= get_log_term ct (start - 1)
-                        ; entries } ) ;
-                 upper )
+        (* Assume we are going to send up to highest to each *)
+        let send_f id highest_sent =
+          let lo = highest_sent + 1 in
+          let hi = highest in
+          if (lo <= hi) then exit (-1);
+          if lo < hi || (lo = hi && force) then
+            let prev_log_index = lo - 1 in
+            let entries = Log.iter_len ct.log ~lo:lo ~hi:hi () in
+            send id
+            @@ AppendEntries
+                 { term= ct.current_term
+                 ; leader_commit= A.get (t @> commit_index) ()
+                 ; prev_log_index
+                 ; prev_log_term= get_log_term ct prev_log_index
+                 ; entries }
+        in
+        IntMap.iter send_f s.rep_sent ;
+        A.set
+          (t @> node_state @> Leader.rep_sent)
+          ~to_:(IntMap.map (fun _ -> highest) s.rep_sent)
+          ()
     | _ ->
         assert false
 
   let transit_follower term =
-    dtraceln "Follower for term %d" term;
+    dtraceln "Follower for term %d" term ;
     A.set (t @> node_state) () ~to_:(Follower {timeout= 0}) ;
     A.set (t @> current_term) () ~to_:term
 
@@ -69,7 +74,7 @@ module Make (Act : ActionSig) = struct
       if cterm < curr_epoch_term then curr_epoch_term
       else curr_epoch_term + num_nodes
     in
-    dtraceln "Candidate for term %d" new_term;
+    dtraceln "Candidate for term %d" new_term ;
     A.set (t @> node_state) ()
       ~to_:
         (Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0}) ;
@@ -81,7 +86,7 @@ module Make (Act : ActionSig) = struct
     let ct = A.get t () in
     match ct.node_state with
     | Candidate {quorum; _} ->
-        dtraceln "Leader for term %d" ct.current_term;
+        dtraceln "Leader for term %d" ct.current_term ;
         let per_seq (_, seq) =
           seq
           |> Iter.iter (fun (idx, le) ->
@@ -123,23 +128,22 @@ module Make (Act : ActionSig) = struct
     | _ ->
         ()
 
+  let incr h = h + 1
+
   let resolve_event e =
     if_recv_advance_term e ;
     match (e, A.get A.(t @> node_state) ()) with
     (* Increment ticks *)
-    | Tick, Follower {timeout} ->
-        A.set (t @> node_state @> Follower.timeout) ~to_:(timeout + 1) ()
-    | Tick, Candidate {timeout; _} ->
-        A.set (t @> node_state @> Candidate.timeout) ~to_:(timeout + 1) ()
-    | Tick, Leader {heartbeat; _} ->
-        A.set (t @> node_state @> Leader.heartbeat) ~to_:(heartbeat + 1) ()
+    | Tick, _ ->
+        A.map (t @> node_state @> timeout_a) ~f:incr ()
+    (* Recv commands *)
     | Commands cs, Leader _ ->
         cs (fun c ->
             Log.add
               (A.get (t @> log) ())
               {command= c; term= A.get (t @> current_term) ()} )
     | Commands _cs, _ ->
-        assert false (*TODO*)
+        assert false (* only occurs if space_available > 0 and not leader *)
     (* Ignore msgs from lower terms *)
     | ( Recv
           ( ( RequestVote {term; _}
@@ -209,7 +213,9 @@ module Make (Act : ActionSig) = struct
                    (not (Log.mem ct.log idx))
                    || (Log.get ct.log idx).term < le.term
                  then Log.set ct.log idx le ) ;
-          let max_entry = index_iter |> Iter.map fst |> Iter.fold max (-1) in
+          let max_entry =
+            index_iter |> Iter.map fst |> Iter.fold max prev_log_index
+          in
           Log.cut_after ct.log max_entry ;
           A.map (t @> commit_index) ~f:(max leader_commit) () ;
           send lid
@@ -239,7 +245,7 @@ module Make (Act : ActionSig) = struct
     | Candidate {timeout; _} when timeout >= ct.config.election_timeout ->
         transit_candidate ()
     | Leader {heartbeat; _} when heartbeat > 0 ->
-        send_append_entries () ;
+        send_append_entries ~force:true () ;
         A.set (t @> node_state @> Leader.heartbeat) ~to_:0 ()
     | _ ->
         ()

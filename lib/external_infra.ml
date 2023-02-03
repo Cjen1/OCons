@@ -77,8 +77,6 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
          Eio.Stream.add conn res ) ;
         Hashtbl.remove t.req_tbl cid
       done ) ;
-  while true do
-    Eio.Net.accept_fork ~sw sock
-      ~on_error:(fun e -> Fmt.pr "Client sock exception: %a\n" Fmt.exn e)
-      accept_handler
-  done
+  Eio.Net.run_server
+    ~on_error:(fun e -> Fmt.pr "Client sock exception: %a\n" Fmt.exn e)
+    sock accept_handler

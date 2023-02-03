@@ -72,6 +72,10 @@ module DeserPrim = struct
 
   let entries r =
     let len = R.BE.uint64 r |> Int64.to_int in
+    if len < 0 then
+      raise
+      @@ Fmt.invalid_arg "Len less than 0: %d\n %a" len Fmt.exn_backtrace
+           (Invalid_argument "", Printexc.get_callstack 10) ;
     let arr = Array.init len (fun _ -> {term= -1; command= empty_command}) in
     for i = 0 to len - 1 do
       let term = R.BE.uint64 r |> Int64.to_int in

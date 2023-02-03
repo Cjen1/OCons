@@ -14,6 +14,7 @@ val create :
      ?connected:(unit Eio.Promise.t * unit Eio.Promise.u)
   -> sw:Eio.Switch.t
   -> resolver
+  -> (unit -> unit)
   -> t
 
 val flush : t -> unit

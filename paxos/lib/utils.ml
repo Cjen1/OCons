@@ -150,7 +150,14 @@ module SegmentLog = struct
       done
 
   let iteri_len t ?(lo = 0) ?(hi = t.vhi) () : (int * 'a) Iter.t * int =
-    ((fun f -> iteri t ~lo ~hi f), hi - lo + 1)
+    let iter f = iteri t ~lo ~hi f in
+    let len = hi - lo + 1 in
+    if Iter.length iter != len then(
+      Eio.traceln "hi(%d) - lo(%d) + 1 = %d != len(%d)" hi lo len (Iter.length iter);
+      Eio.traceln "%a" Fmt.exn_backtrace (Invalid_argument "len", Printexc.get_callstack 20);
+      exit (-1)
+    )
+    else (iter, len)
 
   let iter t ?(lo = 0) ?(hi = t.vhi) f = iteri t ~lo ~hi (fun (_, x) -> f x)
 

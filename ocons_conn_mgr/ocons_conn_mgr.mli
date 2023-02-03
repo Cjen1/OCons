@@ -14,6 +14,7 @@ val create :
   -> sw:Switch.t
   -> (id * resolver) list
   -> (Buf_read.t -> 'a)
+  -> (unit -> unit)
   -> 'a t
 
 val send : ?blocking:bool -> 'a t -> id -> Cstruct.t -> unit

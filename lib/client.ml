@@ -53,7 +53,7 @@ let create_rpc ~sw env resolvers id retry_period =
       get_command_id id next
   in
   let t =
-    { cmgr= create_cmgr ~sw resolvers id
+    { cmgr= create_cmgr ~sw resolvers id (fun () -> Eio.Time.sleep env#clock 1.)
     ; request_state= Hashtbl.create 1024
     ; clock= env#clock
     ; next_id= next_cid }

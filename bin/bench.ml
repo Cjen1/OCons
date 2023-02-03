@@ -74,7 +74,7 @@ let run sockaddrs id n rate =
     traceln "Creating conns to: %a"
       Fmt.(braces @@ list ~sep:comma Eio.Net.Sockaddr.pp)
       sockaddrs ;
-    let cmgr = Cli.create_cmgr ~sw con_ress id in
+    let cmgr = Cli.create_cmgr ~sw con_ress id (fun () -> Eio.Time.sleep env#clock 1.) in
     let complete = pitcher ~sw env#clock n rate cmgr dispatch in
     Fiber.fork_daemon ~sw (fun () -> catcher cmgr response env#clock) ;
     Promise.await complete ;

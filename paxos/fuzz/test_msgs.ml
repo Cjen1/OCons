@@ -135,6 +135,25 @@ let test_msg_equality msg =
   let msg' = LP.parse br in
   check_eq ~pp:Paxos_core.Types.message_pp ~eq:msg_equal msg msg'
 
+let test_msg_series_equality msgs =
+  let open Crowbar in
+  Eio_mock.Backend.run
+  @@ fun () ->
+  let fr, fw = mock_flow () in
+  let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+  Eio.Buf_write.with_flow fw
+  @@ fun bw ->
+  let rec aux = function
+    | [] ->
+        ()
+    | msg :: ms ->
+        LP.serialise msg bw ;
+        let msg' = LP.parse br in
+        check_eq ~pp:Paxos_core.Types.message_pp ~eq:msg_equal msg msg' ;
+        aux ms
+  in
+  aux msgs
+
 let () =
   let open Crowbar in
   add_test ~name:"entries_equal"
@@ -143,4 +162,5 @@ let () =
       let e = (Iter.of_list l, List.length l) in
       check_eq ~eq:entries_equal e e ) ;
   add_test ~name:"entries_ser_deser" [list Gen.log_entry] test_entry_equality ;
-  add_test ~name:"msg_passing" [Gen.msg] test_msg_equality
+  add_test ~name:"msg_passing" [Gen.msg] test_msg_equality;
+  add_test ~name:"msg_series_passing" [list Gen.msg] test_msg_series_equality
