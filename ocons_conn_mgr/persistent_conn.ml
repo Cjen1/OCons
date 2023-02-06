@@ -7,11 +7,15 @@ type resolver = Switch.t -> Eio.Flow.two_way
 
 type t =
   { mutable conn_state: conn_state
-  ; mutable encountered_failure: bool
   ; has_failed_cond: Condition.t
   ; has_recovered_cond: Condition.t
   ; mutable should_close: bool
   ; closed_promise: unit Promise.t * unit Promise.u }
+
+let close_inflight t =
+  t.conn_state <- Closed;
+  Condition.broadcast t.has_failed_cond;
+  Fiber.yield () (* Allow reconnect if possible *)
 
 (* If default is not set, waits until the conn is open *)
 let rec do_if_open ?default t f =
@@ -23,10 +27,11 @@ let rec do_if_open ?default t f =
       do_if_open ?default t f
   | Open c, _ -> (
     try f (c.w, c.r)
-    with End_of_file ->
-      t.encountered_failure <- true ;
-      Condition.broadcast t.has_failed_cond ;
-      Fiber.yield () ;
+    with e when Util.is_not_cancel e ->
+      dtraceln "Failed operation: %a" Fmt.exn_backtrace
+        (e, Printexc.get_raw_backtrace ()) ;
+      dtraceln "Callstack: %a" Fmt.exn_backtrace (e, Printexc.get_callstack 4);
+      close_inflight t;
       do_if_open ?default t f )
 
 let send_blit ?(block_until_open = false) t bf =
@@ -60,20 +65,18 @@ let flush t =
 
 let is_open t = not t.should_close
 
-let switch_run ~on_error f = try Switch.run f with e -> on_error e
+let switch_run ~on_error f =
+  try Switch.run f with e when is_not_cancel e-> on_error e
 
 let create ?connected ~sw (f : Switch.t -> Flow.two_way) delayer =
   let t =
     { conn_state= Closed
     ; should_close= false
-    ; encountered_failure= false
     ; has_failed_cond= Condition.create ()
     ; has_recovered_cond= Condition.create ()
     ; closed_promise= Promise.create () }
   in
-  let on_error e =
-    ignore e (*dtraceln "Connection failed with\n%a" Fmt.exn e*)
-  in
+  let on_error e = dtraceln "Connection failed with\n%a" Fmt.exn e in
   let connect_handler () =
     (* Continually retry the connection until it connects *)
     while not t.should_close do
@@ -82,7 +85,7 @@ let create ?connected ~sw (f : Switch.t -> Flow.two_way) delayer =
           let flow = f sw in
           Buf_write.with_flow flow (fun w ->
               let r = Buf_read.of_flow flow ~max_size:1_000_000 in
-              Fiber.check();
+              Fiber.check () ;
               t.conn_state <- Open {w; r} ;
               (* Notify upwards of connection status *)
               Option.iter
@@ -90,9 +93,8 @@ let create ?connected ~sw (f : Switch.t -> Flow.two_way) delayer =
                   if not (Promise.is_resolved p) then Promise.resolve u () )
                 connected ;
               Condition.broadcast t.has_recovered_cond ;
-              t.encountered_failure <- false ;
               dtraceln "Connection now open" ;
-              while not (t.encountered_failure || t.should_close) do
+              while not (t.should_close || match t.conn_state with Closed -> true | _ -> false) do
                 Condition.await_no_mutex t.has_failed_cond
               done ) ;
           dtraceln "Finished with conn" ) ;
@@ -122,6 +124,7 @@ let%expect_test "PersistantConn" =
   let p_line = Buf_read.line in
   print_endline (recv c p_line) ;
   [%expect {|
+      +Connection now open
       +PConn: read "1\n"
       1|}] ;
   print_endline (recv c p_line) ;
@@ -130,6 +133,23 @@ let%expect_test "PersistantConn" =
       2|}] ;
   print_endline (recv c p_line) ;
   [%expect {|
+      (* CR expect_test_collector: This test expectation appears to contain a backtrace.
+         This is strongly discouraged as backtraces are fragile.
+         Please change this test to not include a backtrace. *)
+
+      +Failed operation: Exception: End_of_file
+      +                  Raised at Eio__Buf_read.ensure_slow_path in file "vendor/eio/lib_eio/buf_read.ml", line 126, characters 6-23
+      +                  Called from Eio__Buf_read.ensure in file "vendor/eio/lib_eio/buf_read.ml" (inlined), line 129, characters 20-40
+      +                  Called from Eio__Buf_read.line.aux in file "vendor/eio/lib_eio/buf_read.ml", line 355, characters 6-26
+      +                  Called from Eio__Buf_read.line in file "vendor/eio/lib_eio/buf_read.ml", line 363, characters 8-13
+      +                  Called from Ocons_conn_mgr__Persistent_conn.do_if_open in file "ocons_conn_mgr/persistent_conn.ml", line 29, characters 8-20
+      +Callstack: Exception: End_of_file
+      +           Raised by primitive operation at Ocons_conn_mgr__Persistent_conn.do_if_open in file "ocons_conn_mgr/persistent_conn.ml", line 33, characters 53-77
+      +           Called from Ocons_conn_mgr__Persistent_conn.(fun) in file "ocons_conn_mgr/persistent_conn.ml", line 134, characters 16-31
+      +           Called from Eio__core__Switch.run_internal in file "vendor/eio/lib_eio/core/switch.ml", line 132, characters 8-12
+      +           Called from Eio__core__Cancel.with_cc in file "vendor/eio/lib_eio/core/cancel.ml", line 116, characters 8-12
+      +Finished with conn
+      +Connection now open
       +PConn: read "3\n"
       3|}] ;
   print_endline (recv c p_line) ;
@@ -142,4 +162,5 @@ let%expect_test "PersistantConn" =
   send c (Cstruct.of_string "4") ;
   flush c ;
   [%expect {| +PConn: wrote "1234" |}] ;
-  close c
+  close c;
+  [%expect {| +Finished with conn |}]

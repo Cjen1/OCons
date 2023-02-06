@@ -38,10 +38,11 @@ module Make (Act : ActionSig) = struct
         let send_f id highest_sent =
           let lo = highest_sent + 1 in
           let hi = highest in
-          if (lo <= hi) then exit (-1);
+          if lo > hi then
+            Fmt.failwith "Paxos SM: lo(%d) > hi(%d)\n%a" lo hi t_pp ct ;
           if lo < hi || (lo = hi && force) then
             let prev_log_index = lo - 1 in
-            let entries = Log.iter_len ct.log ~lo:lo ~hi:hi () in
+            let entries = Log.iter_len ct.log ~lo ~hi () in
             send id
             @@ AppendEntries
                  { term= ct.current_term

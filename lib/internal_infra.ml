@@ -25,8 +25,6 @@ module Make (C : Consensus_intf.S) = struct
     ; inflight_txns: command_id Core.Hash_set.t
     ; mutable cons: C.t
     ; ticker: Ticker.t
-    ; mutable should_close: bool
-    ; closed_p: unit Promise.t * unit Promise.u
     ; internal_streams: (node_id, C.message Eio.Stream.t) Hashtbl.t }
 
   let apply (t : t) (cmd : command) : op_result =
@@ -117,51 +115,49 @@ module Make (C : Consensus_intf.S) = struct
     (* Then block to send all things *)
     ensure_sent t
 
-  let create_inter ~sw (clock : #Eio.Time.clock) config period resolvers
-      client_msgs client_resps closed_p internal_streams =
-    let t_p, t_u = Promise.create () in
-    Fiber.fork_sub ~on_error:raise ~sw (fun sw ->
-        let cmgr = Ocons_conn_mgr.create ~sw resolvers C.parse (fun () -> Eio.Time.sleep clock 1.) in
-        let cons = C.create_node config in
-        let state_machine = Core.Hashtbl.create (module Core.String) in
-        let ticker = Ticker.create (clock :> Eio.Time.clock) period in
-        let t =
-          { c_tx= client_resps
-          ; c_rx= client_msgs
-          ; cmgr
-          ; cons
-          ; state_machine
-          ; inflight_txns= Core.Hash_set.create (module Core.Int)
-          ; ticker
-          ; should_close= false
-          ; closed_p
-          ; internal_streams }
-        in
-        Promise.resolve t_u t ;
-        while not t.should_close do
-          Fiber.check () ; main_loop t
-        done ;
-        Ocons_conn_mgr.close t.cmgr ;
-        Promise.resolve (snd t.closed_p) () ) ;
-    Promise.await t_p
+  let run_inter ~sw (clock : #Eio.Time.clock) config period resolvers
+      client_msgs client_resps internal_streams =
+    let cmgr =
+      Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
+          Eio.Time.sleep clock 1. )
+    in
+    let cons = C.create_node config in
+    let state_machine = Core.Hashtbl.create (module Core.String) in
+    let ticker = Ticker.create (clock :> Eio.Time.clock) period in
+    let t =
+      { c_tx= client_resps
+      ; c_rx= client_msgs
+      ; cmgr
+      ; cons
+      ; state_machine
+      ; inflight_txns= Core.Hash_set.create (module Core.Int)
+      ; ticker
+      ; internal_streams }
+    in
+    while true do
+      Fiber.yield () ; main_loop t
+    done ;
+    Ocons_conn_mgr.close t.cmgr
 
   let accept_handler internal_streams : Eio.Net.connection_handler =
    fun sock addr ->
     try
-      let br = Eio.Buf_read.of_flow ~max_size:1_000_000 sock in
-      let id = Eio.Buf_read.uint8 br in
-      let str = Eio.Stream.create 16 in
-      Hashtbl.add internal_streams id str ;
+      let parse =
+        let open Eio.Buf_read in
+        let open Eio.Buf_read.Syntax in
+        uint8 <*> seq C.parse
+      in
+      let id, msg_seq = Eio.Buf_read.parse_exn ~max_size:1_000_000 parse sock in
       dtraceln "Accepting connection from %a, node_id %d" Eio.Net.Sockaddr.pp
         addr id ;
-      while true do
-        Fiber.check ();
-        dtraceln "trying to read from %d" id;
-        let msg = C.parse br in
-        dtraceln "%d: recvd msg" id ;
-        Eio.Stream.add str msg
-      done
-    with End_of_file -> ()
+      let str = Eio.Stream.create 16 in
+      Hashtbl.add internal_streams id str ;
+      Seq.iter (Eio.Stream.add str) msg_seq
+    with
+    | e when Utils.is_not_cancel e ->
+        dtraceln "Connection from %a failed with %a" Eio.Net.Sockaddr.pp addr
+          Fmt.exn e
+
 
   let resolver_handshake node_id resolvers =
     let handshake r sw =
@@ -173,23 +169,20 @@ module Make (C : Consensus_intf.S) = struct
 
   type 'a env = < clock: #Eio.Time.clock ; net: #Eio.Net.t ; .. > as 'a
 
-  let create ~sw env node_id config period resolvers client_msgs client_resps
-      port =
+  let run ~sw env node_id config period resolvers client_msgs client_resps port
+      =
     let internal_streams = Hashtbl.create (List.length resolvers) in
     let closed_p = Promise.create () in
     Fiber.fork ~sw (fun () ->
         let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
         let sock = Eio.Net.listen ~backlog:4 ~sw env#net addr in
-        traceln "Listening on %a" Eio.Net.Sockaddr.pp addr;
-        Eio.Net.run_server ~stop:(fst closed_p) ~on_error:(dtraceln "%a" Fmt.exn) sock
+        traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
+        Eio.Net.run_server ~stop:(fst closed_p)
+          ~on_error:(dtraceln "%a" Fmt.exn) sock
           (accept_handler internal_streams) ) ;
     let resolvers = resolver_handshake node_id resolvers in
-    create_inter ~sw env#clock config period resolvers client_msgs client_resps
-      closed_p internal_streams
-
-  let close t =
-    t.should_close <- true ;
-    Promise.await (fst t.closed_p)
+    run_inter ~sw env#clock config period resolvers client_msgs client_resps
+      internal_streams
 end
 
 module Test = struct
@@ -289,12 +282,10 @@ module Test = struct
     let f1 = Eio_mock.Flow.make "f1" in
     let resolvers = [(1, fun _ -> (f1 :> Eio.Flow.two_way))] in
     (* Start of actual test *)
-    let closed_p = Promise.create () in
-    let t =
-      create_inter ~sw
-        (clk :> Eio.Time.clock)
-        () 1. resolvers c_rx c_tx closed_p (Hashtbl.create 0)
-    in
+    Fiber.fork ~sw (fun () ->
+        run_inter ~sw
+          (clk :> Eio.Time.clock)
+          () 1. resolvers c_rx c_tx (Hashtbl.create 0) ) ;
     Fiber.yield () ;
     (* No errors or msgs on startup *)
     [%expect {||}] ;
@@ -348,6 +339,5 @@ module Test = struct
       {|
       +mock time is now 2
       +Read from stream: ReadSuccess(Tick)
-      +Read from stream: None |}] ;
-    close t
+      +Read from stream: None |}]
 end

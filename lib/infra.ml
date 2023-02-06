@@ -19,23 +19,21 @@ module Make (C : Consensus_intf.S) = struct
   let run env config =
     Switch.run (fun sw ->
         let command_stream = Eio.Stream.create config.stream_length in
-        let result_stream = Eio.Stream.create (config.stream_length * 64) in
+        let result_stream = Eio.Stream.create Int.max_int in
         let create_conn addr sw =
           (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)
         in
         let conns : connection_creater list =
           config.nodes
-          |> List.filter_map (function
-               | id, _ when id = config.node_id ->
-                   None
-               | id, addr ->
-                   Some (id, create_conn addr) )
+          |> List.filter (fun (id, _) -> id <> config.node_id)
+          |> List.map (fun (id, addr) -> (id, create_conn addr))
         in
-        let internal =
-          Internal.create ~sw env config.node_id config.cons_config
-            config.tick_period conns command_stream result_stream
-            config.internal_port
-        in
-        ExInfra.run env#net config.external_port command_stream result_stream ;
-        Internal.close internal )
+        Fiber.both
+          (fun () ->
+            Internal.run ~sw env config.node_id config.cons_config
+              config.tick_period conns command_stream result_stream
+              config.internal_port )
+          (fun () ->
+            ExInfra.run env#net config.external_port command_stream
+              result_stream ) )
 end

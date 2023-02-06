@@ -52,11 +52,9 @@ let create ?(max_recv_buf = 1024) ?connected ~sw resolvers parse delayer =
               let v = P.recv c parse in
               Stream.add reader_channel (id, v) ;
               Condition.broadcast t.recv_cond
-            with
-            | Eio.Cancel.Cancelled _ as e ->
-                raise e
-            | e ->
-                dtraceln "Failed parse from %d with %a" id Fmt.exn e
+            with e when is_not_cancel e ->
+              dtraceln "Failed parse from %d with %a" id Fmt.exn_backtrace
+                (e, Printexc.get_raw_backtrace ())
           done ;
           assert false ) )
     conns_list ;

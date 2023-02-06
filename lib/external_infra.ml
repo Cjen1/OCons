@@ -22,7 +22,7 @@ let accept_handler t sock addr =
   @@ fun sw ->
   let br = Eio.Buf_read.of_flow ~max_size:8192 sock in
   let cid = Eio.Buf_read.BE.uint64 br |> Int64.to_int in
-  dtraceln "Setting up conns for %d" cid;
+  dtraceln "Setting up conns for %d" cid ;
   let res_str = Eio.Stream.create 16 in
   (* If an error occurs, remove the conn and then drain it
      This ensures that pending writes to the stream are flushed
@@ -38,7 +38,7 @@ let accept_handler t sock addr =
         dtraceln "Waiting for request from: %d" cid ;
         let r = Line_prot.External_infra.parse_request br in
         dtraceln "Got request from %d: %a" cid Command.pp r ;
-        Hashtbl.add t.req_tbl r.id cid;
+        Hashtbl.add t.req_tbl r.id cid ;
         Eio.Stream.add t.cmd_str r
       done ) ;
   (* result fiber *)
@@ -50,7 +50,7 @@ let accept_handler t sock addr =
         dtraceln "Got response for %d: %a" cid
           Fmt.(pair ~sep:comma int op_result_pp)
           res ;
-        Line_prot.External_infra.serialise_response res bw;
+        Line_prot.External_infra.serialise_response res bw ;
         dtraceln "Sent response for %d" cid
       done )
 
@@ -63,20 +63,23 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
   let accept_handler = accept_handler t in
   let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
   let sock = Eio.Net.listen ~backlog:4 ~sw net addr in
-  (* Pass results back to the client *)
-  Fiber.fork ~sw (fun () ->
-      (* Guaranteed to get at most one result per registered request *)
-      while true do
-        dtraceln "Waiting for response" ;
-        let ((cid, _) as res) = Eio.Stream.take res_str in
-        dtraceln "Got response for %d" cid ;
-        (let ( let* ) m f = Option.iter f m in
-         let* conn_id = Hashtbl.find_opt t.req_tbl cid in
-         let* conn = Hashtbl.find_opt t.conn_tbl conn_id in
-         dtraceln "Passing response for %d to %d" cid conn_id ;
-         Eio.Stream.add conn res ) ;
-        Hashtbl.remove t.req_tbl cid
-      done ) ;
-  Eio.Net.run_server
-    ~on_error:(fun e -> Fmt.pr "Client sock exception: %a\n" Fmt.exn e)
-    sock accept_handler
+  let server_fiber () =
+    Eio.Net.run_server
+      ~on_error:(fun e -> Fmt.pr "Client sock exception: %a\n" Fmt.exn e)
+      sock accept_handler
+  in
+  let result_fiber () =
+    (* Guaranteed to get at most one result per registered request *)
+    while true do
+      dtraceln "Waiting for response" ;
+      let ((cid, _) as res) = Eio.Stream.take res_str in
+      dtraceln "Got response for %d" cid ;
+      (let ( let* ) m f = Option.iter f m in
+       let* conn_id = Hashtbl.find_opt t.req_tbl cid in
+       let* conn = Hashtbl.find_opt t.conn_tbl conn_id in
+       dtraceln "Passing response for %d to %d" cid conn_id ;
+       Eio.Stream.add conn res ) ;
+      Hashtbl.remove t.req_tbl cid
+    done
+  in
+  Fiber.both result_fiber server_fiber
