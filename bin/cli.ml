@@ -20,9 +20,9 @@ let run op sockaddrs id retry_timeout =
     sockaddrs ;
   let cli = Cli.create_rpc ~sw env con_ress id retry_timeout in
   Eio.traceln "Submitting request %a" sm_op_pp op ;
-  Random.self_init ();
+  Random.self_init () ;
   let res = Cli.send_request ~random_id:true cli op in
-  Eio.traceln "Received: %a" op_result_pp res;
+  Eio.traceln "Received: %a" op_result_pp res ;
   Cli.close cli
 
 open Cmdliner

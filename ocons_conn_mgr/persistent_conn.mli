@@ -11,7 +11,7 @@ val send_blit : ?block_until_open:bool -> t -> (Eio.Buf_write.t -> unit) -> unit
 val recv : ?default:'a -> t -> (Eio.Buf_read.t -> 'a) -> 'a
 
 val create :
-     ?connected:(unit Eio.Promise.t * unit Eio.Promise.u)
+     ?connected:unit Eio.Promise.t * unit Eio.Promise.u
   -> sw:Eio.Switch.t
   -> resolver
   -> (unit -> unit)

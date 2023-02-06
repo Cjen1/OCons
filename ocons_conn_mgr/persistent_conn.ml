@@ -13,8 +13,8 @@ type t =
   ; closed_promise: unit Promise.t * unit Promise.u }
 
 let close_inflight t =
-  t.conn_state <- Closed;
-  Condition.broadcast t.has_failed_cond;
+  t.conn_state <- Closed ;
+  Condition.broadcast t.has_failed_cond ;
   Fiber.yield () (* Allow reconnect if possible *)
 
 (* If default is not set, waits until the conn is open *)
@@ -30,8 +30,8 @@ let rec do_if_open ?default t f =
     with e when Util.is_not_cancel e ->
       dtraceln "Failed operation: %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ()) ;
-      dtraceln "Callstack: %a" Fmt.exn_backtrace (e, Printexc.get_callstack 4);
-      close_inflight t;
+      dtraceln "Callstack: %a" Fmt.exn_backtrace (e, Printexc.get_callstack 4) ;
+      close_inflight t ;
       do_if_open ?default t f )
 
 let send_blit ?(block_until_open = false) t bf =
@@ -66,7 +66,7 @@ let flush t =
 let is_open t = not t.should_close
 
 let switch_run ~on_error f =
-  try Switch.run f with e when is_not_cancel e-> on_error e
+  try Switch.run f with e when is_not_cancel e -> on_error e
 
 let create ?connected ~sw (f : Switch.t -> Flow.two_way) delayer =
   let t =
@@ -94,7 +94,11 @@ let create ?connected ~sw (f : Switch.t -> Flow.two_way) delayer =
                 connected ;
               Condition.broadcast t.has_recovered_cond ;
               dtraceln "Connection now open" ;
-              while not (t.should_close || match t.conn_state with Closed -> true | _ -> false) do
+              while
+                not
+                  ( t.should_close
+                  || match t.conn_state with Closed -> true | _ -> false )
+              do
                 Condition.await_no_mutex t.has_failed_cond
               done ) ;
           dtraceln "Finished with conn" ) ;
@@ -132,7 +136,8 @@ let%expect_test "PersistantConn" =
       +PConn: read "2\n"
       2|}] ;
   print_endline (recv c p_line) ;
-  [%expect {|
+  [%expect
+    {|
       (* CR expect_test_collector: This test expectation appears to contain a backtrace.
          This is strongly discouraged as backtraces are fragile.
          Please change this test to not include a backtrace. *)
@@ -162,5 +167,5 @@ let%expect_test "PersistantConn" =
   send c (Cstruct.of_string "4") ;
   flush c ;
   [%expect {| +PConn: wrote "1234" |}] ;
-  close c;
+  close c ;
   [%expect {| +Finished with conn |}]

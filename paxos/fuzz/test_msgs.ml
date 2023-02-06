@@ -162,5 +162,5 @@ let () =
       let e = (Iter.of_list l, List.length l) in
       check_eq ~eq:entries_equal e e ) ;
   add_test ~name:"entries_ser_deser" [list Gen.log_entry] test_entry_equality ;
-  add_test ~name:"msg_passing" [Gen.msg] test_msg_equality;
+  add_test ~name:"msg_passing" [Gen.msg] test_msg_equality ;
   add_test ~name:"msg_series_passing" [list Gen.msg] test_msg_series_equality

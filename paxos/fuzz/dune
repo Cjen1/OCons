@@ -1,4 +1,5 @@
 (test
  (name test_msgs)
- (flags (:standard -w -27))
+ (flags
+  (:standard -w -27))
  (libraries paxos_core crowbar))

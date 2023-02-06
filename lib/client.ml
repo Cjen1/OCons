@@ -30,7 +30,7 @@ let create_cmgr ~sw resolvers id =
 
 let submit_request cmgr req = Cmgr.broadcast_blit cmgr (ser_req req)
 
-let recv_resp ?(force=true) cmgr = Cmgr.recv_any ~force cmgr |> Iter.map snd
+let recv_resp ?(force = true) cmgr = Cmgr.recv_any ~force cmgr |> Iter.map snd
 
 type request_state =
   {resolver: op_result Promise.u; retry: unit -> unit; mutable last_sent: float}
@@ -84,14 +84,17 @@ let create_rpc ~sw env resolvers id retry_period =
                    ()
                | Some s ->
                    Promise.resolve s.resolver res ;
-                   Hashtbl.remove t.request_state id ) ;
+                   Hashtbl.remove t.request_state id )
       done ;
       assert false ) ;
   dtraceln "Dispatched daemons" ;
   t
 
-let send_request ?(random_id=false)t op =
-  let id = if random_id then (Random.int32 Int32.max_int |> Int32.to_int) else t.next_id () in
+let send_request ?(random_id = false) t op =
+  let id =
+    if random_id then Random.int32 Int32.max_int |> Int32.to_int
+    else t.next_id ()
+  in
   let command = Command.{op; id} in
   let send () = submit_request t.cmgr command in
   let res_t, res_u = Promise.create () in
@@ -102,5 +105,4 @@ let send_request ?(random_id=false)t op =
   send () ;
   Promise.await res_t
 
-let close t =
-  Cmgr.close t.cmgr
+let close t = Cmgr.close t.cmgr

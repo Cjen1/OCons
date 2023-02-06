@@ -5,7 +5,8 @@ module Impl = Sm.Make (ImperativeActions)
 
 let c1 = make_config ~node_id:0 ~node_list:[0] ~election_timeout:5 ()
 
-let c3 node_id = make_config ~node_id ~node_list:[0; 1; 2] ~election_timeout:5 ()
+let c3 node_id =
+  make_config ~node_id ~node_list:[0; 1; 2] ~election_timeout:5 ()
 
 let%expect_test "transit_follower" =
   let t = create c1 in

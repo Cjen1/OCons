@@ -1,4 +1,4 @@
 (executables
-  (names cli bench)
-  (modules cli bench)
-  (libraries ocons-core cmdliner owl))
+ (names cli bench)
+ (modules cli bench)
+ (libraries ocons-core cmdliner owl))

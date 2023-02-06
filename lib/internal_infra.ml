@@ -153,11 +153,9 @@ module Make (C : Consensus_intf.S) = struct
       let str = Eio.Stream.create 16 in
       Hashtbl.add internal_streams id str ;
       Seq.iter (Eio.Stream.add str) msg_seq
-    with
-    | e when Utils.is_not_cancel e ->
-        dtraceln "Connection from %a failed with %a" Eio.Net.Sockaddr.pp addr
-          Fmt.exn e
-
+    with e when Utils.is_not_cancel e ->
+      dtraceln "Connection from %a failed with %a" Eio.Net.Sockaddr.pp addr
+        Fmt.exn e
 
   let resolver_handshake node_id resolvers =
     let handshake r sw =
