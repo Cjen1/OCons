@@ -18,13 +18,13 @@ These library components are put together in `bin/client.ml`, `bin/main.ml` and 
 ### Exemplar (Template) usage
 
 ```
-dune exec paxos/main.exe -- ID 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 50ID0 -q 50ID1 
+dune exec paxos/main.exe -- ID 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 50ID0 -q 50ID1 -t 1
 ```
 
 ```
-dune exec paxos/main.exe -- 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5000 -q 5001 
-dune exec paxos/main.exe -- 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5010 -q 5011 
-dune exec paxos/main.exe -- 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5020 -q 5021 
+dune exec paxos/main.exe -- 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5000 -q 5001 -t 1
+dune exec paxos/main.exe -- 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5010 -q 5011 -t 1
+dune exec paxos/main.exe -- 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5020 -q 5021 -t 1
 ```
 
 ```
