@@ -221,7 +221,8 @@ module ImperativeActions : ActionSig = struct
       else None
     in
     let make_command_iter upto =
-      Log.iter (!s |> Option.get).t.log ~lo:init_commit_index ~hi:upto
+      (* make an iter from lowest un-committed command upwards *)
+      Log.iter (!s |> Option.get).t.log ~lo:(init_commit_index + 1) ~hi:upto
       |> Iter.map (fun l -> l.command)
     in
     append_l

@@ -1,17 +1,17 @@
 open! Eio
-module P = Persistent_conn
+module PCon = Persistent_conn
 module IdMap = Map.Make (Int)
 open! Util
 
-type resolver = P.resolver
+type resolver = PCon.resolver
 
 type id = int
 
 type 'a iter = ('a -> unit) -> unit
 
 type 'a t =
-  { conns_map: P.t IdMap.t
-  ; conns_list: (id * P.t) list
+  { conns_map: PCon.t IdMap.t
+  ; conns_list: (id * PCon.t) list
   ; reader_channel: (id * 'a) Stream.t
   ; recv_cond: Condition.t
   ; mutex: Eio.Mutex.t }
@@ -28,7 +28,7 @@ let create ?(max_recv_buf = 1024) ?connected ~sw resolvers parse delayer =
     Fiber.List.map
       (fun (id, r) ->
         let conn = Promise.create () in
-        ((id, P.create ~connected:conn ~sw r delayer), fst conn) )
+        ((id, PCon.create ~connected:conn ~sw r delayer), fst conn) )
       resolvers
   in
   let prom_list = List.map snd conns_list_prom in
@@ -46,10 +46,10 @@ let create ?(max_recv_buf = 1024) ?connected ~sw resolvers parse delayer =
   List.iter
     (fun (id, c) ->
       Fiber.fork_daemon ~sw (fun () ->
-          while P.is_open c do
+          while PCon.is_open c do
             Fiber.check () ;
             try
-              let v = P.recv c parse in
+              let v = PCon.recv c parse in
               Stream.add reader_channel (id, v) ;
               Condition.broadcast t.recv_cond
             with e when is_not_cancel e ->
@@ -60,18 +60,18 @@ let create ?(max_recv_buf = 1024) ?connected ~sw resolvers parse delayer =
     conns_list ;
   t
 
-let close t = t.conns_list |> Fiber.List.iter (fun (_, c) -> P.close c)
+let close t = t.conns_list |> Fiber.List.iter (fun (_, c) -> PCon.close c)
 
 let send ?(blocking = false) t id cs =
   let c = IdMap.find id t.conns_map in
-  P.send ~block_until_open:blocking c cs
+  PCon.send ~block_until_open:blocking c cs
 
 let broadcast ?(max_fibers = max_int) t cs =
   Fiber.List.iter ~max_fibers (fun (i, _) -> send t i cs) t.conns_list
 
 let send_blit ?(blocking = false) t id bf =
   let c = IdMap.find id t.conns_map in
-  P.send_blit ~block_until_open:blocking c bf
+  PCon.send_blit ~block_until_open:blocking c bf
 
 let broadcast_blit ?(max_fibers = max_int) t bf =
   Fiber.List.iter ~max_fibers (fun (i, _) -> send_blit t i bf) t.conns_list
@@ -89,5 +89,5 @@ let rec recv_any ?(force = false) t iter =
       ()
 
 let flush_all t =
-  let f (_, c) = P.flush c in
+  let f (_, c) = PCon.flush c in
   Fiber.List.iter f t.conns_list

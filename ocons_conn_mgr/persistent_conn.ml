@@ -28,9 +28,11 @@ let rec do_if_open ?default t f =
   | Open c, _ -> (
     try f (c.w, c.r)
     with e when Util.is_not_cancel e ->
-      dtraceln "Failed operation: %a" Fmt.exn_backtrace
-        (e, Printexc.get_raw_backtrace ()) ;
-      dtraceln "Callstack: %a" Fmt.exn_backtrace (e, Printexc.get_callstack 4) ;
+      if e <> End_of_file then (
+        dtraceln "Failed operation: %a" Fmt.exn_backtrace
+          (e, Printexc.get_raw_backtrace ()) ;
+        dtraceln "Callstack: %a" Fmt.exn_backtrace (e, Printexc.get_callstack 4)
+        ) ;
       close_inflight t ;
       do_if_open ?default t f )
 

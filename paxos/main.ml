@@ -12,7 +12,7 @@ let run node_id node_addresses internal_port external_port tick_period
   in
   let cons_config =
     let num_nodes = List.length node_addresses in
-    let majority_quorums = (num_nodes + 1) / 2 in
+    let majority_quorums = (num_nodes) / 2 + 1 in
     { phase1quorum= majority_quorums
     ; phase2quorum= majority_quorums
     ; other_nodes= List.map fst other_nodes

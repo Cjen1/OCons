@@ -69,6 +69,7 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
       sock accept_handler
   in
   let result_fiber () =
+    let yielder = Utils.maybe_yield ~energy:128 in
     (* Guaranteed to get at most one result per registered request *)
     while true do
       dtraceln "Waiting for response" ;
@@ -78,7 +79,9 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
        let* conn_id = Hashtbl.find_opt t.req_tbl cid in
        let* conn = Hashtbl.find_opt t.conn_tbl conn_id in
        dtraceln "Passing response for %d to %d" cid conn_id ;
-       Eio.Stream.add conn res ) ;
+       Eio.Stream.add conn res ;
+       yielder ()
+      ) ;
       Hashtbl.remove t.req_tbl cid
     done
   in

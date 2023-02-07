@@ -50,7 +50,8 @@ let create_rpc ~sw env resolvers id retry_period =
     fun () ->
       let next = !internal in
       internal := next + 1 ;
-      get_command_id id next
+      let res = (next * 16) + id in
+      traceln "Next id %d" res ; res
   in
   let t =
     { cmgr= create_cmgr ~sw resolvers id (fun () -> Eio.Time.sleep env#clock 1.)

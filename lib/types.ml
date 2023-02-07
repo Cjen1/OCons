@@ -43,7 +43,7 @@ module Command = struct
 
   let pp_mach ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 
-  let pp ppf v = Fmt.pf ppf "Command(%a, _)" sm_op_pp v.op
+  let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 end
 
 type command = Command.t [@@deriving bin_io, compare, sexp]

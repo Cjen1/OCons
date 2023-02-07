@@ -14,7 +14,13 @@ module Make (C : Consensus_intf.S) = struct
     ; nodes: (int * Eio.Net.Sockaddr.stream) list
     ; node_id: int }
 
-  type 'a env = < clock: #Eio.Time.clock ; net: #Eio.Net.t ; .. > as 'a
+  type 'a env =
+    < clock: #Eio.Time.clock
+    ; net: #Eio.Net.t
+    ; domain_mgr: #Eio.Domain_manager.t
+    ; .. >
+    as
+    'a
 
   let run env config =
     Switch.run (fun sw ->
@@ -34,6 +40,8 @@ module Make (C : Consensus_intf.S) = struct
               config.tick_period conns command_stream result_stream
               config.internal_port )
           (fun () ->
+            Eio.Domain_manager.run env#domain_mgr
+            @@ fun () ->
             ExInfra.run env#net config.external_port command_stream
               result_stream ) )
 end

@@ -38,9 +38,8 @@ module Make (Act : ActionSig) = struct
         let send_f id highest_sent =
           let lo = highest_sent + 1 in
           let hi = highest in
-          if lo > hi then
-            Fmt.failwith "Paxos SM: lo(%d) > hi(%d)\n%a" lo hi t_pp ct ;
-          if lo < hi || (lo = hi && force) then
+          (* so we want to send the segment [lo -> hi] inclusive *)
+          if lo <= hi || force then
             let prev_log_index = lo - 1 in
             let entries = Log.iter_len ct.log ~lo ~hi () in
             send id
@@ -60,22 +59,22 @@ module Make (Act : ActionSig) = struct
         assert false
 
   let transit_follower term =
-    dtraceln "Follower for term %d" term ;
+    Eio.traceln "Follower for term %d" term ;
     A.set (t @> node_state) () ~to_:(Follower {timeout= 0}) ;
     A.set (t @> current_term) () ~to_:term
 
   let transit_candidate () =
     let cterm = A.get (t @> current_term) () in
     let num_nodes = (A.get (t @> config) ()).num_nodes in
-    let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
-    let curr_epoch_term =
-      (quot * num_nodes) + A.get (t @> config @> node_id) ()
-    in
     let new_term =
+      let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
+      let curr_epoch_term =
+        (quot * num_nodes) + A.get (t @> config @> node_id) ()
+      in
       if cterm < curr_epoch_term then curr_epoch_term
       else curr_epoch_term + num_nodes
     in
-    dtraceln "Candidate for term %d" new_term ;
+    Eio.traceln "Candidate for term %d" new_term ;
     A.set (t @> node_state) ()
       ~to_:
         (Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0}) ;
@@ -87,7 +86,7 @@ module Make (Act : ActionSig) = struct
     let ct = A.get t () in
     match ct.node_state with
     | Candidate {quorum; _} ->
-        dtraceln "Leader for term %d" ct.current_term ;
+        Eio.traceln "Leader for term %d" ct.current_term ;
         let per_seq (_, seq) =
           seq
           |> Iter.iter (fun (idx, le) ->
@@ -175,7 +174,8 @@ module Make (Act : ActionSig) = struct
       ->
         (* This case happens if a message is lost *)
         assert (m.term = A.get (t @> current_term) ()) ;
-        A.map A.(t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx)
+        A.map A.(t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
+        dtraceln "Failed to match\n%a" t_pp (A.get t ())
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _ ->
         let t = A.get t () in
@@ -189,20 +189,30 @@ module Make (Act : ActionSig) = struct
               {prev_log_term; prev_log_index; entries; leader_commit; _}
           , lid )
       , Follower _ ) ->
+        (* Reset leader alive timeout *)
+        A.set (t @> node_state @> Follower.timeout) ~to_:0 () ;
+        (* reply to append entries request *)
         let ct = A.get t () in
         let rooted_at_start = prev_log_index = -1 && prev_log_term = 0 in
         let matching_index_and_term () =
           Log.mem ct.log prev_log_index
           && (Log.get ct.log prev_log_index).term = prev_log_term
         in
-        if not (rooted_at_start || matching_index_and_term ()) then
+        if not (rooted_at_start || matching_index_and_term ()) then (
           (* Reply with the highest index known not to be replicated *)
           (* This will be the prev_log_index of the next msg *)
+          dtraceln
+            "Failed to match\n\
+             rooted_at_start(%b), matching_index_and_term(%b):\n\
+             %a"
+            rooted_at_start
+            (matching_index_and_term ())
+            t_pp ct ;
           send lid
           @@ AppendEntriesResponse
                { term= ct.current_term
                ; success= Error (min (prev_log_index - 1) (Log.highest ct.log))
-               }
+               } )
         else
           let index_iter =
             fst entries |> Iter.zip_i

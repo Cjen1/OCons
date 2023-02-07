@@ -100,7 +100,7 @@ module SegmentLog = struct
     { segmentsize: int
     ; mutable segments: 'a array list
     ; mutable allocated: int
-    ; mutable vhi: int (* highest allocated index *)
+    ; mutable vhi: int (* highest set index *)
     ; init: 'a }
 
   let allocate t i =

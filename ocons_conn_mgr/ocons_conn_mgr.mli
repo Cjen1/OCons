@@ -32,3 +32,5 @@ val recv_any : ?force:bool -> 'a t -> (id * 'a) iter
 val flush_all : 'a t -> unit
 
 val close : 'a t -> unit
+
+module PCon = Persistent_conn

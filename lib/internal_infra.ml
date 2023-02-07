@@ -99,7 +99,7 @@ module Make (C : Consensus_intf.S) = struct
       t.cons <- tcons ;
       handle_actions t actions )
 
-  let ensure_sent t = CMgr.flush_all t.cmgr ; Fiber.yield ()
+  let ensure_sent t = CMgr.flush_all t.cmgr
 
   let tick t () =
     dtraceln "Tick" ;
@@ -134,8 +134,9 @@ module Make (C : Consensus_intf.S) = struct
       ; ticker
       ; internal_streams }
     in
+    let yielder = maybe_yield ~energy:10 in
     while true do
-      Fiber.yield () ; main_loop t
+      main_loop t ; yielder ()
     done ;
     Ocons_conn_mgr.close t.cmgr
 
@@ -147,7 +148,8 @@ module Make (C : Consensus_intf.S) = struct
         let open Eio.Buf_read.Syntax in
         uint8 <*> seq C.parse
       in
-      let id, msg_seq = Eio.Buf_read.parse_exn ~max_size:1_000_000 parse sock in
+      let br = Eio.Buf_read.of_flow ~max_size:1_000_000 sock in
+      let id, msg_seq = parse br in
       dtraceln "Accepting connection from %a, node_id %d" Eio.Net.Sockaddr.pp
         addr id ;
       let str = Eio.Stream.create 16 in
@@ -155,7 +157,8 @@ module Make (C : Consensus_intf.S) = struct
       Seq.iter (Eio.Stream.add str) msg_seq
     with e when Utils.is_not_cancel e ->
       dtraceln "Connection from %a failed with %a" Eio.Net.Sockaddr.pp addr
-        Fmt.exn e
+        Fmt.exn_backtrace
+        (e, Printexc.get_raw_backtrace ())
 
   let resolver_handshake node_id resolvers =
     let handshake r sw =
