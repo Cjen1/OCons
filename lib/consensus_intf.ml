@@ -44,4 +44,6 @@ module type S = sig
 
   val available_space_for_commands : t -> int
   (* The number of entries which can be added *)
+
+  val should_ack_clients : t -> bool
 end

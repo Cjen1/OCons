@@ -49,9 +49,10 @@ module Make (C : Consensus_intf.S) = struct
       | C.CommitCommands citer ->
           citer (fun cmd ->
               let res = apply t cmd in
-              Eio.Stream.add t.c_tx (cmd.id, res) ;
-              dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ;
-              t.commit_reporter () ;
+              if C.should_ack_clients t.cons then (
+                Eio.Stream.add t.c_tx (cmd.id, res) ;
+                t.commit_reporter () ;
+                dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ) ;
           dtraceln "Committed %a"
             (Fmt.braces @@ Iter.pp_seq ~sep:", " Types.Command.pp)
             citer
@@ -208,6 +209,8 @@ module Test = struct
 
   module CT = struct
     type message = Core.String.t [@@deriving sexp]
+
+    let should_ack_clients _ = true
 
     let message_pp = Fmt.string
 
