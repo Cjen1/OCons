@@ -5,23 +5,24 @@ authors: ["Chris Jones" "Chris Jensen"]
 homepage: "https://github.com/cjen1/OcamlPaxos"
 bug-reports: "https://github.com/cjen1/OcamlPaxos/issues"
 depends: [
+  "dune" {>= "2.7"}
   "ocaml" {>= "4.08.0"}
-  "core"
-  "async"
-  "accessor_async"
-  "rpc_parallel"
+  "crowbar"
+  "cmdliner"
+  "accessor"
+  "iter"
+  "bisect_ppx"
   "ppx_jane"
   "ppx_log"
-  "ppx_deriving_yojson"
   "ppx_accessor"
-  "dune" {>= "2.7"}
-  "logs"
-  "fmt"
+  "eio"
+  "accessor"
+  "eio.mock"
+  "base"
+  "core"
+  "core_unix"
+  "accessor"
   "owl"
-  "core_bench"
-  "core_profiler"
-  "shexp"
-  "angstrom"
   "odoc" {with-doc}
 ]
 build: [

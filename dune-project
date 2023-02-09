@@ -12,22 +12,21 @@
   (synopsis "The infrastructure for pluggable consensus implementations")
   (depends 
     (ocaml (>= 4.08.0))
-    core
-    async
-    accessor_async
-    rpc_parallel
+    crowbar
+    cmdliner
+    accessor iter
+    bisect_ppx
     ppx_jane
     ppx_log
-    ppx_deriving_yojson
     ppx_accessor
-    dune
-    logs
-    fmt
+    eio
+    accessor
+    eio.mock
+    base
+    core
+    core_unix
+    accessor
     owl
-    core_bench
-    core_profiler
-    shexp
-    angstrom
     ))
 
 (package
