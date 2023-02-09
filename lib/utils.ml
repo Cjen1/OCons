@@ -1,6 +1,10 @@
-open! Core
+open Types
+
+let debug_flag = false
 
 module Quorum = struct
+  open! Core
+
   type 'a t = {elts: 'a list; n: int; threshold: int; eq: 'a -> 'a -> bool}
   [@@deriving sexp_of]
 
@@ -24,3 +28,44 @@ let maybe_yield ~energy =
       curr := energy ;
       Eio.Fiber.yield () ) ;
     curr := !curr - 1
+
+module InternalReporter = struct
+  type reporter_pp = time Fmt.t
+
+  type reset = unit -> unit
+
+  let reporters : (reporter_pp * reset) list ref = ref []
+
+  let register_reporter pp reset = reporters := (pp, reset) :: !reporters
+
+  let run_report period =
+    let pp_reporters = !reporters |> List.map fst in
+    Eio.traceln "---- Report ----";
+    Eio.traceln "%a" (Fmt.record pp_reporters) period;
+    List.iter (fun (_,r) -> r ()) (!reporters)
+
+  let run ~sw clock period =
+    Eio.Fiber.fork_daemon ~sw (fun () ->
+        while true do
+          Eio.Fiber.check () ;
+          Eio.Time.sleep clock period ;
+          run_report period
+        done ;
+        Eio.Fiber.await_cancel () )
+
+  type rate_counter = {mutable v: int; mutable v': int}
+
+  type 'a reporter = 'a -> unit
+
+  let rate_counter init name : unit reporter =
+    let state = {v= init; v'= init} in
+    let reset () = state.v <- state.v' in
+    let open Fmt in
+    let pp =
+      field name
+        (fun p -> Core.Float.(Int.(to_float state.v' - to_float state.v) / p))
+        float
+    in
+    let update () = state.v' <- state.v' + 1 in
+    register_reporter pp reset ; update
+end
