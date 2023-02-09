@@ -33,29 +33,37 @@ let accept_handler t sock addr =
   Switch.on_release sw (fun () ->
       Hashtbl.remove t.conn_tbl cid ;
       drain res_str ) ;
-  Hashtbl.add t.conn_tbl cid res_str ;
-  (* request fiber *)
-  Fiber.fork ~sw (fun () ->
-      while true do
-        dtraceln "Waiting for request from: %d" cid ;
-        let r = Line_prot.External_infra.parse_request br in
-        t.req_reporter () ;
-        dtraceln "Got request from %d: %a" cid Command.pp r ;
-        Hashtbl.add t.req_tbl r.id cid ;
-        Eio.Stream.add t.cmd_str r
-      done ) ;
-  (* result fiber *)
-  Fiber.fork ~sw (fun () ->
-      Eio.Buf_write.with_flow sock
-      @@ fun bw ->
-      while true do
-        let res = Eio.Stream.take res_str in
-        dtraceln "Got response for %d: %a" cid
-          Fmt.(pair ~sep:comma int op_result_pp)
-          res ;
-        Line_prot.External_infra.serialise_response res bw ;
-        dtraceln "Sent response for %d" cid
-      done )
+  Hashtbl.replace t.conn_tbl cid res_str ;
+  let request_fiber () =
+    while true do
+      Fiber.check () ;
+      dtraceln "Waiting for request from: %d" cid ;
+      let r = Line_prot.External_infra.parse_request br in
+      t.req_reporter () ;
+      dtraceln "Got request from %d: %a" cid Command.pp r ;
+      Hashtbl.add t.req_tbl r.id cid ;
+      Eio.Stream.add t.cmd_str r
+    done
+  in
+  let result_fiber () =
+    Eio.Buf_write.with_flow sock
+    @@ fun bw ->
+    while true do
+      Fiber.check () ;
+      let res = Eio.Stream.take res_str in
+      dtraceln "Got response for %d: %a" cid
+        Fmt.(pair ~sep:comma int op_result_pp)
+        res ;
+      Line_prot.External_infra.serialise_response res bw ;
+      dtraceln "Sent response for %d" cid
+    done
+  in
+  try Fiber.both request_fiber result_fiber
+  with 
+  | End_of_file | Eio.Exn.Io _ -> traceln "Connection closed"
+  | e when is_not_cancel e ->
+      traceln "Client handler failed with %a" Fmt.exn_backtrace
+        (e, Printexc.get_raw_backtrace ())
 
 let run (net : #Eio.Net.t) port cmd_str res_str =
   Switch.run

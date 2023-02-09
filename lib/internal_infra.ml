@@ -78,31 +78,31 @@ module Make (C : Consensus_intf.S) = struct
     (* length = 0 => num_to_take = 0
        By contrapositive: num_to_take > 0 then length > 0
     *)
-    let num_to_take =
-      min (C.available_space_for_commands t.cons) (Eio.Stream.length t.c_rx)
+    let num_to_take = C.available_space_for_commands t.cons in
+    if num_to_take = 0 then t.no_space_reporter () ;
+    let iter f =
+      let rec aux = function
+        | i when i <= 0 ->
+            ()
+        | rem -> (
+            assert (rem > 0) ;
+            match Eio.Stream.take_nonblocking t.c_rx with
+            | None ->
+                ()
+            | Some c when not (Core.Hash_set.mem t.inflight_txns c.id) ->
+                t.request_reporter () ;
+                f c ;
+                aux (rem - 1)
+            | Some _ ->
+                aux (rem - 1) )
+      in
+      aux num_to_take
     in
-    let iter =
-      Iter.unfoldr
-        (function
-          | 0 ->
-              None
-          | rem ->
-              let c_o = Eio.Stream.take_nonblocking t.c_rx in
-              Option.bind c_o (function
-                | c when Core.Hash_set.mem t.inflight_txns c.id ->
-                    dtraceln "Already received %d" c.id ;
-                    None
-                | c ->
-                    dtraceln "Received cmd %d" c.id ;
-                    t.request_reporter () ;
-                    Core.Hash_set.add t.inflight_txns c.id ;
-                    Some (c, rem - 1) ) )
-        num_to_take
-    in
-    if num_to_take > 0 then (
-      let p_iter = Iter.persistent iter in
+    let p_iter = Iter.persistent iter in
+    let length = Iter.length p_iter in
+    if length > 0 then (
       dtraceln "Passing commands: %a" (Iter.pp_seq ~sep:"," Command.pp) p_iter ;
-      t.command_length_reporter (Iter.length p_iter) ;
+      t.command_length_reporter length ;
       let tcons, actions = C.advance t.cons (Commands p_iter) in
       t.cons <- tcons ;
       handle_actions t actions )
@@ -116,12 +116,16 @@ module Make (C : Consensus_intf.S) = struct
     handle_actions t actions
 
   let main_loop t =
-    (* Do internal mostly non-blocking things *)
-    internal_msgs t ;
-    admit_client_requests t ;
-    Ticker.tick t.ticker (tick t) ;
-    (* Then block to send all things *)
-    ensure_sent t
+    try
+      (* Do internal mostly non-blocking things *)
+      internal_msgs t ;
+      admit_client_requests t ;
+      Ticker.tick t.ticker (tick t) ;
+      (* Then block to send all things *)
+      ensure_sent t
+    with e when Utils.is_not_cancel e ->
+      traceln "Failed with %a" Fmt.exn_backtrace
+        (e, Printexc.get_raw_backtrace ())
 
   let run_inter ~sw (clock : #Eio.Time.clock) config period resolvers
       client_msgs client_resps internal_streams =
@@ -192,7 +196,9 @@ module Make (C : Consensus_intf.S) = struct
     let closed_p = Promise.create () in
     Fiber.fork ~sw (fun () ->
         let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-        let sock = Eio.Net.listen ~backlog:4 ~sw env#net addr in
+        let sock =
+          Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw env#net addr
+        in
         traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
         Eio.Net.run_server ~stop:(fst closed_p)
           ~on_error:(dtraceln "%a" Fmt.exn) sock

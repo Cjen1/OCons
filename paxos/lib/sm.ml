@@ -90,8 +90,10 @@ module Make (Act : ActionSig) = struct
         let per_seq (_, seq) =
           seq
           |> Iter.iter (fun (idx, le) ->
-                 if (Log.get ct.log idx).term < le.term then
-                   Log.set ct.log idx le )
+                 if
+                   (not (Log.mem ct.log idx))
+                   || (Log.get ct.log idx).term < le.term
+                 then Log.set ct.log idx le )
         in
         quorum.Quorum.elts |> IntMap.to_seq |> Seq.iter per_seq ;
         (* replace term with current term since we are re-proposing it *)
