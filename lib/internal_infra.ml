@@ -25,7 +25,11 @@ module Make (C : Consensus_intf.S) = struct
     ; inflight_txns: command_id Core.Hash_set.t
     ; mutable cons: C.t
     ; ticker: Ticker.t
-    ; internal_streams: (node_id, C.message Eio.Stream.t) Hashtbl.t }
+    ; internal_streams: (node_id, C.message Eio.Stream.t) Hashtbl.t
+    ; command_length_reporter: int InternalReporter.reporter
+    ; request_reporter: unit InternalReporter.reporter
+    ; no_space_reporter: unit InternalReporter.reporter
+    ; commit_reporter: unit InternalReporter.reporter }
 
   let apply (t : t) (cmd : command) : op_result =
     (* TODO truncate more sensibly
@@ -47,6 +51,7 @@ module Make (C : Consensus_intf.S) = struct
               let res = apply t cmd in
               Eio.Stream.add t.c_tx (cmd.id, res) ;
               dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ;
+              t.commit_reporter () ;
           dtraceln "Committed %a"
             (Fmt.braces @@ Iter.pp_seq ~sep:", " Types.Command.pp)
             citer
@@ -88,6 +93,7 @@ module Make (C : Consensus_intf.S) = struct
                     None
                 | c ->
                     dtraceln "Received cmd %d" c.id ;
+                    t.request_reporter () ;
                     Core.Hash_set.add t.inflight_txns c.id ;
                     Some (c, rem - 1) ) )
         num_to_take
@@ -95,6 +101,7 @@ module Make (C : Consensus_intf.S) = struct
     if num_to_take > 0 then (
       let p_iter = Iter.persistent iter in
       dtraceln "Passing commands: %a" (Iter.pp_seq ~sep:"," Command.pp) p_iter ;
+      t.command_length_reporter (Iter.length p_iter) ;
       let tcons, actions = C.advance t.cons (Commands p_iter) in
       t.cons <- tcons ;
       handle_actions t actions )
@@ -117,6 +124,10 @@ module Make (C : Consensus_intf.S) = struct
 
   let run_inter ~sw (clock : #Eio.Time.clock) config period resolvers
       client_msgs client_resps internal_streams =
+    let command_length_reporter = InternalReporter.avg_reporter "cmd_len" in
+    let request_reporter = InternalReporter.rate_reporter 0 "request" in
+    let no_space_reporter = InternalReporter.rate_reporter 0 "no_space" in
+    let commit_reporter = InternalReporter.rate_reporter 0 "commit" in
     let cmgr =
       Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
           Eio.Time.sleep clock 1. )
@@ -132,7 +143,11 @@ module Make (C : Consensus_intf.S) = struct
       ; state_machine
       ; inflight_txns= Core.Hash_set.create (module Core.Int)
       ; ticker
-      ; internal_streams }
+      ; internal_streams
+      ; command_length_reporter
+      ; request_reporter
+      ; no_space_reporter
+      ; commit_reporter }
     in
     let yielder = maybe_yield ~energy:10 in
     while true do

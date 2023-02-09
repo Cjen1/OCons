@@ -36,7 +36,7 @@ module InternalReporter = struct
 
   let reporters : (reporter_pp * reset) list ref = ref []
 
-  let register_reporter pp reset = reporters := (pp, reset) :: !reporters
+  let register_reporter pps reset = reporters := pps |> List.map (fun pp -> (pp, reset)) |> List.append !reporters
 
   let run_report period =
     let pp_reporters = !reporters |> List.map fst in
@@ -53,19 +53,55 @@ module InternalReporter = struct
         done ;
         Eio.Fiber.await_cancel () )
 
-  type rate_counter = {mutable v: int; mutable v': int}
+  type 'a state_reporter = {mutable v: 'a ; mutable v' : 'a}
+  type rate_counter = int state_reporter
 
   type 'a reporter = 'a -> unit
 
-  let rate_counter init name : unit reporter =
+  let rate_reporter init name : unit reporter =
     let state = {v= init; v'= init} in
     let reset () = state.v <- state.v' in
     let open Fmt in
     let pp =
-      field name
+      [field name
         (fun p -> Core.Float.(Int.(to_float state.v' - to_float state.v) / p))
-        float
+        float]
     in
     let update () = state.v' <- state.v' + 1 in
     register_reporter pp reset ; update
+
+
+  let fold_reporter ~name ~f ~init ~pp : 'a reporter =
+    let state = ref [] in
+    let reset () = state := [] in
+    let open Fmt in
+    let pp =
+      [field name
+        (fun p -> p, List.fold_left f init !state) pp
+      ]
+    in
+    let update x = state := x :: !state in
+    register_reporter pp reset; update
+
+  let avg_reporter name =
+    let state = ref [] in
+    let reset () = state := [] in
+    let open Fmt in
+    let open Owl.Stats in
+    let pp_stats ppf s =
+      let pp = record [
+        field "avg" (fun s -> mean s ) float
+        ; field "50%" (fun s -> percentile s 50.) float
+        ; field "99%" (fun s -> percentile s 99.) float
+      ] in
+      pf ppf "%a" pp s
+    in
+    let pp =
+      [
+        field (name) (fun _ -> !state |> List.map (Int.to_float) |> Array.of_list) pp_stats
+      ]
+    in
+    let update x = state := x :: !state in
+    register_reporter pp reset; update
+
 end

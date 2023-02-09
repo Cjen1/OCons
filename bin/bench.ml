@@ -1,11 +1,13 @@
 open! Ocons_core
 open! Ocons_core.Types
+module O = Ocons_core
 module Cli = Ocons_core.Client
 open Eio.Std
 
 let pitcher ~sw clock n rate cmgr dispatch : unit Eio.Promise.t =
   let t, u = Promise.create () in
   let period = Float.div 1. rate in
+  let req_reporter = O.Utils.InternalReporter.rate_reporter 0 "req_dispatch" in
   let rec aux = function
     | i, _ when i >= n ->
         ()
@@ -14,6 +16,7 @@ let pitcher ~sw clock n rate cmgr dispatch : unit Eio.Promise.t =
         let target = Float.add prev period in
         Eio.Time.sleep_until clock target ;
         Cli.submit_request cmgr cmd ;
+        req_reporter () ;
         Hashtbl.add dispatch i (Eio.Time.now clock) ;
         aux (i + 1, target)
   in
@@ -66,6 +69,7 @@ let run sockaddrs id n rate =
   let main env =
     Switch.run
     @@ fun sw ->
+    O.Utils.InternalReporter.run ~sw env#clock 2. ;
     let con_ress =
       sockaddrs
       |> List.mapi (fun idx addr ->

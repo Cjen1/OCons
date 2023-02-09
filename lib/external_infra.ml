@@ -1,5 +1,6 @@
 open! Types
 open Eio.Std
+open! Utils
 
 let dtraceln = Utils.dtraceln
 
@@ -11,7 +12,8 @@ type t =
   { conn_tbl: (client_id, response Eio.Stream.t) Hashtbl.t
   ; req_tbl: (command_id, client_id) Hashtbl.t
   ; cmd_str: request Eio.Stream.t
-  ; res_str: response Eio.Stream.t }
+  ; res_str: response Eio.Stream.t
+  ; req_reporter: unit InternalReporter.reporter}
 
 let rec drain str =
   match Eio.Stream.take_nonblocking str with Some _ -> drain str | None -> ()
@@ -37,6 +39,7 @@ let accept_handler t sock addr =
       while true do
         dtraceln "Waiting for request from: %d" cid ;
         let r = Line_prot.External_infra.parse_request br in
+        t.req_reporter () ;
         dtraceln "Got request from %d: %a" cid Command.pp r ;
         Hashtbl.add t.req_tbl r.id cid ;
         Eio.Stream.add t.cmd_str r
@@ -57,15 +60,27 @@ let accept_handler t sock addr =
 let run (net : #Eio.Net.t) port cmd_str res_str =
   Switch.run
   @@ fun sw ->
+  let req_reporter =
+    InternalReporter.rate_reporter 0 "cli_req"
+  in
   let t =
-    {conn_tbl= Hashtbl.create 8; req_tbl= Hashtbl.create 4096; cmd_str; res_str}
+    { conn_tbl= Hashtbl.create 16
+    ; req_tbl= Hashtbl.create 4096
+    ; cmd_str
+    ; res_str
+    ; req_reporter }
   in
   let accept_handler = accept_handler t in
   let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
   let sock = Eio.Net.listen ~backlog:4 ~sw net addr in
   let server_fiber () =
     Eio.Net.run_server
-      ~on_error:(fun e -> Fmt.pr "Client sock exception: %a\n" Fmt.exn e)
+      ~on_error:(function
+        | e when Utils.is_not_cancel e ->
+            traceln "Client sock exception: %a" Fmt.exn_backtrace
+              (e, Printexc.get_raw_backtrace ())
+        | e ->
+            raise e )
       sock accept_handler
   in
   let result_fiber () =
@@ -80,9 +95,9 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
        let* conn = Hashtbl.find_opt t.conn_tbl conn_id in
        dtraceln "Passing response for %d to %d" cid conn_id ;
        Eio.Stream.add conn res ;
-       yielder ()
-      ) ;
+       yielder () ) ;
       Hashtbl.remove t.req_tbl cid
     done
   in
-  Fiber.both result_fiber server_fiber
+  Fiber.both result_fiber server_fiber;
+  traceln "Closed external infra"

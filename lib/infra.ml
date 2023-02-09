@@ -25,6 +25,7 @@ module Make (C : Consensus_intf.S) = struct
   let run env config =
     Switch.run (fun sw ->
         let command_stream = Eio.Stream.create config.stream_length in
+        Utils.InternalReporter.run ~sw env#clock 2. ;
         let result_stream = Eio.Stream.create Int.max_int in
         let create_conn addr sw =
           (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)

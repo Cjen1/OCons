@@ -17,6 +17,12 @@ let close_inflight t =
   Condition.broadcast t.has_failed_cond ;
   Fiber.yield () (* Allow reconnect if possible *)
 
+let print_parse_exn e =
+  if e <> End_of_file then (
+    dtraceln "Failed operation: %a" Fmt.exn_backtrace
+      (e, Printexc.get_raw_backtrace ()) ;
+    dtraceln "Callstack: %a" Fmt.exn_backtrace (e, Printexc.get_callstack 4) )
+
 (* If default is not set, waits until the conn is open *)
 let rec do_if_open ?default t f =
   match (t.conn_state, default) with
@@ -28,13 +34,7 @@ let rec do_if_open ?default t f =
   | Open c, _ -> (
     try f (c.w, c.r)
     with e when Util.is_not_cancel e ->
-      if e <> End_of_file then (
-        dtraceln "Failed operation: %a" Fmt.exn_backtrace
-          (e, Printexc.get_raw_backtrace ()) ;
-        dtraceln "Callstack: %a" Fmt.exn_backtrace (e, Printexc.get_callstack 4)
-        ) ;
-      close_inflight t ;
-      do_if_open ?default t f )
+      print_parse_exn e ; close_inflight t ; do_if_open ?default t f )
 
 let send_blit ?(block_until_open = false) t bf =
   let write (w, _) = bf w in
