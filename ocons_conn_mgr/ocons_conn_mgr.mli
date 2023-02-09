@@ -8,8 +8,10 @@ type resolver = Switch.t -> Flow.two_way
 
 type id = int
 
+type 'a kind = Iter of (id * 'a -> unit) | Recv of {max_recv_buf: int}
+
 val create :
-     ?max_recv_buf:id
+     ?kind:'a kind
   -> ?connected:unit Promise.t * unit Promise.u
   -> sw:Switch.t
   -> (id * resolver) list

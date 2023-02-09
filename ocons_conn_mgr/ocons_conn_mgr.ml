@@ -9,58 +9,59 @@ type id = int
 
 type 'a iter = ('a -> unit) -> unit
 
+type 'a kind = Iter of (id * 'a -> unit) | Recv of {max_recv_buf: int}
+
+type 'a kind_impl = IIter | IRecv of (id * 'a) Eio.Stream.t
+
 type 'a t =
   { conns_map: PCon.t IdMap.t
   ; conns_list: (id * PCon.t) list
-  ; reader_channel: (id * 'a) Stream.t
   ; recv_cond: Condition.t
-  ; mutex: Eio.Mutex.t }
+  ; kind: 'a kind_impl }
 
-let connect_connected ~sw conns_list connected =
-  connected
-  |> Option.iter (fun connected ->
-         Fiber.fork ~sw (fun () ->
-             conns_list |> List.map (fun p () -> Promise.await p) |> Fiber.any ;
-             Promise.resolve (snd connected) () ) )
+let connect_connected conns_list = function
+  | None ->
+      ()
+  | Some connected ->
+      conns_list |> List.map (fun p () -> Promise.await p) |> Fiber.any ;
+      Promise.resolve (snd connected) ()
 
-let create ?(max_recv_buf = 1024) ?connected ~sw resolvers parse delayer =
+let make_kind_impl ~sw conns parse kind =
+  match kind with
+  | Iter f ->
+      Fiber.fork_daemon ~sw (fun () ->
+          conns
+          |> List.map (fun (id, p) () ->
+                 PCon.recv_iter p parse (fun v -> f (id, v)) )
+          |> Fiber.all ;
+          Fiber.await_cancel () ) ;
+      IIter
+  | Recv {max_recv_buf} ->
+      let reader_channel = Stream.create max_recv_buf in
+      Fiber.fork_daemon ~sw (fun () ->
+          let f id v = Stream.add reader_channel (id, v) in
+          conns
+          |> List.map (fun (id, p) () -> PCon.recv_iter p parse (f id))
+          |> Fiber.all ;
+          Fiber.await_cancel () ) ;
+      IRecv reader_channel
+
+let create ?(kind = Iter ignore) ?connected ~sw resolvers parse delayer =
   let conns_list_prom =
-    Fiber.List.map
-      (fun (id, r) ->
+    StdLabels.List.map resolvers ~f:(fun (id, r) ->
         let conn = Promise.create () in
         ((id, PCon.create ~connected:conn ~sw r delayer), fst conn) )
-      resolvers
   in
   let prom_list = List.map snd conns_list_prom in
-  connect_connected ~sw prom_list connected ;
+  connect_connected prom_list connected ;
   let conns_list = List.map fst conns_list_prom in
   let conns_map = conns_list |> List.to_seq |> IdMap.of_seq in
-  let reader_channel = Stream.create max_recv_buf in
-  let t =
-    { conns_list
-    ; conns_map
-    ; reader_channel
-    ; recv_cond= Condition.create ()
-    ; mutex= Eio.Mutex.create () }
-  in
-  List.iter
-    (fun (id, c) ->
-      Fiber.fork_daemon ~sw (fun () ->
-          while PCon.is_open c do
-            Fiber.check () ;
-            try
-              let v = PCon.recv c parse in
-              Stream.add reader_channel (id, v) ;
-              Condition.broadcast t.recv_cond
-            with e when is_not_cancel e ->
-              dtraceln "Failed parse from %d with %a" id Fmt.exn_backtrace
-                (e, Printexc.get_raw_backtrace ())
-          done ;
-          assert false ) )
-    conns_list ;
-  t
+  { conns_list
+  ; conns_map
+  ; recv_cond= Condition.create ()
+  ; kind= make_kind_impl ~sw conns_list parse kind }
 
-let close t = t.conns_list |> Fiber.List.iter (fun (_, c) -> PCon.close c)
+let close t = t.conns_list |> List.iter (fun (_, c) -> PCon.close c)
 
 let send ?(blocking = false) t id cs =
   let c = IdMap.find id t.conns_map in
@@ -76,17 +77,19 @@ let send_blit ?(blocking = false) t id bf =
 let broadcast_blit ?(max_fibers = max_int) t bf =
   Fiber.List.iter ~max_fibers (fun (i, _) -> send_blit t i bf) t.conns_list
 
-let rec recv_any ?(force = false) t iter =
-  match Stream.take_nonblocking t.reader_channel with
-  | Some v ->
-      dtraceln "Recvd something" ; iter v ; recv_any t iter
-  | None when force ->
-      dtraceln "Nothing to recv, waiting on recv_cond" ;
-      Condition.await_no_mutex t.recv_cond ;
-      dtraceln "Recv cond await complete" ;
-      recv_any ~force t iter
-  | None ->
-      ()
+let rec recv_any ?(force = false) t f =
+  match t.kind with
+  | IIter ->
+      Fmt.invalid_arg "Recv_any on Iter cmgr"
+  | IRecv reader_channel ->
+      ( match Stream.take_nonblocking reader_channel with
+      | Some v ->
+          f v
+      | None when force ->
+          f (Stream.take reader_channel)
+      | None ->
+          () ) ;
+      recv_any ~force:false t f
 
 let flush_all t =
   let f (_, c) = PCon.flush c in

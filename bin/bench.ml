@@ -26,16 +26,9 @@ let pitcher ~sw clock n rate cmgr dispatch : unit Eio.Promise.t =
         ~finally:(fun () -> Promise.resolve u () ; traceln "Pitcher complete") ) ;
   t
 
-let catcher cmgr resp clock complete =
-  while not (Promise.is_resolved complete) do
-    let res = Cli.recv_resp ~force:false cmgr in
-    res
-    |> Iter.iter (fun (id, _) ->
-           if not (Hashtbl.mem resp id) then
-             Hashtbl.add resp id (Eio.Time.now clock) ) ;
-    Fiber.yield ()
-  done ;
-  Fiber.await_cancel ()
+let catcher_iter clock responses (_, (cid, _)) =
+  if not (Hashtbl.mem responses cid) then
+    Hashtbl.add responses cid (Eio.Time.now clock)
 
 let pp_stats ppf s =
   let s =
@@ -81,14 +74,17 @@ let run sockaddrs id n rate =
       Fmt.(braces @@ list ~sep:comma Eio.Net.Sockaddr.pp)
       sockaddrs ;
     let cmgr =
-      Cli.create_cmgr ~sw con_ress id (fun () -> Eio.Time.sleep env#clock 1.)
+      Cli.create_cmgr
+        ~kind:(Ocons_conn_mgr.Iter (catcher_iter env#clock response))
+        ~sw con_ress id
+        (fun () -> Eio.Time.sleep env#clock 1.)
     in
     let complete = pitcher ~sw env#clock n rate cmgr dispatch in
-    Fiber.fork_daemon ~sw (fun () -> catcher cmgr response env#clock complete) ;
     Promise.await complete ;
-    traceln "closing everything" ;
+    traceln "Closing everything" ;
     Eio.Time.sleep env#clock 1. ;
-    Cli.Cmgr.close cmgr
+    Cli.Cmgr.close cmgr ;
+    traceln "Closed everything"
   in
   ( Eio_unix.Ctf.with_tracing "trace.ctf"
   @@ fun () ->

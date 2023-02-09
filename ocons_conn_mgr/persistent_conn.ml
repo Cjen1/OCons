@@ -51,15 +51,22 @@ let recv ?default t parse =
   let read (_, r) = parse r in
   do_if_open ?default t read
 
+let recv_iter t parse f =
+  (* Reconnect loop *)
+  let yielder = Util.maybe_yield ~energy:128 in
+  while not t.should_close do
+    match t.conn_state with
+    | Open {r; _} -> (
+      (* TODO avoid alloc of seq *)
+      try r |> Buf_read.seq parse |> Seq.iter (fun v -> f v ; yielder ())
+      with e when Util.is_not_cancel e -> print_parse_exn e ; close_inflight t )
+    | Closed ->
+        Condition.await_no_mutex t.has_recovered_cond
+  done
+
 let close t =
   t.should_close <- true ;
-  ( match t.conn_state with
-  | Closed ->
-      ()
-  | Open {w; _} ->
-      Buf_write.close w ;
-      t.conn_state <- Closed ) ;
-  Condition.broadcast t.has_failed_cond ;
+  close_inflight t ;
   Promise.await (fst t.closed_promise)
 
 let flush t =

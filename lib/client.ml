@@ -22,11 +22,11 @@ let resolver_with_handshake ~id (res : Cmgr.resolver) sw =
   f
 
 (* Add the handshake *)
-let create_cmgr ~sw resolvers id =
+let create_cmgr ~sw ?kind resolvers id =
   let resolvers =
     resolvers |> List.map (fun (i, r) -> (i, resolver_with_handshake ~id r))
   in
-  Cmgr.create ~sw resolvers parse_resp
+  Cmgr.create ~sw ?kind resolvers parse_resp
 
 let submit_request cmgr req = Cmgr.broadcast_blit cmgr (ser_req req)
 
@@ -54,7 +54,11 @@ let create_rpc ~sw env resolvers id retry_period =
       traceln "Next id %d" res ; res
   in
   let t =
-    { cmgr= create_cmgr ~sw resolvers id (fun () -> Eio.Time.sleep env#clock 1.)
+    { cmgr=
+        create_cmgr
+          ~kind:(Cmgr.Recv {max_recv_buf= 1024})
+          ~sw resolvers id
+          (fun () -> Eio.Time.sleep env#clock 1.)
     ; request_state= Hashtbl.create 1024
     ; clock= env#clock
     ; next_id= next_cid }
