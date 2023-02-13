@@ -1,8 +1,8 @@
 (library
  (name ocons_core)
- (public_name ocons-core)
+ (public_name ocons.core)
  (inline_tests)
- (libraries base core core_kernel.uuid core_unix eio accessor ocons_conn_mgr
+ (libraries base core core_kernel.uuid core_unix eio eio_linux accessor ocons.cmgr
    iter owl)
  (preprocess
   (pps ppx_jane ppx_accessor)))

@@ -1,27 +1,50 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    utils.url = "github:numtide/flake-utils";
+    opam-nix.url = "github:tweag/opam-nix";
+    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.follows = "opam-nix/nixpkgs";
   };
-
-  outputs = { self, nixpkgs, utils }:
-    utils.lib.eachDefaultSystem (system:
+  outputs = { self, flake-utils, opam-nix, nixpkgs }@inputs:
+    flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        inherit (builtins) map listToAttrs hasAttr typeOf trace;
+        pkgs = nixpkgs.legacyPackages.${system};
+        on = opam-nix.lib.${system};
+        opam2query = opamFile:
+          let 
+            f = e :
+              if typeOf e == "set" then {name = e.val; value = "*";} else {name = e; value = "*";};
+          in listToAttrs (map f (on.importOpam opamFile).depends);
+        localPackageQuery = opam2query ./ocons.opam; 
+        devPackagesQuery = {
+          ocaml-lsp-server = "*";
+          ocamlformat = "*";
+          utop = "*";
+
+          bigstringaf = "*";
+          cstruct = "*";
+          lwt-dllist = "*";
+          optint = "*";
+          psq = "*";
+          fmt = "*";
+          hmap = "*";
+          mtime = "*";
+          uring = "*";
+          logs = "*";
+          luv_unix = "*";
+        };
+        query = devPackagesQuery // (trace localPackageQuery localPackageQuery) // {
+          ocaml-base-compiler = "5.0.0";
+        };
+        scope = on.buildOpamProject' {recursive=true; } ./. query;
+        devPackages = builtins.attrValues
+          (pkgs.lib.getAttrs (builtins.attrNames query) scope);
       in
       {
         defaultPackage = pkgs.hello;
-        devShell = with pkgs; mkShell {
-          buildInputs = [
-            opam
-            zlib
-            openblas
-            pkgconfig
+        devShell = pkgs.mkShell {
+          buildInputs = devPackages ++ [
           ];
-          shellHook = ''
-          eval "$(opam env)"
-          '';
         };
       });
 }
-

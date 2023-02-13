@@ -14,7 +14,7 @@ let pitcher ~sw clock n rate cmgr dispatch : unit Eio.Promise.t =
     | i, prev ->
         let cmd = Command.{op= Write ("asdf", "asdf"); id= i} in
         let target = Float.add prev period in
-        Eio.Time.sleep_until clock target ;
+        if target > clock#now then Eio.Time.sleep_until clock target ;
         Cli.submit_request cmgr cmd ;
         req_reporter () ;
         Hashtbl.add dispatch i (Eio.Time.now clock) ;
@@ -81,24 +81,23 @@ let run sockaddrs id n rate =
     in
     let complete = pitcher ~sw env#clock n rate cmgr dispatch in
     Promise.await complete ;
+    let request_response_pairs = Hashtbl.create n in
+    let add_entries_iter id resp =
+      let dis = Hashtbl.find dispatch id in
+      Hashtbl.add request_response_pairs id (dis, resp)
+    in
+    Hashtbl.iter add_entries_iter response ;
+    let responses = request_response_pairs |> Hashtbl.to_seq |> Array.of_seq in
+    traceln "Results: %a" pp_stats responses;
     traceln "Closing everything" ;
     Eio.Time.sleep env#clock 1. ;
     Cli.Cmgr.close cmgr ;
-    traceln "Closed everything"
+    traceln "Closed everything, done bench"
   in
   ( Eio_unix.Ctf.with_tracing "trace.ctf"
   @@ fun () ->
   try Eio_main.run main
   with e -> Fmt.pr "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ()) ) ;
-  Fmt.pr "Done bench\n" ;
-  let request_response_pairs = Hashtbl.create n in
-  let add_entries_iter id resp =
-    let dis = Hashtbl.find dispatch id in
-    Hashtbl.add request_response_pairs id (dis, resp)
-  in
-  Hashtbl.iter add_entries_iter response ;
-  let responses = request_response_pairs |> Hashtbl.to_seq |> Array.of_seq in
-  Fmt.pr "Results: %a" pp_stats responses
 
 open Cmdliner
 

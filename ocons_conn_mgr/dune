@@ -1,6 +1,6 @@
 (library
  (name ocons_conn_mgr)
- (public_name ocons-conn-mgr)
+ (public_name ocons.cmgr)
  (inline_tests)
  (libraries base eio accessor eio_main eio.mock)
  (preprocess

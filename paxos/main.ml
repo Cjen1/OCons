@@ -99,7 +99,7 @@ let max_outstanding_ot =
          and the highest committed value."
       ["o"; "outstanding"; "max-outstanding"]
   in
-  opt int 1024 i
+  opt int 35536 i
 
 let stream_length_ot =
   let open Arg in
@@ -110,7 +110,7 @@ let stream_length_ot =
          internal infrastructure."
       ["s"; "stream-length"]
   in
-  opt int 1024 i
+  opt int 8192 i
 
 let internal_port_ot =
   let open Arg in

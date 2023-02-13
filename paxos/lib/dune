@@ -1,6 +1,6 @@
 (library
  (name paxos_core)
- (libraries ocons-core accessor iter)
+ (libraries ocons.core accessor iter)
  (inline_tests)
  (instrumentation
   (backend bisect_ppx))
