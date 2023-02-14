@@ -1,30 +1,17 @@
 open Types
 open Utils
 open C.Types
+open Actions_f
 
-let dtraceln = C.Utils.dtraceln
+let dtraceln = Utils.dtraceln
 
-module Make (Act : ActionSig) = struct
-  type nonrec config = config
-
-  let config_pp = config_pp
-
-  type nonrec message = message
-
-  let message_pp = message_pp
-
-  type nonrec event = event
-
-  let event_pp = event_pp
-
-  type nonrec action = action
-
-  let action_pp = action_pp
-
-  type nonrec t = t
-
-  let t_pp = t_pp
-
+module Make
+    (Act : ActionSig
+             with type t = PaxosTypes.t
+              and type message = PaxosTypes.message
+              and type action = PaxosTypes.action) =
+struct
+  include PaxosTypes
   open Act
 
   let get_log_term t idx = if idx < 0 then 0 else (Log.get t.log idx).term
@@ -190,7 +177,7 @@ module Make (Act : ActionSig) = struct
           ( AppendEntries
               {prev_log_term; prev_log_index; entries; leader_commit; _}
           , lid )
-      , Follower _ ) ->
+      , Follower _ ) -> (
         (* Reset leader alive timeout *)
         A.set (t @> node_state @> Follower.timeout) ~to_:0 () ;
         (* reply to append entries request *)
@@ -200,40 +187,42 @@ module Make (Act : ActionSig) = struct
           Log.mem ct.log prev_log_index
           && (Log.get ct.log prev_log_index).term = prev_log_term
         in
-        if not (rooted_at_start || matching_index_and_term ()) then (
-          (* Reply with the highest index known not to be replicated *)
-          (* This will be the prev_log_index of the next msg *)
-          dtraceln
-            "Failed to match\n\
-             rooted_at_start(%b), matching_index_and_term(%b):\n\
-             %a"
-            rooted_at_start
-            (matching_index_and_term ())
-            t_pp ct ;
-          send lid
-          @@ AppendEntriesResponse
-               { term= ct.current_term
-               ; success= Error (min (prev_log_index - 1) (Log.highest ct.log))
-               } )
-        else
-          ct.append_entries_length (snd entries);
-          let index_iter =
-            fst entries |> Iter.zip_i
-            |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
-          in
-          index_iter
-          |> Iter.iter (fun (idx, le) ->
-                 if
-                   (not (Log.mem ct.log idx))
-                   || (Log.get ct.log idx).term < le.term
-                 then Log.set ct.log idx le ) ;
-          let max_entry =
-            index_iter |> Iter.map fst |> Iter.fold max prev_log_index
-          in
-          Log.cut_after ct.log max_entry ;
-          A.map (t @> commit_index) ~f:(max leader_commit) () ;
-          send lid
-          @@ AppendEntriesResponse {term= ct.current_term; success= Ok max_entry}
+        match rooted_at_start || matching_index_and_term () with
+        | false ->
+            (* Reply with the highest index known not to be replicated *)
+            (* This will be the prev_log_index of the next msg *)
+            dtraceln
+              "Failed to match\n\
+               rooted_at_start(%b), matching_index_and_term(%b):\n\
+               %a"
+              rooted_at_start
+              (matching_index_and_term ())
+              t_pp ct ;
+            send lid
+            @@ AppendEntriesResponse
+                 { term= ct.current_term
+                 ; success=
+                     Error (min (prev_log_index - 1) (Log.highest ct.log)) }
+        | true ->
+            ct.append_entries_length (snd entries) ;
+            let index_iter =
+              fst entries |> Iter.zip_i
+              |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
+            in
+            index_iter
+            |> Iter.iter (fun (idx, le) ->
+                   if
+                     (not (Log.mem ct.log idx))
+                     || (Log.get ct.log idx).term < le.term
+                   then Log.set ct.log idx le ) ;
+            let max_entry =
+              index_iter |> Iter.map fst |> Iter.fold max prev_log_index
+            in
+            Log.cut_after ct.log max_entry ;
+            A.map (t @> commit_index) ~f:(max leader_commit) () ;
+            send lid
+            @@ AppendEntriesResponse
+                 {term= ct.current_term; success= Ok max_entry} )
     (*Invalid or already handled *)
     | _ ->
         ()
@@ -287,6 +276,16 @@ module Make (Act : ActionSig) = struct
     check_commit ()
 
   let advance t e = run_side_effects (fun () -> advance_raw e) t
+
+  let create config =
+    let log = SegmentLog.create {term= -1; command= empty_command} in
+    { log
+    ; commit_index= -1
+    ; config
+    ; node_state= Follower {timeout= config.election_timeout}
+    ; current_term= 0
+    ; append_entries_length=
+        Ocons_core.Utils.InternalReporter.avg_reporter "ae_length" }
 end
 
-module Impl = Make (ImperativeActions)
+module Impl = Make (ImperativeActions (PaxosTypes))
