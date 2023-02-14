@@ -22,7 +22,6 @@ module Gen = struct
 
   let entries =
     map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
-
 end
 
 module LP = Impl_core.Line_prot
@@ -89,10 +88,10 @@ let test_entry_equality les =
   let r_entries = LP.DeserPrim.entries br in
   check_eq ~eq:entries_equal w_entries r_entries
 
-
 module Paxos = struct
   open Impl_core.Types.PaxosTypes
   open LP.Paxos
+
   let msg_gen =
     let open Gen in
     let open Crowbar in
@@ -109,64 +108,147 @@ module Paxos = struct
             AppendEntriesResponse
               {term; success= (if success then Ok index else Error index)} ) ]
 
-let msg_equal a b =
-  match (a, b) with
-  | RequestVote a, RequestVote b ->
-      a.term = b.term && a.leader_commit = b.leader_commit
-  | RequestVoteResponse a, RequestVoteResponse b ->
-      a.term = b.term
-      && a.start_index = b.start_index
-      && entries_equal a.entries b.entries
-  | AppendEntries a, AppendEntries b ->
-      a.term = b.term
-      && a.leader_commit = b.leader_commit
-      && a.prev_log_index = b.prev_log_index
-      && a.prev_log_term = b.prev_log_term
-      && entries_equal a.entries b.entries
-  | AppendEntriesResponse a, AppendEntriesResponse b ->
-      a.term = b.term && a.success = b.success
-  | _ ->
-      false
+  let msg_equal a b =
+    match (a, b) with
+    | RequestVote a, RequestVote b ->
+        a.term = b.term && a.leader_commit = b.leader_commit
+    | RequestVoteResponse a, RequestVoteResponse b ->
+        a.term = b.term
+        && a.start_index = b.start_index
+        && entries_equal a.entries b.entries
+    | AppendEntries a, AppendEntries b ->
+        a.term = b.term
+        && a.leader_commit = b.leader_commit
+        && a.prev_log_index = b.prev_log_index
+        && a.prev_log_term = b.prev_log_term
+        && entries_equal a.entries b.entries
+    | AppendEntriesResponse a, AppendEntriesResponse b ->
+        a.term = b.term && a.success = b.success
+    | _ ->
+        false
 
-let test_msg_equality msg =
-  let open Crowbar in
-  Eio_mock.Backend.run
-  @@ fun () ->
-  let fr, fw = mock_flow () in
-  let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
-  Eio.Buf_write.with_flow fw
-  @@ fun bw ->
-  serialise msg bw ;
-  let msg' = parse br in
-  check_eq ~pp:message_pp ~eq:msg_equal msg msg'
+  let test_msg_equality msg =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    serialise msg bw ;
+    let msg' = parse br in
+    check_eq ~pp:message_pp ~eq:msg_equal msg msg'
 
-let test_msg_series_equality msgs =
-  let open Crowbar in
-  Eio_mock.Backend.run
-  @@ fun () ->
-  let fr, fw = mock_flow () in
-  let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
-  Eio.Buf_write.with_flow fw
-  @@ fun bw ->
-  let rec aux = function
-    | [] ->
-        ()
-    | msg :: ms ->
-        serialise msg bw ;
-        let msg' = parse br in
-        check_eq ~pp:message_pp ~eq:msg_equal msg msg' ;
-        aux ms
-  in
-  aux msgs
+  let test_msg_series_equality msgs =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    let rec aux = function
+      | [] ->
+          ()
+      | msg :: ms ->
+          serialise msg bw ;
+          let msg' = parse br in
+          check_eq ~pp:message_pp ~eq:msg_equal msg msg' ;
+          aux ms
+    in
+    aux msgs
+end
+
+module Raft = struct
+  open Impl_core.Types.RaftTypes
+  open LP.Raft
+
+  let msg_gen =
+    let open Gen in
+    let open Crowbar in
+    choose
+      [ map [int; int; int] (fun term lastIndex lastTerm ->
+            RequestVote {term; lastIndex; lastTerm} )
+      ; map [int; bool] (fun term success ->
+            RequestVoteResponse {term; success} )
+      ; map [int; int; int; int; entries]
+          (fun term leader_commit prev_log_index prev_log_term entries ->
+            AppendEntries
+              {term; leader_commit; prev_log_index; prev_log_term; entries} )
+      ; map [int; bool; int] (fun term success index ->
+            AppendEntriesResponse
+              {term; success= (if success then Ok index else Error index)} ) ]
+
+  let msg_equal a b =
+    match (a, b) with
+    | RequestVote a, RequestVote b ->
+        a.term = b.term && a.lastIndex = b.lastIndex && a.lastTerm = b.lastTerm
+    | RequestVoteResponse a, RequestVoteResponse b ->
+        a.term = b.term && a.success = b.success
+    | AppendEntries a, AppendEntries b ->
+        a.term = b.term
+        && a.leader_commit = b.leader_commit
+        && a.prev_log_index = b.prev_log_index
+        && a.prev_log_term = b.prev_log_term
+        && entries_equal a.entries b.entries
+    | AppendEntriesResponse a, AppendEntriesResponse b ->
+        a.term = b.term && a.success = b.success
+    | _ ->
+        false
+
+  let test_msg_equality msg =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    serialise msg bw ;
+    let msg' = parse br in
+    check_eq ~pp:message_pp ~eq:msg_equal msg msg'
+
+  let test_msg_series_equality msgs =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    let rec aux = function
+      | [] ->
+          ()
+      | msg :: ms ->
+          serialise msg bw ;
+          let msg' = parse br in
+          check_eq ~pp:message_pp ~eq:msg_equal msg msg' ;
+          aux ms
+    in
+    aux msgs
 end
 
 let () =
   let open Crowbar in
+  (* Common*)
   add_test ~name:"entries_equal"
     [list Gen.log_entry]
     (fun l ->
       let e = (Iter.of_list l, List.length l) in
       check_eq ~eq:entries_equal e e ) ;
-  add_test ~name:"paxos_entries_ser_deser" [list Gen.log_entry] test_entry_equality ;
+  (* Paxos*)
+  add_test ~name:"paxos_entries_ser_deser"
+    [list Gen.log_entry]
+    test_entry_equality ;
   add_test ~name:"paxos_msg_passing" [Paxos.msg_gen] Paxos.test_msg_equality ;
-  add_test ~name:"paxos_msg_series_passing" [list Paxos.msg_gen] Paxos.test_msg_series_equality
+  add_test ~name:"paxos_msg_series_passing"
+    [list Raft.msg_gen]
+    Raft.test_msg_series_equality ;
+  (* Raft *)
+  add_test ~name:"raft_entries_ser_deser"
+    [list Gen.log_entry]
+    test_entry_equality ;
+  add_test ~name:"raft_msg_passing" [Raft.msg_gen] Raft.test_msg_equality ;
+  add_test ~name:"raft_msg_series_passing"
+    [list Raft.msg_gen]
+    Raft.test_msg_series_equality

@@ -3,8 +3,9 @@ open! Ocons_core.Types
 open! Impl_core.Types
 module Cli = Ocons_core.Client
 module PMain = Infra.Make (Impl_core.Paxos)
+module RMain = Infra.Make (Impl_core.Raft)
 
-type kind = Paxos
+type kind = Paxos | Raft
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length =
@@ -38,6 +39,11 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Starting Paxos system:\nconfig = %a"
         Impl_core.Types.config_pp paxos_config ;
       Eio_main.run @@ fun env -> PMain.run env cfg
+  | Raft -> 
+      let cfg = config paxos_config in
+      Eio.traceln "Starting Raft system:\nconfig = %a"
+        Impl_core.Types.config_pp paxos_config ;
+      Eio_main.run @@ fun env -> RMain.run env cfg
 
 open Cmdliner
 
@@ -143,7 +149,7 @@ let address_info =
 
 let cmd =
   let kind_t =
-    let kind = Arg.enum [("paxos", Paxos); ("Paxos", Paxos)] in
+    let kind = Arg.enum [("paxos", Paxos); ("Paxos", Paxos); "raft", Raft; "Raft", Raft] in
     Arg.(
       required
       & pos 0 (some kind) None (info ~docv:"KIND" ~doc:"Protocol to use" []) )

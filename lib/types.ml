@@ -50,7 +50,11 @@ type command = Command.t [@@deriving bin_io, compare, sexp]
 
 let empty_command = Command.{op= NoOp; id= -1}
 
-let make_command c = Command.{op= c; id= Random.int Int.max_value}
+let make_command =
+  let rid = ref 0 in
+  fun c ->
+    rid := !rid + 1;
+  Command.{op= c; id= !rid}
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]

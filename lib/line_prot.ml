@@ -9,6 +9,8 @@ module CommonPrim = struct
 end
 
 module SerPrim = struct
+  let bool t w = match t with true -> W.uint8 w 1 | false -> W.uint8 w 0
+
   let string s w =
     W.BE.uint64 w (s |> String.length |> Int64.of_int) ;
     W.string w s
@@ -41,6 +43,16 @@ module DeserPrim = struct
   open! R.Syntax
 
   type 'a parser = 'a R.parser
+
+  let bool : bool parser =
+    let+ i = R.uint8 in
+    match i with
+    | 0 ->
+        false
+    | 1 ->
+        true
+    | _ ->
+        Fmt.failwith "Received %d which is not 0 or 1" i
 
   let string : string parser =
     let* len = R.BE.uint64 in

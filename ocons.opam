@@ -20,7 +20,6 @@ depends: [
   "core"
   "core_unix"
   "owl"
-  "eio"
   "odoc" {with-doc}
 ]
 build: [
