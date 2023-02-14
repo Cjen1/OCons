@@ -216,6 +216,7 @@ module Make (Act : ActionSig) = struct
                ; success= Error (min (prev_log_index - 1) (Log.highest ct.log))
                } )
         else
+          ct.append_entries_length (snd entries);
           let index_iter =
             fst entries |> Iter.zip_i
             |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))

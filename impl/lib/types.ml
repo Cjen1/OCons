@@ -162,7 +162,8 @@ type t =
   ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
   ; config: config
   ; node_state: node_state
-  ; current_term: term }
+  ; current_term: term 
+  ; append_entries_length : int Ocons_core.Utils.InternalReporter.reporter }
 [@@deriving accessors]
 
 let create config =
@@ -171,7 +172,8 @@ let create config =
   ; commit_index= -1
   ; config
   ; node_state= Follower {timeout= config.election_timeout}
-  ; current_term= 0 }
+  ; current_term= 0 
+  ; append_entries_length = Ocons_core.Utils.InternalReporter.avg_reporter "ae_length"}
 
 let t_pp : t Fmt.t =
  fun ppf t ->

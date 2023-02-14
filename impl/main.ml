@@ -1,18 +1,19 @@
 open! Ocons_core
 open! Ocons_core.Types
-open! Paxos_core.Types
+open! Impl_core.Types
 module Cli = Ocons_core.Client
-module Paxos = Paxos_core
-module Main = Infra.Make (Paxos_core)
+module PMain = Infra.Make (Impl_core.Paxos)
 
-let run node_id node_addresses internal_port external_port tick_period
+type kind = Paxos
+
+let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length =
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
-  let cons_config =
+  let paxos_config =
     let num_nodes = List.length node_addresses in
-    let majority_quorums = (num_nodes) / 2 + 1 in
+    let majority_quorums = (num_nodes / 2) + 1 in
     { phase1quorum= majority_quorums
     ; phase2quorum= majority_quorums
     ; other_nodes= List.map fst other_nodes
@@ -21,8 +22,8 @@ let run node_id node_addresses internal_port external_port tick_period
     ; election_timeout
     ; max_outstanding }
   in
-  let config =
-    Main.
+  let config cons_config =
+    Infra.
       { cons_config
       ; internal_port
       ; external_port
@@ -31,9 +32,12 @@ let run node_id node_addresses internal_port external_port tick_period
       ; nodes= other_nodes
       ; node_id }
   in
-  Eio.traceln "Starting Paxos system:\nconfig = %a" Paxos.Types.config_pp
-    cons_config ;
-  Eio_main.run @@ fun env -> Main.run env config
+  match kind with
+  | Paxos ->
+      let cfg = config paxos_config in
+      Eio.traceln "Starting Paxos system:\nconfig = %a"
+        Impl_core.Types.config_pp paxos_config ;
+      Eio_main.run @@ fun env -> PMain.run env cfg
 
 open Cmdliner
 
@@ -99,7 +103,7 @@ let max_outstanding_ot =
          and the highest committed value."
       ["o"; "outstanding"; "max-outstanding"]
   in
-  opt int 35536 i
+  opt int 65536 i
 
 let stream_length_ot =
   let open Arg in
@@ -110,7 +114,7 @@ let stream_length_ot =
          internal infrastructure."
       ["s"; "stream-length"]
   in
-  opt int 8192 i
+  opt int 4096 i
 
 let internal_port_ot =
   let open Arg in
@@ -138,17 +142,23 @@ let address_info =
       [] )
 
 let cmd =
+  let kind_t =
+    let kind = Arg.enum [("paxos", Paxos); ("Paxos", Paxos)] in
+    Arg.(
+      required
+      & pos 0 (some kind) None (info ~docv:"KIND" ~doc:"Protocol to use" []) )
+  in
   let node_id_t =
-    Arg.(required & pos 0 (some int) None (info ~docv:"ID" ~doc:"NODE_ID" []))
+    Arg.(required & pos 1 (some int) None (info ~docv:"ID" ~doc:"NODE_ID" []))
   in
   let node_addresses_t =
-    Arg.(required & pos 1 (some @@ list address_a) None address_info)
+    Arg.(required & pos 2 (some @@ list address_a) None address_info)
   in
   let info = Cmd.info "ocons_main" in
   Cmd.v info
     Term.(
-      const run $ node_id_t $ node_addresses_t $ Arg.value internal_port_ot
-      $ Arg.value external_port_ot
+      const run $ kind_t $ node_id_t $ node_addresses_t
+      $ Arg.value internal_port_ot $ Arg.value external_port_ot
       $ Arg.value election_tick_period_ot
       $ Arg.value election_timeout_ot
       $ Arg.value max_outstanding_ot

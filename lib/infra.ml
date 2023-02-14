@@ -1,18 +1,18 @@
 open! Types
 open Eio.Std
 
+type 'cons config =
+  { cons_config: 'cons
+  ; internal_port: int
+  ; external_port: int
+  ; stream_length: int
+  ; tick_period: float
+  ; nodes: (int * Eio.Net.Sockaddr.stream) list
+  ; node_id: int }
+
 module Make (C : Consensus_intf.S) = struct
   module Internal = Internal_infra.Make (C)
   module ExInfra = External_infra
-
-  type config =
-    { cons_config: C.config
-    ; internal_port: int
-    ; external_port: int
-    ; stream_length: int
-    ; tick_period: float
-    ; nodes: (int * Eio.Net.Sockaddr.stream) list
-    ; node_id: int }
 
   type 'a env =
     < clock: #Eio.Time.clock
@@ -24,7 +24,7 @@ module Make (C : Consensus_intf.S) = struct
 
   let run env config =
     Switch.run (fun sw ->
-        let command_stream = Eio.Stream.create (*config.stream_length*) Int.max_int in
+        let command_stream = Eio.Stream.create config.stream_length in
         Utils.InternalReporter.run ~sw env#clock 2. ;
         let result_stream = Eio.Stream.create Int.max_int in
         let create_conn addr sw =

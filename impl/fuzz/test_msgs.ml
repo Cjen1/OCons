@@ -24,7 +24,7 @@ module Gen = struct
     map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
 
   let msg =
-    let open Paxos_core.Types in
+    let open Impl_core.Types in
     choose
       [ map [int; int] (fun term leader_commit ->
             RequestVote {term; leader_commit} )
@@ -39,7 +39,7 @@ module Gen = struct
               {term; success= (if success then Ok index else Error index)} ) ]
 end
 
-module LP = Paxos_core.Line_prot
+module LP = Impl_core.Line_prot
 
 let make_source q =
   object (self)
@@ -104,7 +104,7 @@ let test_entry_equality les =
   check_eq ~eq:entries_equal w_entries r_entries
 
 let msg_equal a b =
-  let open Paxos_core.Types in
+  let open Impl_core.Types in
   match (a, b) with
   | RequestVote a, RequestVote b ->
       a.term = b.term && a.leader_commit = b.leader_commit
@@ -133,7 +133,7 @@ let test_msg_equality msg =
   @@ fun bw ->
   LP.serialise msg bw ;
   let msg' = LP.parse br in
-  check_eq ~pp:Paxos_core.Types.message_pp ~eq:msg_equal msg msg'
+  check_eq ~pp:Impl_core.Types.message_pp ~eq:msg_equal msg msg'
 
 let test_msg_series_equality msgs =
   let open Crowbar in
@@ -149,7 +149,7 @@ let test_msg_series_equality msgs =
     | msg :: ms ->
         LP.serialise msg bw ;
         let msg' = LP.parse br in
-        check_eq ~pp:Paxos_core.Types.message_pp ~eq:msg_equal msg msg' ;
+        check_eq ~pp:Impl_core.Types.message_pp ~eq:msg_equal msg msg' ;
         aux ms
   in
   aux msgs

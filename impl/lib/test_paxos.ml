@@ -1,7 +1,7 @@
 open! Types
 open! Utils
 module Imp = ImperativeActions
-module Impl = Sm.Make (ImperativeActions)
+module Impl = Paxos.Make (ImperativeActions)
 
 let c1 = make_config ~node_id:0 ~node_list:[0] ~election_timeout:5 ()
 

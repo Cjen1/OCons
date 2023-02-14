@@ -2,4 +2,4 @@
  (name test_msgs)
  (flags
   (:standard -w -27))
- (libraries paxos_core crowbar))
+ (libraries impl_core crowbar))

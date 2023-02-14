@@ -2,8 +2,8 @@ open! Types
 module Line_prot = Line_prot
 module Types = Types
 
-module Imperative = struct
-  include Sm.Impl
+module Paxos = struct
+  include Paxos.Impl
   include Types
 
   let create_node = Types.create
@@ -22,5 +22,3 @@ module Imperative = struct
 
   let serialise = Line_prot.serialise
 end
-
-include Imperative
