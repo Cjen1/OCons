@@ -35,4 +35,6 @@ val flush_all : 'a t -> unit
 
 val close : 'a t -> unit
 
+val set_debug_flag : unit -> unit
+
 module PCon = Persistent_conn

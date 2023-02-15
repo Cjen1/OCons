@@ -94,3 +94,5 @@ let rec recv_any ?(force = false) t f =
 let flush_all t =
   let f (_, c) = PCon.flush c in
   Fiber.List.iter f t.conns_list
+
+let set_debug_flag = Util.set_debug_flag

@@ -56,10 +56,11 @@ let pp_stats ppf s =
   in
   Fmt.pf ppf "%a" pp_stats s
 
-let run sockaddrs id n rate outfile =
+let run sockaddrs id n rate outfile debug =
   let dispatch = Hashtbl.create n in
   let response = Hashtbl.create n in
   let ( / ) = Eio.Path.( / ) in
+  if debug then Ocons_conn_mgr.set_debug_flag ();
   let main env =
     Switch.run
     @@ fun sw ->
@@ -188,6 +189,11 @@ let cmd =
       & opt (some string) None
           (info ~docv:"PATH" ~doc:"Output the raw result to file" ["p"]) )
   in
-  Cmd.v info Term.(const run $ sockaddrs_t $ id_t $ n_t $ rate_t $ file_t)
+  let debug_t =
+    Arg.(
+      value
+      & flag (info ~docv:"DEBUG" ~doc:"Debug print flag" ["d"]))
+  in
+  Cmd.v info Term.(const run $ sockaddrs_t $ id_t $ n_t $ rate_t $ file_t $ debug_t)
 
 let () = exit Cmd.(eval @@ cmd)
