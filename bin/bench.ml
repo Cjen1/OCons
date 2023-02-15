@@ -56,9 +56,10 @@ let pp_stats ppf s =
   in
   Fmt.pf ppf "%a" pp_stats s
 
-let run sockaddrs id n rate =
+let run sockaddrs id n rate outfile =
   let dispatch = Hashtbl.create n in
   let response = Hashtbl.create n in
+  let ( / ) = Eio.Path.( / ) in
   let main env =
     Switch.run
     @@ fun sw ->
@@ -88,16 +89,33 @@ let run sockaddrs id n rate =
     in
     Hashtbl.iter add_entries_iter response ;
     let responses = request_response_pairs |> Hashtbl.to_seq |> Array.of_seq in
-    traceln "Results: %a" pp_stats responses;
+    traceln "Results: %a" pp_stats responses ;
+    outfile
+    |> Option.iter (fun path ->
+           let path = Eio.Stdenv.cwd env / path in
+           Eio.Path.with_open_out ~create:(`If_missing 0o777) path
+           @@ fun out ->
+           Eio.Buf_write.with_flow out
+           @@ fun bw ->
+           traceln "Saving" ;
+           Eio.Buf_write.string bw "[" ;
+           Iter.of_array responses
+           |> Iter.map (fun (rid, (tx, rx)) () ->
+                  Eio.Buf_write.string bw
+                  @@ Fmt.str "{\"rid\": %d, \"tx\": %f, \"rx\": %f}" rid tx rx )
+           |> Iter.intersperse (fun () -> Eio.Buf_write.char bw ',')
+           |> Iter.iter (fun f -> f ()) ;
+           Eio.Buf_write.string bw "]" ;
+           traceln "Saved" ) ;
     traceln "Closing everything" ;
     Eio.Time.sleep env#clock 1. ;
     Cli.Cmgr.close cmgr ;
     traceln "Closed everything, done bench"
   in
-  ( Eio_unix.Ctf.with_tracing "trace.ctf"
+  Eio_unix.Ctf.with_tracing "trace.ctf"
   @@ fun () ->
   try Eio_main.run main
-  with e -> Fmt.pr "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ()) ) ;
+  with e -> Fmt.pr "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ())
 
 open Cmdliner
 
@@ -164,6 +182,12 @@ let cmd =
       value
       & opt float 100. (info ~docv:"RATE" ~doc:"Rate of requests" ["r"; "rate"]) )
   in
-  Cmd.v info Term.(const run $ sockaddrs_t $ id_t $ n_t $ rate_t)
+  let file_t =
+    Arg.(
+      value
+      & opt (some string) None
+          (info ~docv:"PATH" ~doc:"Output the raw result to file" ["p"]) )
+  in
+  Cmd.v info Term.(const run $ sockaddrs_t $ id_t $ n_t $ rate_t $ file_t)
 
 let () = exit Cmd.(eval @@ cmd)
