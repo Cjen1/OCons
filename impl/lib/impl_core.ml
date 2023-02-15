@@ -2,16 +2,16 @@ open! Types
 module Line_prot = Line_prot
 module Types = Types
 
-module Paxos : Ocons_core.Consensus_intf.S 
-with 
-type message = PaxosTypes.message and
-type event = PaxosTypes.event 
-and type config = Types.config
-= struct
+module Paxos :
+  Ocons_core.Consensus_intf.S
+    with type message = PaxosTypes.message
+     and type event = PaxosTypes.event
+     and type config = Types.config = struct
   include PaxosTypes
   include Paxos.Impl
 
   type config = Types.config
+
   let config_pp = Types.config_pp
 
   let create_node = create
@@ -31,16 +31,16 @@ and type config = Types.config
   let serialise = Line_prot.Paxos.serialise
 end
 
-module Raft : Ocons_core.Consensus_intf.S 
-with 
-type message = RaftTypes.message and
-type event = RaftTypes.event 
-and type config = Types.config
-= struct
+module Raft :
+  Ocons_core.Consensus_intf.S
+    with type message = RaftTypes.message
+     and type event = RaftTypes.event
+     and type config = Types.config = struct
   include RaftTypes
   include Raft.Impl
 
   type config = Types.config
+
   let config_pp = Types.config_pp
 
   let create_node = create

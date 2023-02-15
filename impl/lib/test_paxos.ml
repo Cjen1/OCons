@@ -1,7 +1,7 @@
 open! Types
 open! Utils
 open! Actions_f
-module Imp = ImperativeActions(PaxosTypes)
+module Imp = ImperativeActions (PaxosTypes)
 module Impl = Paxos.Make (Imp)
 open! PaxosTypes
 open! Impl
@@ -21,7 +21,8 @@ let%expect_test "transit_follower" =
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
-  [%expect {|
+  [%expect
+    {|
     +Follower for term 10
     state: Follower(0)
     term: 10

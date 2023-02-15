@@ -90,16 +90,18 @@ struct
         assert false
 
   let if_recv_advance_term e =
-    match e, ex.@(t @> node_state) with
-    | Recv
-        ( ( AppendEntries {term; _}
-          | AppendEntriesResponse {term; _}
-          | RequestVote {term; _}
-          | RequestVoteResponse {term; _} )
-        , _ ), _
+    match (e, ex.@(t @> node_state)) with
+    | ( Recv
+          ( ( AppendEntries {term; _}
+            | AppendEntriesResponse {term; _}
+            | RequestVote {term; _}
+            | RequestVoteResponse {term; _} )
+          , _ )
+      , _ )
       when term > ex.@(t @> current_term) ->
         transit_follower term
-    | Recv (AppendEntries {term; _}, lid), Candidate _ when term = ex.@(t @> current_term) ->
+    | Recv (AppendEntries {term; _}, lid), Candidate _
+      when term = ex.@(t @> current_term) ->
         transit_follower ~voted_for:lid term
     | _ ->
         ()
@@ -166,7 +168,7 @@ struct
       , Follower _ ) -> (
         (* Reset leader alive timeout *)
         ex.@(t @> node_state @> Follower.timeout) <- 0 ;
-        ex.@(t @> node_state @> Follower.voted_for)<- Some lid;
+        ex.@(t @> node_state @> Follower.voted_for) <- Some lid ;
         (* reply to append entries request *)
         let ct = ex.@(t) in
         let rooted_at_start = prev_log_index = -1 && prev_log_term = 0 in
@@ -271,7 +273,7 @@ struct
     { log
     ; commit_index= -1
     ; config
-    ; node_state= Follower {timeout= config.election_timeout; voted_for = None}
+    ; node_state= Follower {timeout= config.election_timeout; voted_for= None}
     ; current_term= 0
     ; append_entries_length=
         Ocons_core.Utils.InternalReporter.avg_reporter "ae_length" }

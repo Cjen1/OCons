@@ -74,7 +74,8 @@ module ImperativeActions (C : CTypes) :
     let open Iter in
     let commit_upto =
       let ct = (!s |> Option.get).t in
-      if ct.@(commit_index) > (!s |> Option.get).starting_cid then Some ct.@(commit_index)
+      if ct.@(commit_index) > (!s |> Option.get).starting_cid then
+        Some ct.@(commit_index)
       else None
     in
     let make_command_iter upto =

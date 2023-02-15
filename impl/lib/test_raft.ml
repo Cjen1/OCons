@@ -369,7 +369,8 @@ let%expect_test "Loop" =
   let m6 = C.Types.(make_command (Read "m6")) in
   let t1, _ = Impl.advance t1 (Commands (Iter.of_list [m5; m6])) in
   Fmt.pr "t: %a\n" t_pp t1 ;
-  [%expect{|
+  [%expect
+    {|
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(Read m5, 4); term : 12},{command: Command(Read m6, 5); term : 12}]; commit_index:3; current_term: 12; node_state:Leader{heartbeat:0; rep_ackd:
     [{0, -1}, {2, 3}]; rep_sent:[{0, 5}, {2, 5}]} |}] ;
   (* ------------ elect 2 with 0 ----------------- *)
@@ -379,7 +380,8 @@ let%expect_test "Loop" =
   let t2, _ = Impl.advance t2 Tick in
   let t2, actions = Impl.advance t2 Tick in
   pp_res t2 actions ;
-  [%expect{|
+  [%expect
+    {|
     +Candidate for term 13
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12}]; commit_index:-1; current_term: 13; node_state:Candidate{quorum:{threshold 1, elts:
     []}, timeout:0}}
@@ -387,7 +389,8 @@ let%expect_test "Loop" =
   let rv = RequestVote {term= 13; lastIndex= 3; lastTerm= 12} in
   let t, actions = Impl.advance t (Recv (rv, 2)) in
   pp_res t actions ;
-  [%expect{|
+  [%expect
+    {|
     +Follower for term 13
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:1; current_term: 13; node_state:Follower{timeout:0; voted_for:2}}
     actions:
@@ -395,7 +398,8 @@ let%expect_test "Loop" =
   let rvr = RequestVoteResponse {term= 13; success= true} in
   let t2, actions = Impl.advance t2 (Recv (rvr, 0)) in
   pp_res t2 actions ;
-  [%expect{|
+  [%expect
+    {|
     +Leader for term 13
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13}]; commit_index:-1; current_term: 13; node_state:Leader{heartbeat:0; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 4}, {1, 4}]}
@@ -407,7 +411,8 @@ let%expect_test "Loop" =
   let m7 = C.Types.(make_command (Read "m7")) in
   let t2, _ = Impl.advance t2 (Commands (Iter.singleton m7)) in
   Fmt.pr "t: %a\n" t_pp t2 ;
-  [%expect{|
+  [%expect
+    {|
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13},{command: Command(Read m7, 6); term : 13}]; commit_index:-1; current_term: 13; node_state:Leader{heartbeat:0; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 5}, {1, 5}]} |}] ;
   (* ---------- Elect all nodes using votes from other 2 faked out ---------- *)
@@ -425,7 +430,8 @@ let%expect_test "Loop" =
       (Recv (RequestVote {term= 100; lastIndex= 5; lastTerm= 5}, 2))
   in
   Fmt.pr "t2:\n%a\n" t_pp t2 ;
-  [%expect{|
+  [%expect
+    {|
     +Follower for term 100
     +Follower for term 100
     +Follower for term 100
@@ -447,14 +453,16 @@ let%expect_test "Loop" =
   let t, _ = Impl.advance t Tick in
   let t, actions = Impl.advance t Tick in
   pp_res t actions ;
-  [%expect{|
+  [%expect
+    {|
     +Candidate for term 101
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:1; current_term: 101; node_state:Candidate{quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:101; lastIndex:2; lastTerm:11})] |}] ;
   let t, actions = Impl.advance t (Recv (rvr 101, 1)) in
   pp_res t actions ;
-  [%expect{|
+  [%expect
+    {|
     +Leader for term 101
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11},{command: Command(NoOp, -1); term : 101}]; commit_index:1; current_term: 101; node_state:Leader{heartbeat:0; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 3}, {2, 3}]}
@@ -469,14 +477,16 @@ let%expect_test "Loop" =
   let t1, _ = Impl.advance t1 Tick in
   let t1, actions = Impl.advance t1 Tick in
   pp_res t1 actions ;
-  [%expect{|
+  [%expect
+    {|
     +Candidate for term 101
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(Read m5, 4); term : 12},{command: Command(Read m6, 5); term : 12}]; commit_index:3; current_term: 101; node_state:Candidate{quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:101; lastIndex:5; lastTerm:12})] |}] ;
   let t1, actions = Impl.advance t1 (Recv (rvr 101, 2)) in
   pp_res t1 actions ;
-  [%expect{|
+  [%expect
+    {|
     +Leader for term 101
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(Read m5, 4); term : 12},{command: Command(Read m6, 5); term : 12},{command: Command(NoOp, -1); term : 101}]; commit_index:3; current_term: 101; node_state:Leader{heartbeat:0; rep_ackd:
     [{0, -1}, {2, -1}]; rep_sent:[{0, 6}, {2, 6}]}
@@ -491,14 +501,16 @@ let%expect_test "Loop" =
   let t2, _ = Impl.advance t2 Tick in
   let t2, actions = Impl.advance t2 Tick in
   pp_res t2 actions ;
-  [%expect{|
+  [%expect
+    {|
     +Candidate for term 101
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13},{command: Command(Read m7, 6); term : 13}]; commit_index:-1; current_term: 101; node_state:Candidate{quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:101; lastIndex:5; lastTerm:13})] |}] ;
   let t2, actions = Impl.advance t2 (Recv (rvr 101, 0)) in
   pp_res t2 actions ;
-  [%expect{|
+  [%expect
+    {|
     +Leader for term 101
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13},{command: Command(Read m7, 6); term : 13},{command: Command(NoOp, -1); term : 101}]; commit_index:-1; current_term: 101; node_state:Leader{heartbeat:0; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 6}, {1, 6}]}
@@ -544,7 +556,8 @@ let%expect_test "Missing elements" =
   let m2 = C.Types.(make_command (Read "m2")) in
   let t, actions = Impl.advance t (Commands (m2 |> Iter.singleton)) in
   pp_res t actions ;
-  [%expect{|
+  [%expect
+    {|
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 7); term : 11},{command: Command(Read m2, 8); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 2}, {2, 2}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: -1; prev_log_index: 1; prev_log_term: 11; entries_length: 1; entries:
@@ -560,19 +573,23 @@ let%expect_test "Missing elements" =
       ; entries= (C.Types.{command= m2; term= 11} |> Iter.singleton, 1) }
   in
   pp_res t1 [] ;
-  [%expect{|
+  [%expect
+    {|
     t: {log: []; commit_index:-1; current_term: 11; node_state:Follower{timeout:0; voted_for:2}}
     actions:
     [] |}] ;
   let t1, actions = Impl.advance t1 (Recv (aem2, 0)) in
   pp_res t1 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: {log: []; commit_index:-1; current_term: 11; node_state:Follower{timeout:0; voted_for:0}}
     actions:
     [Send(0, AppendEntriesResponse {term: 11; success: Error: -1})] |}] ;
   let aer = AppendEntriesResponse {term= 11; success= Error (-1)} in
   let t, actions = Impl.advance t (Recv (aer, 1)) in
-  pp_res t actions ; [%expect{|
+  pp_res t actions ;
+  [%expect
+    {|
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 7); term : 11},{command: Command(Read m2, 8); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 2}, {2, 2}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 3; entries:

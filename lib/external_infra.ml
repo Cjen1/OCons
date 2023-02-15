@@ -13,7 +13,7 @@ type t =
   ; req_tbl: (command_id, client_id) Hashtbl.t
   ; cmd_str: request Eio.Stream.t
   ; res_str: response Eio.Stream.t
-  ; req_reporter: unit InternalReporter.reporter}
+  ; req_reporter: unit InternalReporter.reporter }
 
 let rec drain str =
   match Eio.Stream.take_nonblocking str with Some _ -> drain str | None -> ()
@@ -58,9 +58,9 @@ let accept_handler t sock addr =
       dtraceln "Sent response for %d" cid
     done
   in
-  try Fiber.both request_fiber result_fiber
-  with 
-  | End_of_file | Eio.Exn.Io _ -> traceln "Connection closed"
+  try Fiber.both request_fiber result_fiber with
+  | End_of_file | Eio.Exn.Io _ ->
+      traceln "Connection closed"
   | e when is_not_cancel e ->
       traceln "Client handler failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
@@ -68,9 +68,7 @@ let accept_handler t sock addr =
 let run (net : #Eio.Net.t) port cmd_str res_str =
   Switch.run
   @@ fun sw ->
-  let req_reporter =
-    InternalReporter.rate_reporter 0 "cli_req"
-  in
+  let req_reporter = InternalReporter.rate_reporter 0 "cli_req" in
   let t =
     { conn_tbl= Hashtbl.create 16
     ; req_tbl= Hashtbl.create 4096
@@ -107,5 +105,5 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
       Hashtbl.remove t.req_tbl cid
     done
   in
-  Fiber.both result_fiber server_fiber;
+  Fiber.both result_fiber server_fiber ;
   traceln "Closed external infra"

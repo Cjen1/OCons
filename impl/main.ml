@@ -39,10 +39,10 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Starting Paxos system:\nconfig = %a"
         Impl_core.Types.config_pp paxos_config ;
       Eio_main.run @@ fun env -> PMain.run env cfg
-  | Raft -> 
+  | Raft ->
       let cfg = config paxos_config in
-      Eio.traceln "Starting Raft system:\nconfig = %a"
-        Impl_core.Types.config_pp paxos_config ;
+      Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
+        paxos_config ;
       Eio_main.run @@ fun env -> RMain.run env cfg
 
 open Cmdliner
@@ -149,7 +149,10 @@ let address_info =
 
 let cmd =
   let kind_t =
-    let kind = Arg.enum [("paxos", Paxos); ("Paxos", Paxos); "raft", Raft; "Raft", Raft] in
+    let kind =
+      Arg.enum
+        [("paxos", Paxos); ("Paxos", Paxos); ("raft", Raft); ("Raft", Raft)]
+    in
     Arg.(
       required
       & pos 0 (some kind) None (info ~docv:"KIND" ~doc:"Protocol to use" []) )

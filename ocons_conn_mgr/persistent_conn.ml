@@ -66,8 +66,7 @@ let recv_iter t parse f =
         (* Reads all values *)
         Fun.protect
           (fun () ->
-            r
-            |> Buf_read.seq parse
+            r |> Buf_read.seq parse
             |> Seq.iter (fun v -> f v ; dtraceln "recv_iter: read" ; yielder ())
             )
           ~finally:(fun () -> close_inflight t)

@@ -109,7 +109,7 @@ struct
           | RequestVote {term; _}
           | RequestVoteResponse {term; _} )
         , _ )
-      when term > ex.@((t @> current_term)) ->
+      when term > ex.@(t @> current_term) ->
         transit_follower term
     | _ ->
         ()
@@ -118,7 +118,7 @@ struct
 
   let resolve_event e =
     if_recv_advance_term e ;
-    match (e, ex.@((t @> node_state))) with
+    match (e, ex.@(t @> node_state)) with
     (* Increment ticks only for follower or leader *)
     | Tick, (Follower _ | Leader _) ->
         A.map (t @> node_state @> timeout_a) ~f:incr ()
@@ -136,7 +136,7 @@ struct
             | AppendEntriesResponse {term; _} )
           , _ )
       , _ )
-      when term < ex.@((t @> current_term)) ->
+      when term < ex.@(t @> current_term) ->
         ()
     (* Recv msgs from this term*)
     (* Candidate*)
