@@ -32,7 +32,7 @@ module Make (C : Consensus_intf.S) = struct
     ; commit_reporter: unit InternalReporter.reporter }
 
   let apply (t : t) (cmd : command) : op_result =
-    (* TODO truncate more sensibly
+    (* TODO truncate
           ie from each client record the high water mark of results and remove lower than that
        Core.Hash_set.remove t.inflight_txns cmd.id ;
     *)
@@ -193,15 +193,13 @@ module Make (C : Consensus_intf.S) = struct
   let run ~sw env node_id config period resolvers client_msgs client_resps port
       =
     let internal_streams = Hashtbl.create (List.length resolvers) in
-    let closed_p = Promise.create () in
     Fiber.fork ~sw (fun () ->
         let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
         let sock =
           Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw env#net addr
         in
         traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
-        Eio.Net.run_server ~stop:(fst closed_p)
-          ~on_error:(dtraceln "%a" Fmt.exn) sock
+        Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
           (accept_handler internal_streams) ) ;
     let resolvers = resolver_handshake node_id resolvers in
     run_inter ~sw env#clock config period resolvers client_msgs client_resps

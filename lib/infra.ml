@@ -23,26 +23,36 @@ module Make (C : Consensus_intf.S) = struct
     'a
 
   let run env config =
-    Switch.run (fun sw ->
-        let command_stream = Eio.Stream.create config.stream_length in
-        Utils.InternalReporter.run ~sw env#clock 2. ;
-        let result_stream = Eio.Stream.create Int.max_int in
-        let create_conn addr sw =
-          (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)
-        in
-        let conns : connection_creater list =
-          config.nodes
-          |> List.filter (fun (id, _) -> id <> config.node_id)
-          |> List.map (fun (id, addr) -> (id, create_conn addr))
-        in
-        Fiber.both
-          (fun () ->
-            Internal.run ~sw env config.node_id config.cons_config
-              config.tick_period conns command_stream result_stream
-              config.internal_port )
-          (fun () ->
-            Eio.Domain_manager.run env#domain_mgr
-            @@ fun () ->
-            ExInfra.run env#net config.external_port command_stream
-              result_stream ) )
+    Switch.run
+    @@ fun sw ->
+    let command_stream = Eio.Stream.create config.stream_length in
+    Utils.InternalReporter.run ~sw env#clock 2. ;
+    let result_stream = Eio.Stream.create Int.max_int in
+    let create_conn addr sw =
+      (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)
+    in
+    let conns : connection_creater list =
+      config.nodes
+      |> List.filter (fun (id, _) -> id <> config.node_id)
+      |> List.map (fun (id, addr) -> (id, create_conn addr))
+    in
+    Fiber.both
+      (fun () ->
+        try
+          Internal.run ~sw env config.node_id config.cons_config
+            config.tick_period conns command_stream result_stream
+            config.internal_port
+        with e when Utils.is_not_cancel e ->
+          traceln "Internal infra failed" ;
+          traceln "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ()) ;
+          exit (-1) )
+      (fun () ->
+        try
+          Eio.Domain_manager.run env#domain_mgr (fun () ->
+              ExInfra.run env#net config.external_port command_stream
+                result_stream )
+        with e when Utils.is_not_cancel e ->
+          traceln "External infra failed" ;
+          traceln "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ()) ;
+          exit (-1) )
 end
