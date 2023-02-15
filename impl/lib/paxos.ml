@@ -72,6 +72,11 @@ struct
     match ct.node_state with
     | Candidate {quorum; _} ->
         Eio.traceln "Leader for term %d" ct.current_term ;
+        (* For each seq 
+           store the highest term'd value for each index
+           Then replace them with our term.
+           This is safe since the by definition we will re-propose any committed values
+         *)
         let per_seq (_, seq) =
           seq
           |> Iter.iter (fun (idx, le) ->
@@ -122,6 +127,11 @@ struct
     (* Increment ticks only for follower or leader *)
     | Tick, (Follower _ | Leader _) ->
         A.map (t @> node_state @> timeout_a) ~f:incr ()
+    | Tick, Candidate _ ->
+        broadcast
+        @@ RequestVote
+             { term= ex.@(t @> current_term)
+             ; leader_commit= ex.@(t @> commit_index) }
     (* Recv commands *)
     | Commands cs, Leader _ ->
         cs (fun c ->
