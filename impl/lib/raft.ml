@@ -41,10 +41,8 @@ struct
                  ; entries }
         in
         IntMap.iter send_f s.rep_sent ;
-        A.set
-          (t @> node_state @> Leader.rep_sent)
-          ~to_:(IntMap.map (fun _ -> highest) s.rep_sent)
-          ()
+        ex.@(t @> node_state @> Leader.rep_sent) <-
+          IntMap.map (fun _ -> highest) s.rep_sent
     | _ ->
         assert false
 
@@ -110,9 +108,11 @@ struct
 
   let resolve_event e =
     if_recv_advance_term e ;
-    match (e, ex.@(A.(t @> node_state))) with
+    match (e, ex.@(t @> node_state)) with
     (* Increment ticks *)
-    | Tick, _ ->
+    | Tick, (Follower _ | Leader _) ->
+        A.map (t @> node_state @> timeout_a) ~f:incr ()
+    | Tick, Candidate _ ->
         A.map (t @> node_state @> timeout_a) ~f:incr ()
     (* Recv commands *)
     | Commands cs, Leader _ ->
@@ -128,25 +128,25 @@ struct
             | AppendEntriesResponse {term; _} )
           , _ )
       , _ )
-      when term < ex.@(A.(t @> current_term)) ->
+      when term < ex.@(t @> current_term) ->
         ()
     (* Recv msgs from this term*)
     (* Candidate*)
-    | Recv (RequestVoteResponse {term; success}, src), Candidate _ ->
-        assert (term = ex.@(t @> current_term)) ;
-        if success then
+    | Recv (RequestVoteResponse m, src), Candidate _ ->
+        assert (m.term = ex.@(t @> current_term)) ;
+        if m.success then
           A.map
             A.(t @> node_state @> Candidate.quorum)
             ~f:(Quorum.add src ()) ()
     (* Leader *)
     | Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src), Leader _ ->
         assert (m.term = ex.@(t @> current_term)) ;
-        A.map A.(t @> node_state @> Leader.rep_ackd) () ~f:(IntMap.add src idx)
+        A.map (t @> node_state @> Leader.rep_ackd) () ~f:(IntMap.add src idx)
     | Recv (AppendEntriesResponse ({success= Error idx; _} as m), src), Leader _
       ->
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
-        A.map A.(t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
+        A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
         dtraceln "Failed to match\n%a" t_pp ex.@(t)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower {voted_for; _} ->
@@ -232,7 +232,7 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     (* When should ticking result in an action? *)
-    | Follower {timeout; _} when timeout >= ct.config.election_timeout ->
+    | Follower s when s.timeout >= ct.config.election_timeout ->
         transit_candidate ()
     | Candidate {timeout; _} when timeout >= ct.config.election_timeout ->
         transit_candidate ()

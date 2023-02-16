@@ -15,9 +15,9 @@ struct
   include PaxosTypes
   open Act
 
-  let get_log_term t idx = if idx < 0 then 0 else (Log.get t.log idx).term
-
   let ex = ()
+
+  let get_log_term log idx = if idx < 0 then 0 else (Log.get log idx).term
 
   let send_append_entries ?(force = false) () =
     let ct = ex.@(t) in
@@ -37,7 +37,7 @@ struct
                  { term= ct.current_term
                  ; leader_commit= ex.@(t @> commit_index)
                  ; prev_log_index
-                 ; prev_log_term= get_log_term ct prev_log_index
+                 ; prev_log_term= get_log_term ct.log prev_log_index
                  ; entries }
         in
         IntMap.iter send_f s.rep_sent ;
@@ -46,14 +46,14 @@ struct
     | _ ->
         assert false
 
-  let transit_follower term =
+  let transit_follower ?voted_for:_ term =
     Eio.traceln "Follower for term %d" term ;
     ex.@(t @> node_state) <- Follower {timeout= 0} ;
     ex.@(t @> current_term) <- term
 
   let transit_candidate () =
     let cterm = ex.@(t @> current_term) in
-    let num_nodes = ex.@(t @> config).num_nodes in
+    let num_nodes = ex.@(t @> config @> num_nodes) in
     let new_term =
       let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
       let curr_epoch_term = (quot * num_nodes) + ex.@(t @> config @> node_id) in
@@ -61,6 +61,7 @@ struct
       else curr_epoch_term + num_nodes
     in
     Eio.traceln "Candidate for term %d" new_term ;
+    (* Vote for self *)
     ex.@(t @> node_state) <-
       Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0} ;
     ex.@(t @> current_term) <- new_term ;
@@ -72,11 +73,6 @@ struct
     match ct.node_state with
     | Candidate {quorum; _} ->
         Eio.traceln "Leader for term %d" ct.current_term ;
-        (* For each seq 
-           store the highest term'd value for each index
-           Then replace them with our term.
-           This is safe since the by definition we will re-propose any committed values
-         *)
         let per_seq (_, seq) =
           seq
           |> Iter.iter (fun (idx, le) ->
@@ -107,13 +103,14 @@ struct
         assert false
 
   let if_recv_advance_term e =
-    match e with
-    | Recv
-        ( ( AppendEntries {term; _}
-          | AppendEntriesResponse {term; _}
-          | RequestVote {term; _}
-          | RequestVoteResponse {term; _} )
-        , _ )
+    match (e, ex.@(t @> node_state)) with
+    | ( Recv
+          ( ( AppendEntries {term; _}
+            | AppendEntriesResponse {term; _}
+            | RequestVote {term; _}
+            | RequestVoteResponse {term; _} )
+          , _ )
+      , _ )
       when term > ex.@(t @> current_term) ->
         transit_follower term
     | _ ->
@@ -124,7 +121,7 @@ struct
   let resolve_event e =
     if_recv_advance_term e ;
     match (e, ex.@(t @> node_state)) with
-    (* Increment ticks only for follower or leader *)
+    (* Increment ticks *)
     | Tick, (Follower _ | Leader _) ->
         A.map (t @> node_state @> timeout_a) ~f:incr ()
     | Tick, Candidate _ ->
@@ -248,7 +245,7 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     (* When should ticking result in an action? *)
-    | Follower {timeout} when timeout >= ct.config.election_timeout ->
+    | Follower s when s.timeout >= ct.config.election_timeout ->
         transit_candidate ()
     | Candidate {timeout; _} when timeout >= ct.config.election_timeout ->
         transit_candidate ()
@@ -270,7 +267,9 @@ struct
           |> List.sort (fun a b -> Int.neg @@ Int.compare a b)
         in
         let majority_rep = List.nth acks (ct.config.phase2quorum - 1) in
-        ex.@(t @> commit_index) <- majority_rep
+        (* only commit if the commit index is from this term *)
+        if get_log_term ex.@(t @> log) majority_rep = ex.@(t @> current_term)
+        then ex.@(t @> commit_index) <- majority_rep
     | _ ->
         ()
 
