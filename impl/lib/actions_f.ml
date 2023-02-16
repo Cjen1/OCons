@@ -42,6 +42,11 @@ module type CTypes = sig
   val commit_index : ('a -> term -> term, 'a -> t -> t, [< A.field]) A.General.t
 end
 
+module type ActionFunc = functor (C : CTypes) ->
+  ActionSig
+    with type t = C.t
+     and type message = C.message
+     and type action = C.action
 module ImperativeActions (C : CTypes) :
   ActionSig
     with type t = C.t

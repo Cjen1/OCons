@@ -2,9 +2,8 @@ module C = Ocons_core
 open! Utils
 include C.Types
 module A = Accessor
+open A.O
 module Log = SegmentLog
-
-let ( @> ) = A.( @> )
 
 type config =
   { phase1quorum: int
@@ -154,7 +153,7 @@ module PaxosTypes = struct
     | Follower {timeout} ->
         pf ppf "Follower(%d)" timeout
     | Candidate {quorum; timeout} ->
-        pf ppf "Candidate{quorum:%a, timeout:%d}" Quorum.pp quorum timeout
+        pf ppf "Candidate {quorum:%a, timeout:%d}" Quorum.pp quorum timeout
     | Leader {rep_ackd; rep_sent; heartbeat} ->
         let format_rep_map : int IntMap.t Fmt.t =
          fun ppf v ->
@@ -303,4 +302,274 @@ module RaftTypes = struct
       Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
       (t.log |> Log.iter |> Iter.to_list)
       t.commit_index t.current_term node_state_pp t.node_state
+end
+
+module type StrategyTypes = sig
+  type request_vote
+
+  type request_vote_response
+
+  type quorum_type
+
+  module Utils : sig
+    val request_vote_pp : request_vote Fmt.t
+
+    val request_vote_response_pp : request_vote_response Fmt.t
+
+    val term_rv :
+      ( 'a -> int -> int
+      , 'a -> request_vote -> request_vote
+      , [< A.field] )
+      A.General.t
+
+    val term_rvr :
+      ( 'a -> int -> int
+      , 'a -> request_vote_response -> request_vote_response
+      , [< A.field] )
+      A.General.t
+  end
+end
+
+module type ImplTypes = sig
+  type request_vote
+
+  type request_vote_response
+
+  type quorum_type
+
+  module Utils : sig
+    val request_vote_pp : request_vote Fmt.t
+
+    val request_vote_response_pp : request_vote_response Fmt.t
+
+    val term_rv :
+      ( 'a -> term -> term
+      , 'a -> request_vote -> request_vote
+      , [< A.field] )
+      A.General.t
+
+    val term_rvr :
+      ( 'a -> term -> term
+      , 'a -> request_vote_response -> request_vote_response
+      , [< A.field] )
+      A.General.t
+  end
+
+  type message =
+    | RequestVote of request_vote
+    | RequestVoteResponse of request_vote_response
+    | AppendEntries of
+        { term: term
+        ; leader_commit: term
+        ; prev_log_index: term
+        ; prev_log_term: term
+        ; entries: log_entry Iter.t * term }
+    | AppendEntriesResponse of {term: term; success: (term, term) result}
+
+  val term_a : ('a -> term -> 'b, 'a -> message -> 'c, [< A.getter]) A.General.t
+
+  type event = Tick | Recv of (message * term) | Commands of command Iter.t
+
+  type action =
+    | Send of term * message
+    | Broadcast of message
+    | CommitCommands of command Iter.t
+
+  type node_state =
+    | Follower of {timeout: term; voted_for: term option}
+    | Candidate of {mutable quorum: quorum_type Quorum.t; mutable timeout: term}
+    | Leader of
+        { mutable rep_ackd: term IntMap.t
+        ; mutable rep_sent: term IntMap.t
+        ; heartbeat: term }
+  [@@deriving accessors]
+
+  val timeout_a :
+    ( 'a -> term -> term
+    , 'a -> node_state -> node_state
+    , [< A.field] )
+    A.General.t
+
+  type t =
+    { log: log_entry Log.t
+    ; commit_index: term
+    ; config: config
+    ; node_state: node_state
+    ; current_term: term
+    ; append_entries_length: term C.Utils.InternalReporter.reporter }
+  [@@deriving accessors]
+
+  val message_pp : Format.formatter -> message -> unit
+
+  val event_pp : Format.formatter -> event -> unit
+
+  val action_pp : Format.formatter -> action -> unit
+
+  val node_state_pp : node_state Fmt.t
+
+  val t_pp : t Fmt.t
+end
+
+module VarPaxosTypes (StrategyTypes : StrategyTypes) :
+  ImplTypes
+    with type request_vote = StrategyTypes.request_vote
+     and type request_vote_response = StrategyTypes.request_vote_response
+     and type quorum_type = StrategyTypes.quorum_type = struct
+  include StrategyTypes
+
+  type message =
+    | RequestVote of StrategyTypes.request_vote
+    | RequestVoteResponse of StrategyTypes.request_vote_response
+    | AppendEntries of
+        { term: term
+        ; leader_commit: log_index
+        ; prev_log_index: log_index
+        ; prev_log_term: term
+        ; entries: log_entry Iter.t * int }
+    | AppendEntriesResponse of
+        {term: term; success: (log_index, log_index) Result.t}
+
+  type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
+
+  type action =
+    | Send of node_id * message
+    | Broadcast of message
+    | CommitCommands of command Iter.t
+
+  type node_state =
+    | Follower of {timeout: int; voted_for: node_id option}
+    | Candidate of {mutable quorum: quorum_type Quorum.t; mutable timeout: term}
+    | Leader of
+        { mutable rep_ackd: log_index IntMap.t (* MatchIdx *)
+        ; mutable rep_sent: log_index IntMap.t (* NextIdx *)
+        ; heartbeat: int }
+  [@@deriving accessors]
+
+  type t =
+    { log: log_entry SegmentLog.t
+    ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
+    ; config: config
+    ; node_state: node_state
+    ; current_term: term
+    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter }
+  [@@deriving accessors]
+
+  let term_a =
+    [%accessor
+      A.getter (function
+        | RequestVote s ->
+            s.@(StrategyTypes.Utils.term_rv)
+        | RequestVoteResponse s ->
+            s.@(StrategyTypes.Utils.term_rvr)
+        | AppendEntriesResponse {term; _} | AppendEntries {term; _} ->
+            term )]
+
+  let timeout_a =
+    [%accessor
+      A.field
+        ~get:(function
+          | Follower {timeout; _} ->
+              timeout
+          | Candidate {timeout; _} ->
+              timeout
+          | Leader {heartbeat; _} ->
+              heartbeat )
+        ~set:(fun ns v ->
+          match ns with
+          | Follower _ ->
+              ns.@(Follower.timeout) <- v
+          | Candidate _ ->
+              ns.@(Candidate.timeout) <- v
+          | Leader _ ->
+              ns.@(Leader.heartbeat) <- v )]
+
+  let message_pp ppf v =
+    let open Fmt in
+    match v with
+    | RequestVote s ->
+        pf ppf "RequestVote %a" StrategyTypes.Utils.request_vote_pp s
+    | RequestVoteResponse s ->
+        pf ppf "RequestVoteResponse %a"
+          StrategyTypes.Utils.request_vote_response_pp s
+    | AppendEntries {term; leader_commit; prev_log_index; prev_log_term; entries}
+      ->
+        pf ppf
+          "AppendEntries {term: %d; leader_commit: %d; prev_log_index: %d; \
+           prev_log_term: %d; entries_length: %d; entries: %a}"
+          term leader_commit prev_log_index prev_log_term (snd entries)
+          (brackets @@ list ~sep:(const char ',') log_entry_pp)
+          (fst entries |> Iter.to_list)
+    | AppendEntriesResponse {term; success} ->
+        pf ppf "AppendEntriesResponse {term: %d; success: %a}" term
+          (result
+             ~ok:(const string "Ok: " ++ int)
+             ~error:(const string "Error: " ++ int) )
+          success
+
+  let event_pp ppf v =
+    let open Fmt in
+    match v with
+    | Tick ->
+        pf ppf "Tick"
+    | Recv (m, src) ->
+        pf ppf "Recv(%a, %d)" message_pp m src
+    | Commands _ ->
+        pf ppf "Commands"
+
+  let action_pp ppf v =
+    let open Fmt in
+    match v with
+    | Send (d, m) ->
+        pf ppf "Send(%d, %a)" d message_pp m
+    | Broadcast m ->
+        pf ppf "Broadcast(%a)" message_pp m
+    | CommitCommands i ->
+        pf ppf "CommitCommands[%a]" (list ~sep:sp Command.pp) (i |> Iter.to_list)
+
+  let node_state_pp : node_state Fmt.t =
+   fun ppf v ->
+    let open Fmt in
+    match v with
+    | Follower {timeout; voted_for} ->
+        pf ppf "Follower{timeout:%d; voted_for:%a}" timeout
+          Fmt.(option ~none:(const string "None") int)
+          voted_for
+    | Candidate {quorum; timeout} ->
+        pf ppf "Candidate{quorum:%a, timeout:%d}" Quorum.pp quorum timeout
+    | Leader {rep_ackd; rep_sent; heartbeat} ->
+        let format_rep_map : int IntMap.t Fmt.t =
+         fun ppf v ->
+          let open Fmt in
+          let elts = v |> IntMap.bindings in
+          pf ppf "%a"
+            (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
+            elts
+        in
+        pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
+          format_rep_map rep_ackd format_rep_map rep_sent
+
+  let t_pp : t Fmt.t =
+   fun ppf t ->
+    Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
+      Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
+      (t.log |> Log.iter |> Iter.to_list)
+      t.commit_index t.current_term node_state_pp t.node_state
+end
+
+module type Strategy = sig
+  module StrategyTypes : StrategyTypes
+
+  open StrategyTypes
+
+  val increment_term : unit -> term
+
+  val send_request_vote : unit -> unit
+
+  val leader_transit_log_update : unit -> unit
+
+  val candidate_tick : unit -> unit
+
+  val recv_request_vote : request_vote * node_id -> unit
+
+  val recv_request_vote_response : request_vote_response * node_id -> unit
 end
