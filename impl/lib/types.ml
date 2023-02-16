@@ -39,6 +39,8 @@ let make_config ~node_id ~node_list ~election_timeout ?(max_outstanding = 8192)
   ; election_timeout
   ; max_outstanding }
 
+let get_log_term log idx = if idx < 0 then 0 else (Log.get log idx).term
+
 module PaxosTypes = struct
   type message =
     | RequestVote of {term: term; leader_commit: log_index}
@@ -410,7 +412,7 @@ module type ImplTypes = sig
   val t_pp : t Fmt.t
 end
 
-module VarPaxosTypes (StrategyTypes : StrategyTypes) :
+module VarImplTypes (StrategyTypes : StrategyTypes) :
   ImplTypes
     with type request_vote = StrategyTypes.request_vote
      and type request_vote_response = StrategyTypes.request_vote_response
@@ -572,4 +574,6 @@ module type Strategy = sig
   val recv_request_vote : request_vote * node_id -> unit
 
   val recv_request_vote_response : request_vote_response * node_id -> unit
+
+  val rep_sent_default : unit -> log_index
 end
