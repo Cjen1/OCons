@@ -65,17 +65,17 @@ module MakePaxosStrat
          {term= ex.@(t @> current_term); leader_commit= ex.@(t @> commit_index)}
 
   let leader_transit_log_update () =
-    let per_seq (_, seq) =
-      seq
-      |> Iter.iter (fun (idx, (le : log_entry)) ->
-             let log = ex.@(t @> log) in
-             if (not (Log.mem log idx)) || (Log.get log idx).term < le.term then
-               Log.set log idx le )
-    in
-    ex.@?(t @> node_state @> Candidate.quorum)
-    |> Option.get
-    |> (fun q -> q.Quorum.elts)
-    |> IntMap.to_seq |> Seq.iter per_seq ;
+    ( ex.@?(t @> node_state @> Candidate.quorum)
+    |> Option.iter
+       @@ fun q ->
+       IntMap.to_seq q.Quorum.elts
+       |> Seq.iter (fun (_, seq) ->
+              Iter.iter
+                (fun (idx, (le : log_entry)) ->
+                  let log = ex.@(t @> log) in
+                  if (not (Log.mem log idx)) || (Log.get log idx).term < le.term
+                  then Log.set log idx le )
+                seq ) ) ;
     (* replace term with current term since we are re-proposing it *)
     let ct = ex.@(t) in
     for idx = ct.commit_index + 1 to Log.highest ct.log do
