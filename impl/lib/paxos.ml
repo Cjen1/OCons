@@ -289,7 +289,7 @@ struct
     ; node_state= Follower {timeout= config.election_timeout}
     ; current_term= 0
     ; append_entries_length=
-        Ocons_core.Utils.InternalReporter.avg_reporter "ae_length" }
+        Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length" }
 end
 
 module Impl = Make (ImperativeActions (PaxosTypes))

@@ -4,15 +4,17 @@ open! Impl_core.Types
 module Cli = Ocons_core.Client
 module PMain = Infra.Make (Impl_core.Paxos)
 module RMain = Infra.Make (Impl_core.Raft)
+module VPMain = Infra.Make (Impl_core.VPaxos)
+module VRMain = Infra.Make (Impl_core.VRaft)
 
-type kind = Paxos | Raft
+type kind = Paxos | Raft | VPaxos | VRaft
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length =
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
-  let paxos_config =
+  let shared_config =
     let num_nodes = List.length node_addresses in
     let majority_quorums = (num_nodes / 2) + 1 in
     { phase1quorum= majority_quorums
@@ -35,15 +37,25 @@ let run kind node_id node_addresses internal_port external_port tick_period
   in
   match kind with
   | Paxos ->
-      let cfg = config paxos_config in
+      let cfg = config shared_config in
       Eio.traceln "Starting Paxos system:\nconfig = %a"
-        Impl_core.Types.config_pp paxos_config ;
+        Impl_core.Types.config_pp shared_config ;
       Eio_main.run @@ fun env -> PMain.run env cfg
   | Raft ->
-      let cfg = config paxos_config in
+      let cfg = config shared_config in
       Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
-        paxos_config ;
+        shared_config ;
       Eio_main.run @@ fun env -> RMain.run env cfg
+  | VPaxos ->
+      let cfg = config shared_config in
+      Eio.traceln "Starting VPaxos system:" ;
+      Eio.traceln "%a" Impl_core.Types.config_pp shared_config ;
+      Eio_main.run @@ fun env -> VPMain.run env cfg
+  | VRaft ->
+      let cfg = config shared_config in
+      Eio.traceln "Starting VRaft system:" ;
+      Eio.traceln "%a" Impl_core.Types.config_pp shared_config ;
+      Eio_main.run @@ fun env -> VRMain.run env cfg
 
 open Cmdliner
 
@@ -151,7 +163,10 @@ let cmd =
   let kind_t =
     let kind =
       Arg.enum
-        [("paxos", Paxos); ("Paxos", Paxos); ("raft", Raft); ("Raft", Raft)]
+        [("paxos", Paxos)
+        ; ("raft", Raft)
+        ; ("vpaxos", VPaxos)
+        ; ("vraft", VRaft)]
     in
     Arg.(
       required

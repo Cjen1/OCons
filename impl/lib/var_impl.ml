@@ -248,5 +248,17 @@ struct
     ; node_state= Follower {timeout= config.election_timeout; voted_for= None}
     ; current_term= 0
     ; append_entries_length=
-        Ocons_core.Utils.InternalReporter.avg_reporter "ae_length" }
+        Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length" }
+
+  let create_node = create
+
+  let available_space_for_commands t =
+    let outstanding = SegmentLog.highest t.log - t.commit_index in
+    assert (outstanding >= 0) ;
+    if match t.node_state with Leader _ -> true | _ -> false then
+      max (t.config.max_outstanding - outstanding) 0
+    else 0
+
+  let should_ack_clients t =
+    match t.node_state with Leader _ -> true | _ -> false
 end

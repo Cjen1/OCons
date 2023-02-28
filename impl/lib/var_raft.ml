@@ -25,6 +25,30 @@ module RaftStratTypes = struct
     let term_rv = RV.term
 
     let term_rvr = RVR.term
+
+    open Eio.Buf_write
+
+    let serialise_request_vote (s : request_vote) w =
+      BE.uint64 w Int64.(of_int s.term) ;
+      BE.uint64 w Int64.(of_int s.lastIndex) ;
+      BE.uint64 w Int64.(of_int s.lastTerm)
+
+    let serialise_request_vote_response (s : request_vote_response) w =
+      BE.uint64 w Int64.(of_int s.term) ;
+      Line_prot.SerPrim.bool s.success w
+
+    open Eio.Buf_read
+    open Eio.Buf_read.Syntax
+
+    let uint64 = map Int64.to_int BE.uint64
+
+    let parse_request_vote =
+      let* term = uint64 and* lastIndex = uint64 and* lastTerm = uint64 in
+      return @@ {term; lastIndex; lastTerm}
+
+    let parse_request_vote_response =
+      let* term = uint64 and* success = Line_prot.DeserPrim.bool in
+      return @@ {term; success}
   end
 end
 
@@ -89,5 +113,7 @@ module MakeRaft (AT : ActionFunc) = struct
   module RaftTypes = VarImplTypes (RaftStratTypes)
   module AT = AT (RaftTypes)
   module RaftStrat = MakeRaftStrat (RaftTypes) (AT)
+  include RaftTypes
   include Make (RaftStrat) (RaftTypes) (AT)
+  include Line_prot.VarLineProt (RaftStratTypes) (RaftTypes)
 end

@@ -30,6 +30,32 @@ module PaxosStratTypes = struct
     let term_rv = RV.term
 
     let term_rvr = RVR.term
+
+    open Eio.Buf_write
+
+    let serialise_request_vote (s : request_vote) w =
+      BE.uint64 w Int64.(of_int s.term) ;
+      BE.uint64 w Int64.(of_int s.leader_commit)
+
+    let serialise_request_vote_response (s : request_vote_response) w =
+      BE.uint64 w Int64.(of_int s.term) ;
+      BE.uint64 w Int64.(of_int s.start_index) ;
+      Line_prot.SerPrim.entries s.entries w
+
+    open Eio.Buf_read
+    open Eio.Buf_read.Syntax
+
+    let uint64 = map Int64.to_int BE.uint64
+
+    let parse_request_vote =
+      let* term = uint64 and* leader_commit = uint64 in
+      return @@ {term; leader_commit}
+
+    let parse_request_vote_response =
+      let* term = uint64
+      and* start_index = uint64
+      and* entries = Line_prot.DeserPrim.entries in
+      return @@ {term; start_index; entries}
   end
 end
 
@@ -107,5 +133,7 @@ module MakePaxos (AT : ActionFunc) = struct
   module PaxosTypes = VarImplTypes (PaxosStratTypes)
   module AT = AT (PaxosTypes)
   module PaxosStrat = MakePaxosStrat (PaxosTypes) (AT)
+  include PaxosTypes
   include Make (PaxosStrat) (PaxosTypes) (AT)
+  include Line_prot.VarLineProt (PaxosStratTypes) (PaxosTypes)
 end
