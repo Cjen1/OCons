@@ -17,6 +17,15 @@ module Ticker = struct
 end
 
 module Make (C : Consensus_intf.S) = struct
+  type debug =
+    { command_length_reporter: int InternalReporter.reporter
+    ; request_reporter: unit InternalReporter.reporter
+    ; no_space_reporter: unit InternalReporter.reporter
+    ; commit_reporter: unit InternalReporter.reporter
+    ; command_starts: (command_id, Mtime.t) Hashtbl.t
+    ; commit_delay_reporter: float InternalReporter.reporter
+    ; clock: Eio.Time.Mono.t }
+
   type t =
     { c_rx: command Eio.Stream.t
     ; c_tx: (command_id * op_result) Eio.Stream.t
@@ -26,10 +35,13 @@ module Make (C : Consensus_intf.S) = struct
     ; mutable cons: C.t
     ; ticker: Ticker.t
     ; internal_streams: (node_id, C.message Eio.Stream.t) Hashtbl.t
-    ; command_length_reporter: int InternalReporter.reporter
-    ; request_reporter: unit InternalReporter.reporter
-    ; no_space_reporter: unit InternalReporter.reporter
-    ; commit_reporter: unit InternalReporter.reporter }
+    ; debug: debug }
+
+  let trace_start command t =
+    let starts = t.debug.command_starts in
+    if not (Hashtbl.mem starts command.Command.id) then
+      Hashtbl.replace starts command.Command.id
+        (Eio.Time.Mono.now t.debug.clock)
 
   let apply (t : t) (cmd : command) : op_result =
     (* TODO truncate
@@ -37,6 +49,17 @@ module Make (C : Consensus_intf.S) = struct
        Core.Hash_set.remove t.inflight_txns cmd.id ;
     *)
     update_state_machine t.state_machine cmd
+
+  let slow_command_check cmd t =
+    let open Mtime in
+    let ( let* ) v f = Option.iter f v in
+    let* st = Hashtbl.find_opt t.debug.command_starts cmd.Command.id in
+    let ed = Eio.Time.Mono.now t.debug.clock in
+    let diff = span st ed in
+    let ( / ) = Float.div in
+    let delay_ms = Span.to_float_ns diff / Span.to_float_ns Span.ms in
+    t.debug.commit_delay_reporter delay_ms ;
+    if delay_ms > 50. then Magic_trace.take_snapshot ()
 
   let handle_actions t actions =
     let f : C.action -> unit = function
@@ -48,10 +71,11 @@ module Make (C : Consensus_intf.S) = struct
           dtraceln "Broadcast %a" C.message_pp msg
       | C.CommitCommands citer ->
           citer (fun cmd ->
+              slow_command_check cmd t ;
               let res = apply t cmd in
               if C.should_ack_clients t.cons then (
                 Eio.Stream.add t.c_tx (cmd.id, res) ;
-                t.commit_reporter () ;
+                t.debug.commit_reporter () ;
                 dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ) ;
           dtraceln "Committed %a"
             (Fmt.braces @@ Iter.pp_seq ~sep:", " Types.Command.pp)
@@ -79,7 +103,7 @@ module Make (C : Consensus_intf.S) = struct
        By contrapositive: num_to_take > 0 then length > 0
     *)
     let num_to_take = C.available_space_for_commands t.cons in
-    if num_to_take = 0 then t.no_space_reporter () ;
+    if num_to_take = 0 then t.debug.no_space_reporter () ;
     let iter f =
       let rec aux = function
         | i when i <= 0 ->
@@ -90,7 +114,8 @@ module Make (C : Consensus_intf.S) = struct
             | None ->
                 ()
             | Some c when not (Core.Hash_set.mem t.inflight_txns c.id) ->
-                t.request_reporter () ;
+                t.debug.request_reporter () ;
+                trace_start c t ;
                 f c ;
                 aux (rem - 1)
             | Some _ ->
@@ -102,12 +127,16 @@ module Make (C : Consensus_intf.S) = struct
     let length = Iter.length p_iter in
     if length > 0 then (
       dtraceln "Passing commands: %a" (Iter.pp_seq ~sep:"," Command.pp) p_iter ;
-      t.command_length_reporter length ;
+      t.debug.command_length_reporter length ;
       let tcons, actions = C.advance t.cons (Commands p_iter) in
       t.cons <- tcons ;
       handle_actions t actions )
 
-  let ensure_sent t = CMgr.flush_all t.cmgr
+  let ensure_sent t =
+    try CMgr.flush_all t.cmgr
+    with e when Utils.is_not_cancel e ->
+      dtraceln "Failed to flush %a" Fmt.exn_backtrace
+        (e, Printexc.get_raw_backtrace ())
 
   let tick t () =
     dtraceln "Tick" ;
@@ -127,12 +156,17 @@ module Make (C : Consensus_intf.S) = struct
       traceln "Failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
 
-  let run_inter ~sw (clock : #Eio.Time.clock) config period resolvers
-      client_msgs client_resps internal_streams =
-    let command_length_reporter = InternalReporter.avg_reporter "cmd_len" in
+  let run_inter ~sw (clock : #Eio.Time.clock) (mclock : #Eio.Time.Mono.t) config
+      period resolvers client_msgs client_resps internal_streams =
+    let command_length_reporter =
+      InternalReporter.avg_reporter Int.to_float "cmd_len"
+    in
     let request_reporter = InternalReporter.rate_reporter 0 "request" in
     let no_space_reporter = InternalReporter.rate_reporter 0 "no_space" in
     let commit_reporter = InternalReporter.rate_reporter 0 "commit" in
+    let commit_delay_reporter =
+      InternalReporter.avg_reporter Fun.id "latency"
+    in
     let cmgr =
       Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
           Eio.Time.sleep clock 1. )
@@ -140,6 +174,15 @@ module Make (C : Consensus_intf.S) = struct
     let cons = C.create_node config in
     let state_machine = Core.Hashtbl.create (module Core.String) in
     let ticker = Ticker.create (clock :> Eio.Time.clock) period in
+    let debug =
+      { command_length_reporter
+      ; request_reporter
+      ; no_space_reporter
+      ; commit_reporter
+      ; clock= (mclock :> Eio.Time.Mono.t)
+      ; command_starts= Hashtbl.create 100
+      ; commit_delay_reporter }
+    in
     let t =
       { c_tx= client_resps
       ; c_rx= client_msgs
@@ -149,12 +192,9 @@ module Make (C : Consensus_intf.S) = struct
       ; inflight_txns= Core.Hash_set.create (module Core.Int)
       ; ticker
       ; internal_streams
-      ; command_length_reporter
-      ; request_reporter
-      ; no_space_reporter
-      ; commit_reporter }
+      ; debug }
     in
-    let yielder = maybe_yield ~energy:10 in
+    let yielder = maybe_yield ~energy:1000 in
     while true do
       main_loop t ; yielder ()
     done ;
@@ -188,10 +228,16 @@ module Make (C : Consensus_intf.S) = struct
     in
     List.map (fun (id, r) -> (id, handshake r)) resolvers
 
-  type 'a env = < clock: #Eio.Time.clock ; net: #Eio.Net.t ; .. > as 'a
+  type 'a env =
+    < clock: #Eio.Time.clock
+    ; net: #Eio.Net.t
+    ; mono_clock: #Eio.Time.Mono.t
+    ; .. >
+    as
+    'a
 
-  let run ~sw env node_id config period resolvers client_msgs client_resps port
-      =
+  let run ~sw (env : _ env) node_id config period resolvers client_msgs
+      client_resps port =
     let internal_streams = Hashtbl.create (List.length resolvers) in
     Fiber.fork ~sw (fun () ->
         let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
@@ -202,8 +248,9 @@ module Make (C : Consensus_intf.S) = struct
         Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
           (accept_handler internal_streams) ) ;
     let resolvers = resolver_handshake node_id resolvers in
-    run_inter ~sw env#clock config period resolvers client_msgs client_resps
-      internal_streams
+    run_inter ~sw env#clock
+      (Eio.Stdenv.mono_clock env)
+      config period resolvers client_msgs client_resps internal_streams
 end
 
 module Test = struct
@@ -298,6 +345,7 @@ module Test = struct
     Eio_mock.Backend.run
     @@ fun () ->
     let clk = Eio_mock.Clock.make () in
+    let mclk = Eio_mock.Clock.Mono.make () in
     Switch.run
     @@ fun sw ->
     let c_rx = Eio.Stream.create 10 in
@@ -308,6 +356,7 @@ module Test = struct
     Fiber.fork ~sw (fun () ->
         run_inter ~sw
           (clk :> Eio.Time.clock)
+          (mclk :> Eio.Time.Mono.t)
           () 1. resolvers c_rx c_tx (Hashtbl.create 0) ) ;
     Fiber.yield () ;
     (* No errors or msgs on startup *)

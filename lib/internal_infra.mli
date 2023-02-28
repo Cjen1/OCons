@@ -3,7 +3,13 @@ open Types
 module Make (C : Consensus_intf.S) : sig
   type t
 
-  type 'a env = < clock: #Eio.Time.clock ; net: #Eio.Net.t ; .. > as 'a
+  type 'a env =
+    < clock: #Eio.Time.clock
+    ; mono_clock: #Eio.Time.Mono.t
+    ; net: #Eio.Net.t
+    ; .. >
+    as
+    'a
 
   val run :
        sw:Eio.Switch.t

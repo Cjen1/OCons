@@ -39,11 +39,27 @@
         scope = on.buildOpamProject' {recursive=true; } ./. query;
         devPackages = builtins.attrValues
           (pkgs.lib.getAttrs (builtins.attrNames query) scope);
+        magic-trace = pkgs.stdenv.mkDerivation {
+          name = "magic-trace";
+          src = pkgs.fetchurl {
+            url = "https://github.com/janestreet/magic-trace/releases/download/v1.1.0/magic-trace";
+            sha256 = "1arskf8zdr2bq5zzq4q8mkyzhj7c2f5xy5brlqgkbxb4bb417isd";
+          };
+          phases = ["installPhase" "patchPhase"];
+          installPhase = ''
+            mkdir -p $out/bin
+            cp $src $out/bin/magic-trace
+            chmod +x $out/bin/magic-trace
+            '';
+        };
       in
       {
         defaultPackage = pkgs.hello;
         devShell = pkgs.mkShell {
           buildInputs = devPackages ++ [
+          magic-trace
+          pkgs.linuxPackages_latest.perf
+          pkgs.fzf
           ];
         };
       });

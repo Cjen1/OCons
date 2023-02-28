@@ -12,6 +12,7 @@ type 'cons config =
 module Make (C : Consensus_intf.S) : sig
   type 'a env =
     < clock: #Eio.Time.clock
+    ; mono_clock: #Eio.Time.Mono.t
     ; net: #Eio.Net.t
     ; domain_mgr: #Eio.Domain_manager.t
     ; .. >

@@ -64,12 +64,14 @@ let recv_iter t parse f =
         dtraceln "recv_iter: open" ;
         (* TODO avoid alloc of seq nodes *)
         (* Reads all values *)
-        Fun.protect
-          (fun () ->
+        ( try
             r |> Buf_read.seq parse
-            |> Seq.iter (fun v -> f v ; dtraceln "recv_iter: read" ; yielder ())
-            )
-          ~finally:(fun () -> close_inflight t)
+            |> Seq.iter (fun v ->
+                   f v ; dtraceln "recv_iter: read" ; yielder () )
+          with e when Util.is_not_cancel e ->
+            traceln "Failed to read %a" Fmt.exn_backtrace
+              (e, Printexc.get_raw_backtrace ()) ) ;
+        close_inflight t
     | Closed ->
         dtraceln "recv_iter: closed retry" ;
         Condition.await_no_mutex t.has_recovered_cond

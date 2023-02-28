@@ -81,7 +81,8 @@ module InternalReporter = struct
     let update x = state := x :: !state in
     register_reporter pp reset ; update
 
-  let avg_reporter name =
+  let avg_reporter : 'a. ('a -> float) -> string -> 'a reporter =
+   fun conv name ->
     let state = ref [] in
     let reset () = state := [] in
     let open Fmt in
@@ -91,15 +92,12 @@ module InternalReporter = struct
         record
           [ field "avg" (fun s -> mean s) float
           ; field "50%" (fun s -> percentile s 50.) float
-          ; field "99%" (fun s -> percentile s 99.) float ]
+          ; field "99%" (fun s -> percentile s 99.) float
+          ; field "max" (fun s -> max s) float ]
       in
       pf ppf "%a" pp s
     in
-    let pp =
-      [ field name
-          (fun _ -> !state |> List.map Int.to_float |> Array.of_list)
-          pp_stats ]
-    in
-    let update x = state := x :: !state in
+    let pp = [field name (fun _ -> !state |> Array.of_list) pp_stats] in
+    let update x = state := conv x :: !state in
     register_reporter pp reset ; update
 end

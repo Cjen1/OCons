@@ -15,20 +15,28 @@ let pitcher ~sw clock n rate cmgr dispatch : unit Eio.Promise.t =
         let cmd = Command.{op= Write ("asdf", "asdf"); id= i} in
         let target = Float.add prev period in
         if target > clock#now then Eio.Time.sleep_until clock target ;
-        Cli.submit_request cmgr cmd ;
+        ( try Cli.submit_request cmgr cmd
+          with e when O.Utils.is_not_cancel e ->
+            traceln "Failed to dispatch %a" Fmt.exn_backtrace
+              (e, Printexc.get_raw_backtrace ()) ) ;
         req_reporter () ;
         Hashtbl.add dispatch i (Eio.Time.now clock) ;
         aux (i + 1, target)
   in
   Fiber.fork ~sw (fun () ->
-      Fun.protect
-        (fun () -> aux (0, Eio.Time.now clock))
-        ~finally:(fun () -> Promise.resolve u () ; traceln "Pitcher complete") ) ;
+      ( try aux (0, Eio.Time.now clock)
+        with e ->
+          traceln "Failed to dispatch %a" Fmt.exn_backtrace
+            (e, Printexc.get_raw_backtrace ()) ) ;
+      Promise.resolve u () ; traceln "Pitcher complete" ) ;
   t
 
-let catcher_iter clock responses (_, (cid, _)) =
-  if not (Hashtbl.mem responses cid) then
-    Hashtbl.add responses cid (Eio.Time.now clock)
+let latency_reporter = O.Utils.InternalReporter.avg_reporter Fun.id "lat"
+
+let catcher_iter clock requests responses (_, (cid, _)) =
+  if not (Hashtbl.mem responses cid) then (
+    Hashtbl.add responses cid (Eio.Time.now clock) ;
+    latency_reporter (Hashtbl.find responses cid -. Hashtbl.find requests cid) )
 
 let pp_stats ppf s =
   let s =
@@ -50,6 +58,7 @@ let pp_stats ppf s =
       ; field "l_p50" (fun (_, s) -> percentile s 50.) float
       ; field "l_p75" (fun (_, s) -> percentile s 75.) float
       ; field "l_p99" (fun (_, s) -> percentile s 99.) float
+      ; field "l_max" (fun (_, s) -> max s) float
       ; field "number" (fun (_, s) -> Array.length s) int ]
     in
     record fields
@@ -60,7 +69,7 @@ let run sockaddrs id n rate outfile debug =
   let dispatch = Hashtbl.create n in
   let response = Hashtbl.create n in
   let ( / ) = Eio.Path.( / ) in
-  if debug then Ocons_conn_mgr.set_debug_flag ();
+  if debug then Ocons_conn_mgr.set_debug_flag () ;
   let main env =
     Switch.run
     @@ fun sw ->
@@ -77,7 +86,7 @@ let run sockaddrs id n rate outfile debug =
       sockaddrs ;
     let cmgr =
       Cli.create_cmgr
-        ~kind:(Ocons_conn_mgr.Iter (catcher_iter env#clock response))
+        ~kind:(Ocons_conn_mgr.Iter (catcher_iter env#clock dispatch response))
         ~sw con_ress id
         (fun () -> Eio.Time.sleep env#clock 1.)
     in
@@ -104,7 +113,7 @@ let run sockaddrs id n rate outfile debug =
            |> Iter.map (fun (rid, (tx, rx)) () ->
                   Eio.Buf_write.string bw
                   @@ Fmt.str "{\"rid\": %d, \"tx\": %f, \"rx\": %f}" rid tx rx )
-           |> Iter.intersperse (fun () -> Eio.Buf_write.char bw ',')
+           |> Iter.intersperse (fun () -> Eio.Buf_write.string bw ",\n")
            |> Iter.iter (fun f -> f ()) ;
            Eio.Buf_write.string bw "]" ;
            traceln "Saved" ) ;
@@ -190,10 +199,9 @@ let cmd =
           (info ~docv:"PATH" ~doc:"Output the raw result to file" ["p"]) )
   in
   let debug_t =
-    Arg.(
-      value
-      & flag (info ~docv:"DEBUG" ~doc:"Debug print flag" ["d"]))
+    Arg.(value & flag (info ~docv:"DEBUG" ~doc:"Debug print flag" ["d"]))
   in
-  Cmd.v info Term.(const run $ sockaddrs_t $ id_t $ n_t $ rate_t $ file_t $ debug_t)
+  Cmd.v info
+    Term.(const run $ sockaddrs_t $ id_t $ n_t $ rate_t $ file_t $ debug_t)
 
 let () = exit Cmd.(eval @@ cmd)
