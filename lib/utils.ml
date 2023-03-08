@@ -17,7 +17,9 @@ module Quorum = struct
   let satisified t = t.n >= t.threshold
 end
 
-let dtraceln fmt = if debug_flag then Eio.traceln fmt else Fmt.kstr ignore fmt
+let dtraceln fmt =
+  let ignore_format = Format.ikfprintf ignore Fmt.stderr in
+  if debug_flag then Eio.traceln fmt else ignore_format fmt
 
 let is_not_cancel = function Eio.Cancel.Cancelled _ -> false | _ -> true
 
