@@ -12,7 +12,9 @@ module Gen = struct
             CAS {key; value; value'} )
       ; const NoOp ]
 
-  let command = map [op; int] (fun op id -> Ocons_core.Types.Command.{op; id})
+  let command =
+    map [op; int; int64] (fun op id ts ->
+        Ocons_core.Types.Command.{op; id; trace_start= Mtime.of_uint64_ns ts} )
 
   let log_entry =
     map [command; int] (fun command term -> Ocons_core.Types.{command; term})
@@ -84,7 +86,7 @@ let test_client_request r =
   @@ fun bw ->
   Line_prot.External_infra.serialise_request r bw ;
   let r' = Line_prot.External_infra.parse_request br in
-  check_eq ~cmp:Command.compare ~pp:Command.pp r r'
+  check_eq ~cmp:Command.compare ~pp:Command.pp_mach r r'
 
 let test_client_response r =
   let open Crowbar in
@@ -102,5 +104,5 @@ let () =
   let open Crowbar in
   add_test ~name:"client_request" [Gen.command] (fun command ->
       test_client_request command ) ;
-  add_test ~name:"client_response" [int; Gen.op_response] (fun id response ->
-      test_client_response (id, response) )
+  add_test ~name:"client_response" [int; Gen.op_response; int64] (fun id response ts ->
+      test_client_response (id, response, Mtime.of_uint64_ns ts ) )

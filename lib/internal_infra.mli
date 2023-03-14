@@ -19,7 +19,7 @@ module Make (C : Consensus_intf.S) : sig
     -> time
     -> connection_creater list
     -> command Eio.Stream.t
-    -> (command_id * op_result) Eio.Stream.t
+    -> (Line_prot.External_infra.response) Eio.Stream.t
     -> int
     -> unit
   (** [run ~sw env id cfg t conns c_rx c_tx port] Runs the specified consensus protocol, 

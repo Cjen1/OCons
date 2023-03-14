@@ -39,22 +39,27 @@ let sm_op_pp ppf v =
       Fmt.pf ppf "NoOp"
 
 module Command = struct
-  type t = {op: sm_op; id: command_id} [@@deriving bin_io, compare, sexp]
+  type t = {op: sm_op; id: command_id; mutable trace_start: Mtime.t}
+  [@@deriving compare]
 
-  let pp_mach ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
+  let pp_mach ppf v = Fmt.pf ppf "Command(%a, %d, %a)" sm_op_pp v.op v.id Mtime.pp v.trace_start
 
   let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 end
 
-type command = Command.t [@@deriving bin_io, compare, sexp]
+type command = Command.t [@@deriving compare]
 
-let empty_command = Command.{op= NoOp; id= -1}
+let update_command_time c =
+  c.Command.trace_start <- Mtime_clock.now ()
+
+let empty_command =
+  Command.{op= NoOp; id= -1; trace_start= Mtime.of_uint64_ns Int64.zero}
 
 let make_command =
   let rid = ref 0 in
   fun c ->
     rid := !rid + 1 ;
-    Command.{op= c; id= !rid}
+    Command.{op= c; id= !rid; trace_start = Mtime.of_uint64_ns Int64.zero}
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]
@@ -105,7 +110,7 @@ type log_index = int [@@deriving bin_io, compare]
 
 type term = int [@@deriving compare, compare, bin_io]
 
-type log_entry = {command: command; term: term} [@@deriving bin_io, compare]
+type log_entry = {command: command; term: term} [@@deriving compare]
 
 let log_entry_pp ppf v =
   Fmt.pf ppf "{command: %a; term : %d}" Command.pp v.command v.term
@@ -113,6 +118,6 @@ let log_entry_pp ppf v =
 let log_entry_pp_mach ppf v =
   Fmt.pf ppf "{command: %a; term : %d}" Command.pp_mach v.command v.term
 
-type client_request = command [@@deriving bin_io]
+type client_request = command 
 
 type client_response = (op_result, [`Unapplied]) Result.t [@@deriving bin_io]

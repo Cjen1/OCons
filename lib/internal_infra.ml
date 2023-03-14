@@ -19,6 +19,7 @@ end
 module Make (C : Consensus_intf.S) = struct
   type debug =
     { command_length_reporter: int InternalReporter.reporter
+    ; no_commands_reporter: unit InternalReporter.reporter
     ; request_reporter: unit InternalReporter.reporter
     ; no_space_reporter: unit InternalReporter.reporter
     ; commit_reporter: unit InternalReporter.reporter
@@ -28,20 +29,15 @@ module Make (C : Consensus_intf.S) = struct
 
   type t =
     { c_rx: command Eio.Stream.t
-    ; c_tx: (command_id * op_result) Eio.Stream.t
+    ; c_tx: Line_prot.External_infra.response Eio.Stream.t
     ; cmgr: C.message Ocons_conn_mgr.t
     ; state_machine: state_machine
-    ; inflight_txns: command_id Core.Hash_set.t
     ; mutable cons: C.t
     ; ticker: Ticker.t
     ; internal_streams: (node_id, C.message Eio.Stream.t) Hashtbl.t
     ; debug: debug }
 
-  let trace_start command t =
-    let starts = t.debug.command_starts in
-    if not (Hashtbl.mem starts command.Command.id) then
-      Hashtbl.replace starts command.Command.id
-        (Eio.Time.Mono.now t.debug.clock)
+  let trace_start command = command.Command.trace_start <- Mtime_clock.now ()
 
   let apply (t : t) (cmd : command) : op_result =
     (* TODO truncate
@@ -52,14 +48,14 @@ module Make (C : Consensus_intf.S) = struct
 
   let slow_command_check cmd t =
     let open Mtime in
-    let ( let* ) v f = Option.iter f v in
-    let* st = Hashtbl.find_opt t.debug.command_starts cmd.Command.id in
-    let ed = Eio.Time.Mono.now t.debug.clock in
-    let diff = span st ed in
-    let ( / ) = Float.div in
-    let delay_ms = Span.to_float_ns diff / Span.to_float_ns Span.ms in
-    t.debug.commit_delay_reporter delay_ms ;
-    if delay_ms > 50. then Magic_trace.take_snapshot ()
+    let st = cmd.Command.trace_start in
+    if st != Mtime.of_uint64_ns Int64.zero then (
+      let ed = Eio.Time.Mono.now t.debug.clock in
+      let diff = span st ed in
+      let ( / ) = Float.div in
+      let delay_ms = Span.to_float_ns diff / Span.to_float_ns Span.ms in
+      t.debug.commit_delay_reporter delay_ms ;
+      if delay_ms > 500. then Magic_trace.take_snapshot () )
 
   let handle_actions t actions =
     let f : C.action -> unit = function
@@ -74,7 +70,8 @@ module Make (C : Consensus_intf.S) = struct
               slow_command_check cmd t ;
               let res = apply t cmd in
               if C.should_ack_clients t.cons then (
-                Eio.Stream.add t.c_tx (cmd.id, res) ;
+                Eio.Stream.add t.c_tx
+                  (cmd.id, res, Eio.Time.Mono.now t.debug.clock) ;
                 t.debug.commit_reporter () ;
                 dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ) ;
           dtraceln "Committed %a"
@@ -102,35 +99,37 @@ module Make (C : Consensus_intf.S) = struct
     (* length = 0 => num_to_take = 0
        By contrapositive: num_to_take > 0 then length > 0
     *)
-    let num_to_take = C.available_space_for_commands t.cons in
-    if num_to_take = 0 then t.debug.no_space_reporter () ;
-    let iter f =
-      let rec aux = function
-        | i when i <= 0 ->
-            ()
-        | rem -> (
-            assert (rem > 0) ;
-            match Eio.Stream.take_nonblocking t.c_rx with
-            | None ->
-                ()
-            | Some c when not (Core.Hash_set.mem t.inflight_txns c.id) ->
-                t.debug.request_reporter () ;
-                trace_start c t ;
-                f c ;
-                aux (rem - 1)
-            | Some _ ->
-                aux (rem - 1) )
-      in
-      aux num_to_take
-    in
-    let p_iter = Iter.persistent iter in
-    let length = Iter.length p_iter in
-    if length > 0 then (
-      dtraceln "Passing commands: %a" (Iter.pp_seq ~sep:"," Command.pp) p_iter ;
-      t.debug.command_length_reporter length ;
-      let tcons, actions = C.advance t.cons (Commands p_iter) in
-      t.cons <- tcons ;
-      handle_actions t actions )
+    match C.available_space_for_commands t.cons with
+    | 0 ->
+        t.debug.no_space_reporter ()
+    | num_to_take -> (
+        assert (num_to_take > 0) ;
+        let fst = Eio.Stream.take_nonblocking t.c_rx in
+        match fst with
+        | None ->
+            t.debug.no_commands_reporter ()
+        | Some c1 ->
+            let iter f =
+              let rec aux = function
+                | i when i <= 0 ->
+                    ()
+                | rem -> (
+                    assert (rem > 0) ;
+                    match Eio.Stream.take_nonblocking t.c_rx with
+                    | None ->
+                        ()
+                    | Some c ->
+                        t.debug.request_reporter () ;
+                        trace_start c ;
+                        f c ;
+                        aux (rem - 1) )
+              in
+              aux (num_to_take - 1)
+            in
+            let iter = Iter.cons c1 iter in
+            let tcons, actions = C.advance t.cons (Commands iter) in
+            t.cons <- tcons ;
+            handle_actions t actions )
 
   let ensure_sent t =
     try CMgr.flush_all t.cmgr
@@ -158,15 +157,6 @@ module Make (C : Consensus_intf.S) = struct
 
   let run_inter ~sw (clock : #Eio.Time.clock) (mclock : #Eio.Time.Mono.t) config
       period resolvers client_msgs client_resps internal_streams =
-    let command_length_reporter =
-      InternalReporter.avg_reporter Int.to_float "cmd_len"
-    in
-    let request_reporter = InternalReporter.rate_reporter 0 "request" in
-    let no_space_reporter = InternalReporter.rate_reporter 0 "no_space" in
-    let commit_reporter = InternalReporter.rate_reporter 0 "commit" in
-    let commit_delay_reporter =
-      InternalReporter.avg_reporter Fun.id "latency"
-    in
     let cmgr =
       Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
           Eio.Time.sleep clock 1. )
@@ -175,13 +165,15 @@ module Make (C : Consensus_intf.S) = struct
     let state_machine = Core.Hashtbl.create (module Core.String) in
     let ticker = Ticker.create (clock :> Eio.Time.clock) period in
     let debug =
-      { command_length_reporter
-      ; request_reporter
-      ; no_space_reporter
-      ; commit_reporter
+      { command_length_reporter=
+          InternalReporter.avg_reporter Int.to_float "cmd_len"
+      ; no_commands_reporter= InternalReporter.rate_reporter 0 "no-commands"
+      ; request_reporter= InternalReporter.rate_reporter 0 "request"
+      ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space"
+      ; commit_reporter= InternalReporter.rate_reporter 0 "commit"
+      ; commit_delay_reporter= InternalReporter.avg_reporter Fun.id "latency"
       ; clock= (mclock :> Eio.Time.Mono.t)
-      ; command_starts= Hashtbl.create 100
-      ; commit_delay_reporter }
+      ; command_starts= Hashtbl.create 100 }
     in
     let t =
       { c_tx= client_resps
@@ -189,12 +181,11 @@ module Make (C : Consensus_intf.S) = struct
       ; cmgr
       ; cons
       ; state_machine
-      ; inflight_txns= Core.Hash_set.create (module Core.Int)
       ; ticker
       ; internal_streams
       ; debug }
     in
-    let yielder = maybe_yield ~energy:1000 in
+    let yielder = maybe_yield ~energy:10 in
     while true do
       main_loop t ; yielder ()
     done ;
@@ -254,9 +245,17 @@ module Make (C : Consensus_intf.S) = struct
 end
 
 module Test = struct
-  let w k n = Command.{op= Write (k, n); id= Core.Random.int Core.Int.max_value}
+  let w k n =
+    Command.
+      { op= Write (k, n)
+      ; id= Core.Random.int Core.Int.max_value
+      ; trace_start= Mtime.of_uint64_ns Int64.zero }
 
-  let r n = Command.{op= Read n; id= Core.Random.int Core.Int.max_value}
+  let r n =
+    Command.
+      { op= Read n
+      ; id= Core.Random.int Core.Int.max_value
+      ; trace_start= Mtime.of_uint64_ns Int64.zero }
 
   module CT = struct
     type message = Core.String.t [@@deriving sexp]
@@ -365,12 +364,13 @@ module Test = struct
     Eio_mock.Flow.on_read f1 [`Return "1\n"] ;
     Fiber.yield () ;
     Fiber.yield () ;
+    let mid (_, v, _) = v in
     dtraceln "Read from stream: %a"
       (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
-      (Option.map snd @@ Eio.Stream.take_nonblocking c_tx) ;
+      (Option.map mid @@ Eio.Stream.take_nonblocking c_tx) ;
     dtraceln "Read from stream: %a"
       (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
-      (Option.map snd @@ Eio.Stream.take_nonblocking c_tx) ;
+      (Option.map mid @@ Eio.Stream.take_nonblocking c_tx) ;
     Fiber.yield () ;
     [%expect
       {|
@@ -390,7 +390,7 @@ module Test = struct
     for _ = 0 to 4 do
       dtraceln "Read from stream: %a"
         (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
-        (Option.map snd @@ Eio.Stream.take_nonblocking c_tx)
+        (Option.map mid @@ Eio.Stream.take_nonblocking c_tx)
     done ;
     [%expect
       {|
@@ -405,7 +405,7 @@ module Test = struct
     for _ = 1 to 2 do
       dtraceln "Read from stream: %a"
         (Fmt.option ~none:(Fmt.any "None") Types.op_result_pp)
-        (Option.map snd @@ Eio.Stream.take_nonblocking c_tx)
+        (Option.map mid @@ Eio.Stream.take_nonblocking c_tx)
     done ;
     [%expect
       {|

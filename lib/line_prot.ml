@@ -27,8 +27,9 @@ module SerPrim = struct
     | NoOp ->
         ()
 
-  let command Command.{op; id} w =
+  let command Command.{op; id; trace_start} w =
     W.BE.uint64 w (Int64.of_int id) ;
+    W.BE.uint64 w (Mtime.to_uint64_ns trace_start) ;
     sm_op op w
 
   let entries (es, length) w =
@@ -78,9 +79,10 @@ module DeserPrim = struct
              (Fmt.str "Received %d which is not a valid op_code" op_code) )
 
   let command =
-    let* id = R.map Int64.to_int R.BE.uint64 in
-    let* op = sm_op in
-    R.return Command.{op; id}
+    let* id = R.map Int64.to_int R.BE.uint64
+    and* trace_start = R.map Mtime.of_uint64_ns R.BE.uint64
+    and* op = sm_op in
+    R.return Command.{op; id; trace_start}
 
   let entries r =
     let len = R.BE.uint64 r |> Int64.to_int in
@@ -104,10 +106,11 @@ module External_infra = struct
 
   let parse_request = DeserPrim.command
 
-  type response = command_id * op_result
+  type response = command_id * op_result * Mtime.t
 
   let response_pp : response Fmt.t =
-   fun ppf (id, res) -> Fmt.pf ppf "{id:%d; res:%a}" id Types.op_result_pp res
+   fun ppf (id, res, _) ->
+    Fmt.pf ppf "{id:%d; res:%a}" id Types.op_result_pp res
 
   let op_result_to_enum = function
     | Success ->
@@ -117,8 +120,9 @@ module External_infra = struct
     | ReadSuccess _ ->
         2
 
-  let serialise_response (id, res) w =
+  let serialise_response (id, res, time) w =
     W.BE.uint64 w (Int64.of_int id) ;
+    W.BE.uint64 w (Mtime.to_uint64_ns time) ;
     W.uint8 w (op_result_to_enum res) ;
     match res with
     | Success ->
@@ -131,16 +135,17 @@ module External_infra = struct
   let parse_response : response R.parser =
     let open R.Syntax in
     let* id = R.map Int64.to_int R.BE.uint64
+    and* time = R.map Mtime.of_uint64_ns R.BE.uint64
     and* res_code = R.map Char.code R.any_char in
     match res_code with
     | 0 (*Success*) ->
-        R.return (id, Success)
+        R.return (id, Success, time)
     | 1 (*Failure*) ->
         let* msg = DeserPrim.string in
-        R.return (id, Failure msg)
+        R.return (id, Failure msg, time)
     | 2 (*ReadSuccess*) ->
         let* v = DeserPrim.string in
-        R.return (id, ReadSuccess v)
+        R.return (id, ReadSuccess v, time)
     | _ ->
         raise
         @@ Invalid_argument

@@ -65,7 +65,18 @@ let accept_handler t sock addr =
       traceln "Client handler failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
 
-let run (net : #Eio.Net.t) port cmd_str res_str =
+let slow_result_check trace (mclock : #Eio.Time.Mono.t) reporter =
+  let open Mtime in
+  let st = trace in
+  if st != Mtime.of_uint64_ns Int64.zero then (
+    let ed = Eio.Time.Mono.now mclock in
+    let diff = span st ed in
+    let ( / ) = Float.div in
+    let delay_ms = Span.to_float_ns diff / Span.to_float_ns Span.ms in
+    reporter delay_ms ;
+    if delay_ms > 500. then Magic_trace.take_snapshot () )
+
+let run (net : #Eio.Net.t) (mclock : #Eio.Time.Mono.t) port cmd_str res_str =
   Switch.run
   @@ fun sw ->
   let req_reporter = InternalReporter.rate_reporter 0 "cli_req" in
@@ -90,17 +101,19 @@ let run (net : #Eio.Net.t) port cmd_str res_str =
       sock accept_handler
   in
   let result_fiber () =
+    let reporter = InternalReporter.avg_reporter Fun.id "latency" in
     let yielder = Utils.maybe_yield ~energy:128 in
     (* Guaranteed to get at most one result per registered request *)
     while true do
       dtraceln "Waiting for response" ;
-      let ((cid, _) as res) = Eio.Stream.take res_str in
+      let cid, res, trace = Eio.Stream.take res_str in
+      slow_result_check trace mclock reporter ;
       dtraceln "Got response for %d" cid ;
       (let ( let* ) m f = Option.iter f m in
        let* conn_id = Hashtbl.find_opt t.req_tbl cid in
        let* conn = Hashtbl.find_opt t.conn_tbl conn_id in
        dtraceln "Passing response for %d to %d" cid conn_id ;
-       Eio.Stream.add conn res ;
+       Eio.Stream.add conn (cid, res, Eio.Time.Mono.now mclock) ;
        yielder () ) ;
       Hashtbl.remove t.req_tbl cid
     done

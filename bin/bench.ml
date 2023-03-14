@@ -2,51 +2,71 @@ open! Ocons_core
 open! Ocons_core.Types
 module O = Ocons_core
 module Cli = Ocons_core.Client
+module MT = Eio.Time.Mono
 open Eio.Std
 
-let pitcher ~sw clock n rate cmgr dispatch : unit Eio.Promise.t =
+let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
+    unit Eio.Promise.t =
   let t, u = Promise.create () in
-  let period = Float.div 1. rate in
+  let period =
+    Mtime.Span.to_float_ns Mtime.Span.s /. rate
+    |> Mtime.Span.of_float_ns |> Option.get
+  in
   let req_reporter = O.Utils.InternalReporter.rate_reporter 0 "req_dispatch" in
   let rec aux = function
     | i, _ when i >= n ->
         ()
     | i, prev ->
-        let cmd = Command.{op= Write ("asdf", "asdf"); id= i} in
-        let target = Float.add prev period in
-        if target > clock#now then Eio.Time.sleep_until clock target ;
+        let cmd =
+          Command.
+            { op= Write ("asdf", "asdf")
+            ; id= i
+            ; trace_start= Mtime.of_uint64_ns Int64.zero }
+        in
+        let target = Mtime.add_span prev period |> Option.get in
+        if Mtime.is_later target ~than:(MT.now mclock) then
+          MT.sleep_until mclock target ;
         ( try Cli.submit_request cmgr cmd
           with e when O.Utils.is_not_cancel e ->
             traceln "Failed to dispatch %a" Fmt.exn_backtrace
               (e, Printexc.get_raw_backtrace ()) ) ;
         req_reporter () ;
-        Hashtbl.add dispatch i (Eio.Time.now clock) ;
+        Array.set dispatch i (Eio.Time.Mono.now mclock) ;
         aux (i + 1, target)
   in
   Fiber.fork ~sw (fun () ->
-      ( try aux (0, Eio.Time.now clock)
+      ( try aux (0, MT.now mclock)
         with e ->
           traceln "Failed to dispatch %a" Fmt.exn_backtrace
             (e, Printexc.get_raw_backtrace ()) ) ;
       Promise.resolve u () ; traceln "Pitcher complete" ) ;
   t
 
+let to_float_ms s =
+  Mtime.Span.to_float_ns s /. Mtime.Span.to_float_ns Mtime.Span.ms
+
 let latency_reporter = O.Utils.InternalReporter.avg_reporter Fun.id "lat"
 
-let catcher_iter clock requests responses (_, (cid, _)) =
-  if not (Hashtbl.mem responses cid) then (
-    Hashtbl.add responses cid (Eio.Time.now clock) ;
-    latency_reporter (Hashtbl.find responses cid -. Hashtbl.find requests cid) )
+let catcher_iter mclock requests responses (_, (cid, _, _)) =
+  if Array.get responses cid |> Option.is_none then (
+    let t = Eio.Time.Mono.now mclock in
+    let latency = Mtime.span t (Array.get requests cid) |> to_float_ms in
+    if latency > 500. then Magic_trace.take_snapshot () ;
+    Array.set responses cid (Some t) ;
+    latency_reporter latency )
 
 let pp_stats ppf s =
+  let min_time a b = if Mtime.is_later a ~than:b then b else a in
+  let max_time a b = if Mtime.is_later a ~than:b then a else b in
   let s =
     let ends = Array.map (fun (_, (_, v)) -> v) s in
-    let lowest = Array.fold_left Float.min Float.max_float ends in
-    let highest = Array.fold_left Float.max Float.min_float ends in
-    let throughput =
-      Float.div (Array.length ends |> Float.of_int) (Float.sub highest lowest)
+    let lowest = Array.fold_left min_time Mtime.max_stamp ends in
+    let highest = Array.fold_left max_time Mtime.min_stamp ends in
+    let duration = Mtime.span lowest highest |> to_float_ms in
+    let throughput = Float.div (Array.length ends |> Float.of_int) duration in
+    let latencies =
+      Array.map (fun (_, (s, e)) -> Mtime.span s e |> to_float_ms) s
     in
-    let latencies = Array.map (fun (_, (s, e)) -> Float.sub e s) s in
     (throughput, latencies)
   in
   let pp_stats =
@@ -66,8 +86,8 @@ let pp_stats ppf s =
   Fmt.pf ppf "%a" pp_stats s
 
 let run sockaddrs id n rate outfile debug =
-  let dispatch = Hashtbl.create n in
-  let response = Hashtbl.create n in
+  let dispatch = Array.init n (fun _ -> Mtime.of_uint64_ns Int64.zero) in
+  let response = Array.init n (fun _ -> None) in
   let ( / ) = Eio.Path.( / ) in
   if debug then Ocons_conn_mgr.set_debug_flag () ;
   let main env =
@@ -86,19 +106,25 @@ let run sockaddrs id n rate outfile debug =
       sockaddrs ;
     let cmgr =
       Cli.create_cmgr
-        ~kind:(Ocons_conn_mgr.Iter (catcher_iter env#clock dispatch response))
+        ~kind:
+          (Ocons_conn_mgr.Iter (catcher_iter env#mono_clock dispatch response))
         ~sw con_ress id
         (fun () -> Eio.Time.sleep env#clock 1.)
     in
-    let complete = pitcher ~sw env#clock n rate cmgr dispatch in
+    let complete = pitcher ~sw env#mono_clock n rate cmgr dispatch in
     Promise.await complete ;
-    let request_response_pairs = Hashtbl.create n in
-    let add_entries_iter id resp =
-      let dis = Hashtbl.find dispatch id in
-      Hashtbl.add request_response_pairs id (dis, resp)
+    Eio.Time.sleep env#clock 1. ;
+    (* End of test *)
+    let request_response_pairs =
+      let open Iter.Infix in
+      0 -- (n - 1)
+      |> Iter.filter (fun i -> Array.get response i |> Option.is_some)
+      |> Iter.map (fun i ->
+             (i, (Array.get dispatch i, Array.get response i |> Option.get)) )
     in
-    Hashtbl.iter add_entries_iter response ;
-    let responses = request_response_pairs |> Hashtbl.to_seq |> Array.of_seq in
+    let responses =
+      request_response_pairs |> Iter.to_seq_persistent |> Array.of_seq
+    in
     traceln "Results: %a" pp_stats responses ;
     outfile
     |> Option.iter (fun path ->
@@ -109,10 +135,11 @@ let run sockaddrs id n rate outfile debug =
            @@ fun bw ->
            traceln "Saving" ;
            Eio.Buf_write.string bw "[" ;
-           Iter.of_array responses
+           request_response_pairs
            |> Iter.map (fun (rid, (tx, rx)) () ->
                   Eio.Buf_write.string bw
-                  @@ Fmt.str "{\"rid\": %d, \"tx\": %f, \"rx\": %f}" rid tx rx )
+                  @@ Fmt.str "{\"rid\": %d, \"tx\": %a, \"rx\": %a}" rid
+                       Mtime.pp tx Mtime.pp rx )
            |> Iter.intersperse (fun () -> Eio.Buf_write.string bw ",\n")
            |> Iter.iter (fun f -> f ()) ;
            Eio.Buf_write.string bw "]" ;

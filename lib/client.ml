@@ -82,7 +82,7 @@ let create_rpc ~sw env resolvers id retry_period =
         Fiber.check () ;
         let resps = recv_resp t.cmgr |> Iter.persistent in
         resps
-        |> Iter.iter (fun (id, res) ->
+        |> Iter.iter (fun (id, res, _) ->
                dtraceln "Received result for %d: %a" id op_result_pp res ;
                match Hashtbl.find_opt t.request_state id with
                | None ->
@@ -100,7 +100,7 @@ let send_request ?(random_id = false) t op =
     if random_id then Random.int32 Int32.max_int |> Int32.to_int
     else t.next_id ()
   in
-  let command = Command.{op; id} in
+  let command = Command.{op; id; trace_start = Mtime.of_uint64_ns Int64.zero} in
   let send () = submit_request t.cmgr command in
   let res_t, res_u = Promise.create () in
   let request_state =

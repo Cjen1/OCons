@@ -23,13 +23,15 @@ let dtraceln fmt =
 
 let is_not_cancel = function Eio.Cancel.Cancelled _ -> false | _ -> true
 
-let maybe_yield ~energy =
+let maybe_do ~energy ~f =
   let curr = ref energy in
   fun () ->
     if !curr <= 0 then (
       curr := energy ;
-      Eio.Fiber.yield () ) ;
+      f () ) ;
     curr := !curr - 1
+
+let maybe_yield = maybe_do ~f:Eio.Fiber.yield
 
 module InternalReporter = struct
   type reporter_pp = time Fmt.t
