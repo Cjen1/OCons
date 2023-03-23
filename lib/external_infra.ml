@@ -2,7 +2,7 @@ open! Types
 open Eio.Std
 open! Utils
 
-let request_yield_energy = 128
+let request_yield_energy = 16
 
 let response_flush_energy = 16
 
@@ -15,6 +15,10 @@ type request = Line_prot.External_infra.request
 type response = Line_prot.External_infra.response
 
 type socket_responder = {sw: Switch.t; bw: Eio.Buf_write.t; mf: unit -> unit}
+
+let to_float_ms span =
+  let open Mtime.Span in
+  to_float_ns span /. to_float_ns ms
 
 type t =
   { conn_tbl: (client_id, socket_responder) Hashtbl.t
@@ -76,7 +80,7 @@ let slow_result_check trace (mclock : #Eio.Time.Mono.t) reporter =
     let ( / ) = Float.div in
     let delay_ms = Span.to_float_ns diff / Span.to_float_ns Span.ms in
     reporter delay_ms ;
-    if delay_ms > 500. then Magic_trace.take_snapshot () )
+    if delay_ms > 500. then (*Magic_trace.take_snapshot*) () )
 
 let run (net : #Eio.Net.t) (mclock : #Eio.Time.Mono.t) port cmd_str res_str =
   Switch.run
@@ -103,10 +107,13 @@ let run (net : #Eio.Net.t) (mclock : #Eio.Time.Mono.t) port cmd_str res_str =
       sock accept_handler
   in
   let result_fiber () =
-    let reporter = InternalReporter.avg_reporter Fun.id "latency" in
+    let reporter =
+      InternalReporter.avg_reporter Fun.id "internal->external latency"
+    in
     let yielder = Utils.maybe_yield ~energy:result_yield_energy in
     (* Guaranteed to get at most one result per registered request *)
     while true do
+      let cycle_timer = Mtime_clock.counter () in
       dtraceln "Waiting for response" ;
       let cid, res, trace = Eio.Stream.take res_str in
       slow_result_check trace mclock reporter ;
@@ -127,7 +134,9 @@ let run (net : #Eio.Net.t) (mclock : #Eio.Time.Mono.t) port cmd_str res_str =
       in
       (* TODO check overhead for this*)
       Hashtbl.remove t.req_tbl cid ;
-      yielder ()
+      yielder () ;
+      let elapsed = Mtime_clock.count cycle_timer |> to_float_ms in
+      if elapsed > 300. then Magic_trace.take_snapshot ()
     done
   in
   Fiber.both result_fiber server_fiber ;
