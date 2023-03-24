@@ -41,7 +41,7 @@ let%expect_test "transit_candidate" =
   [%expect
     {|
     +Candidate for term 3
-    t': {log: []; commit_index:-1; current_term: 3; node_state:Candidate{quorum:{threshold 1, elts:
+    t': {log: []; commit_index:-1; current_term: 3; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:3; leader_commit:-1})] |}] ;
   let t', actions = Imp.run_side_effects Impl.transit_candidate t' in
@@ -52,7 +52,7 @@ let%expect_test "transit_candidate" =
   [%expect
     {|
     +Candidate for term 6
-    t': {log: []; commit_index:-1; current_term: 6; node_state:Candidate{quorum:{threshold 1, elts:
+    t': {log: []; commit_index:-1; current_term: 6; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:6; leader_commit:-1})] |}]
 
@@ -148,7 +148,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Candidate for term 12
-    node_state: {log: []; commit_index:-1; current_term: 12; node_state:Candidate{quorum:{threshold 1, elts:
+    node_state: {log: []; commit_index:-1; current_term: 12; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}} |}] ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
@@ -286,7 +286,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Candidate for term 13
-    t: {log: [{command: Command(Read m1, 9); term : 12}]; commit_index:-1; current_term: 13; node_state:Candidate{quorum:{threshold 1, elts:
+    t: {log: [{command: Command(Read m1, 9); term : 12}]; commit_index:-1; current_term: 13; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:13; leader_commit:-1})] |}] ;
   let rv = RequestVote {term= 13; leader_commit= -1} in
@@ -371,7 +371,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Candidate for term 14
-    t: {log: [{command: Command(Read m1, 9); term : 12},{command: Command(Read m4, 11); term : 13}]; commit_index:-1; current_term: 14; node_state:Candidate{quorum:{threshold 1, elts:
+    t: {log: [{command: Command(Read m1, 9); term : 12},{command: Command(Read m4, 11); term : 13}]; commit_index:-1; current_term: 14; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:14; leader_commit:-1})] |}] ;
   let rv = RequestVote {term= 14; leader_commit= -1} in
@@ -484,7 +484,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Candidate for term 102
-    t: {log: [{command: Command(Read m1, 9); term : 12},{command: Command(Read m2, 10); term : 12}]; commit_index:0; current_term: 102; node_state:Candidate{quorum:{threshold 1, elts:
+    t: {log: [{command: Command(Read m1, 9); term : 12},{command: Command(Read m2, 10); term : 12}]; commit_index:0; current_term: 102; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:102; leader_commit:0})] |}] ;
   let t, actions = Impl.advance t (Recv (rvr1 102, 1)) in
@@ -492,7 +492,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 102
-    t: {log: [{command: Command(Read m1, 9); term : 12},{command: Command(Read m4, 11); term : 102},{command: Command(Read m5, 12); term : 102},{command: Command(Read m6, 13); term : 102}]; commit_index:-1; current_term: 102; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(Read m1, 9); term : 12},{command: Command(Read m4, 11); term : 102},{command: Command(Read m5, 12); term : 102},{command: Command(Read m6, 13); term : 102}]; commit_index:0; current_term: 102; node_state:Leader{heartbeat:0; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 3}, {2, 3}]}
     actions: [Send(1, AppendEntries {term: 102; leader_commit: 0; prev_log_index: 0; prev_log_term: 12; entries_length: 3; entries:
                                                              [{command: Command(Read m4, 11); term : 102},{command: Command(Read m5, 12); term : 102},{command: Command(Read m6, 13); term : 102}]})
@@ -508,7 +508,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Candidate for term 103
-    t: {log: [{command: Command(Read m1, 9); term : 13},{command: Command(Read m4, 11); term : 13},{command: Command(Read m5, 12); term : 13},{command: Command(Read m6, 13); term : 13}]; commit_index:1; current_term: 103; node_state:Candidate{quorum:{threshold 1, elts:
+    t: {log: [{command: Command(Read m1, 9); term : 13},{command: Command(Read m4, 11); term : 13},{command: Command(Read m5, 12); term : 13},{command: Command(Read m6, 13); term : 13}]; commit_index:1; current_term: 103; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:103; leader_commit:1})] |}] ;
   let t1, actions = Impl.advance t1 (Recv (rvr2 103, 2)) in
@@ -516,7 +516,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 103
-    t: {log: [{command: Command(Read m1, 9); term : 13},{command: Command(Read m4, 11); term : 13},{command: Command(Read m7, 14); term : 103},{command: Command(Read m6, 13); term : 103}]; commit_index:-1; current_term: 103; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(Read m1, 9); term : 13},{command: Command(Read m4, 11); term : 13},{command: Command(Read m7, 14); term : 103},{command: Command(Read m6, 13); term : 103}]; commit_index:1; current_term: 103; node_state:Leader{heartbeat:0; rep_ackd:
     [{0, -1}, {2, -1}]; rep_sent:[{0, 3}, {2, 3}]}
     actions: [Send(0, AppendEntries {term: 103; leader_commit: 1; prev_log_index: 1; prev_log_term: 13; entries_length: 2; entries:
                                                              [{command: Command(Read m7, 14); term : 103},{command: Command(Read m6, 13); term : 103}]})
@@ -532,7 +532,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Candidate for term 101
-    t: {log: [{command: Command(Read m1, 9); term : 14},{command: Command(Read m4, 11); term : 14},{command: Command(Read m7, 14); term : 14}]; commit_index:-1; current_term: 101; node_state:Candidate{quorum:{threshold 1, elts:
+    t: {log: [{command: Command(Read m1, 9); term : 14},{command: Command(Read m4, 11); term : 14},{command: Command(Read m7, 14); term : 14}]; commit_index:-1; current_term: 101; node_state:Candidate {quorum:{threshold 1, elts:
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:101; leader_commit:-1})] |}] ;
   let t2, actions = Impl.advance t2 (Recv (rvr0 101, 0)) in

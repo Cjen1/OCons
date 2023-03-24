@@ -18,11 +18,11 @@
     },
     "flake-utils": {
       "locked": {
-        "lastModified": 1667395993,
-        "narHash": "sha256-nuEHfE/LcWyuSWnS8t12N1wc105Qtau+/OdUAjtQ0rA=",
+        "lastModified": 1678901627,
+        "narHash": "sha256-U02riOqrKKzwjsxc/400XnElV+UtPUQWpANPlyazjH0=",
         "owner": "numtide",
         "repo": "flake-utils",
-        "rev": "5aed5285a952e0b949eb3ba02c12fa4fcfef535f",
+        "rev": "93a2b84fc4b70d9e089d029deacc3583435c2ed6",
         "type": "github"
       },
       "original": {
@@ -85,15 +85,17 @@
         "mirage-opam-overlays": "mirage-opam-overlays",
         "nixpkgs": "nixpkgs",
         "opam-overlays": "opam-overlays",
-        "opam-repository": "opam-repository",
+        "opam-repository": [
+          "opam-repository"
+        ],
         "opam2json": "opam2json"
       },
       "locked": {
-        "lastModified": 1675164788,
-        "narHash": "sha256-xb361ClxsmvHkmsR64uDWT1S7tW4Zxb/8ELZ2Sv5Jl4=",
+        "lastModified": 1677575814,
+        "narHash": "sha256-Lc1GXBw0AiXGukJqzwtVEqBYv+DLUqcsqc8Lc3OtgUA=",
         "owner": "tweag",
         "repo": "opam-nix",
-        "rev": "15f724c3e01066fdb41f9ae7e3123f26a65b1d33",
+        "rev": "4bb1a4c372f639f44fc6745f13c86f4397e82d34",
         "type": "github"
       },
       "original": {
@@ -121,16 +123,17 @@
     "opam-repository": {
       "flake": false,
       "locked": {
-        "lastModified": 1673100816,
-        "narHash": "sha256-v5E5ZymUpTE3ytxjs6vfiNsFCPGbWJviAnrk6q7SfbM=",
+        "lastModified": 1675611819,
+        "narHash": "sha256-MOZzBiG/jyNSebQc3zrCDMH7YGfZaF7Mq8f48GAMHDQ=",
         "owner": "ocaml",
         "repo": "opam-repository",
-        "rev": "9f576a1b9dd69b86bde542d9f89d534c0cc916b8",
+        "rev": "562afb69b736d0b96a88588228dd55ae9cfefe60",
         "type": "github"
       },
       "original": {
         "owner": "ocaml",
         "repo": "opam-repository",
+        "rev": "562afb69b736d0b96a88588228dd55ae9cfefe60",
         "type": "github"
       }
     },
@@ -162,7 +165,8 @@
           "opam-nix",
           "nixpkgs"
         ],
-        "opam-nix": "opam-nix"
+        "opam-nix": "opam-nix",
+        "opam-repository": "opam-repository"
       }
     }
   },
