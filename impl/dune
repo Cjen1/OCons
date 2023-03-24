@@ -1,3 +1,4 @@
 (executable
  (name main)
+ (public_name ocons)
  (libraries impl_core cmdliner))

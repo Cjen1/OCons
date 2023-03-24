@@ -29,7 +29,7 @@
           (pkgs.lib.getAttrs (builtins.attrNames query) scope);
       in
       {
-        defaultPackage = pkgs.hello;
+        defaultPackage = scope.ocons;
         devShell = pkgs.mkShell {
           inputsFrom = [scope.ocons];
           buildInputs = devPackages ++ [
