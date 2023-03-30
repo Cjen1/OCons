@@ -29,7 +29,7 @@ module SerPrim = struct
 
   let command Command.{op; id; trace_start} w =
     W.BE.uint64 w (Int64.of_int id) ;
-    W.BE.uint64 w (Mtime.to_uint64_ns trace_start) ;
+    W.BE.double w trace_start ;
     sm_op op w
 
   let entries (es, length) w =
@@ -80,7 +80,7 @@ module DeserPrim = struct
 
   let command =
     let* id = R.map Int64.to_int R.BE.uint64
-    and* trace_start = R.map Mtime.of_uint64_ns R.BE.uint64
+    and* trace_start = R.BE.double
     and* op = sm_op in
     R.return Command.{op; id; trace_start}
 
@@ -106,7 +106,7 @@ module External_infra = struct
 
   let parse_request = DeserPrim.command
 
-  type response = command_id * op_result * Mtime.t
+  type response = command_id * op_result * float
 
   let response_pp : response Fmt.t =
    fun ppf (id, res, _) ->
@@ -122,7 +122,7 @@ module External_infra = struct
 
   let serialise_response (id, res, time) w =
     W.BE.uint64 w (Int64.of_int id) ;
-    W.BE.uint64 w (Mtime.to_uint64_ns time) ;
+    W.BE.double w time ;
     W.uint8 w (op_result_to_enum res) ;
     match res with
     | Success ->
@@ -135,7 +135,7 @@ module External_infra = struct
   let parse_response : response R.parser =
     let open R.Syntax in
     let* id = R.map Int64.to_int R.BE.uint64
-    and* time = R.map Mtime.of_uint64_ns R.BE.uint64
+    and* time = R.BE.double
     and* res_code = R.map Char.code R.any_char in
     match res_code with
     | 0 (*Success*) ->

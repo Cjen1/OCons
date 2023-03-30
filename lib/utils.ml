@@ -51,13 +51,14 @@ module InternalReporter = struct
     List.iter (fun (_, r) -> r ()) !reporters
 
   let run ~sw clock period =
-    Eio.Fiber.fork_daemon ~sw (fun () ->
-        while true do
-          Eio.Fiber.check () ;
-          Eio.Time.sleep clock period ;
-          run_report period
-        done ;
-        Eio.Fiber.await_cancel () )
+    if period > 0. then
+      Eio.Fiber.fork_daemon ~sw (fun () ->
+          while true do
+            Eio.Fiber.check () ;
+            Eio.Time.sleep clock period ;
+            run_report period
+          done ;
+          Eio.Fiber.await_cancel () )
 
   type 'a state_reporter = {mutable v: 'a; mutable v': 'a}
 

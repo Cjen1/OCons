@@ -7,7 +7,8 @@ type 'cons config =
   ; stream_length: int
   ; tick_period: float
   ; nodes: (int * Eio.Net.Sockaddr.stream) list
-  ; node_id: int }
+  ; node_id: int 
+  ; stat_report : time}
 
 module Make (C : Consensus_intf.S) : sig
   type 'a env =

@@ -8,7 +8,8 @@ type 'cons config =
   ; stream_length: int
   ; tick_period: float
   ; nodes: (int * Eio.Net.Sockaddr.stream) list
-  ; node_id: int }
+  ; node_id: int 
+  ; stat_report: time}
 
 module Make (C : Consensus_intf.S) = struct
   module Internal = Internal_infra.Make (C)
@@ -27,7 +28,7 @@ module Make (C : Consensus_intf.S) = struct
     Switch.run
     @@ fun sw ->
     let command_stream = Eio.Stream.create config.stream_length in
-    Utils.InternalReporter.run ~sw env#clock 2. ;
+    Utils.InternalReporter.run ~sw env#clock config.stat_report;
     let result_stream = Eio.Stream.create Int.max_int in
     let create_conn addr sw =
       (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)
@@ -50,7 +51,7 @@ module Make (C : Consensus_intf.S) = struct
       (fun () ->
         try
           Eio.Domain_manager.run env#domain_mgr (fun () ->
-              ExInfra.run env#net env#mono_clock config.external_port
+              ExInfra.run env#net env#clock config.external_port
                 command_stream result_stream )
         with e when Utils.is_not_cancel e ->
           traceln "External infra failed" ;

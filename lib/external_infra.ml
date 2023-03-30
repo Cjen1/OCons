@@ -71,18 +71,16 @@ let accept_handler t sock addr =
       traceln "Client handler failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
 
-let slow_result_check trace (mclock : #Eio.Time.Mono.t) reporter =
-  let open Mtime in
+let slow_result_check trace (clock : #Eio.Time.clock) reporter =
   let st = trace in
-  if st != Mtime.of_uint64_ns Int64.zero then (
-    let ed = Eio.Time.Mono.now mclock in
-    let diff = span st ed in
-    let ( / ) = Float.div in
-    let delay_ms = Span.to_float_ns diff / Span.to_float_ns Span.ms in
+  if st != -1. then (
+    let ed = Eio.Time.now clock in
+    let diff = ed -. st in
+    let delay_ms = diff *. 1000. in
     reporter delay_ms ;
     if delay_ms > 500. then (*Magic_trace.take_snapshot*) () )
 
-let run (net : #Eio.Net.t) (mclock : #Eio.Time.Mono.t) port cmd_str res_str =
+let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
   Switch.run
   @@ fun sw ->
   let req_reporter = InternalReporter.rate_reporter 0 "cli_req" in
@@ -116,7 +114,7 @@ let run (net : #Eio.Net.t) (mclock : #Eio.Time.Mono.t) port cmd_str res_str =
       let cycle_timer = Mtime_clock.counter () in
       dtraceln "Waiting for response" ;
       let cid, res, trace = Eio.Stream.take res_str in
-      slow_result_check trace mclock reporter ;
+      slow_result_check trace clock reporter ;
       dtraceln "Got response for %d" cid ;
       let _try_send_response =
         let ( let* ) m f = Option.iter f m in
@@ -126,7 +124,7 @@ let run (net : #Eio.Net.t) (mclock : #Eio.Time.Mono.t) port cmd_str res_str =
         try
           (* reply to client *)
           Line_prot.External_infra.serialise_response
-            (cid, res, Eio.Time.Mono.now mclock)
+            (cid, res, Eio.Time.now clock)
             bw ;
           maybe_flush ()
         with e when Utils.is_not_cancel e ->

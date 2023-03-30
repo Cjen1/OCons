@@ -39,10 +39,10 @@ let sm_op_pp ppf v =
       Fmt.pf ppf "NoOp"
 
 module Command = struct
-  type t = {op: sm_op; id: command_id; mutable trace_start: Mtime.t}
+  type t = {op: sm_op; id: command_id; mutable trace_start: float}
   [@@deriving compare]
 
-  let pp_mach ppf v = Fmt.pf ppf "Command(%a, %d, %a)" sm_op_pp v.op v.id Mtime.pp v.trace_start
+  let pp_mach ppf v = Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
 
   let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 end
@@ -50,16 +50,19 @@ end
 type command = Command.t [@@deriving compare]
 
 let update_command_time c =
-  c.Command.trace_start <- Mtime_clock.now ()
+  c.Command.trace_start <- Core_unix.gettimeofday ()
+
+let get_command_trace_time c =
+  c.Command.trace_start
 
 let empty_command =
-  Command.{op= NoOp; id= -1; trace_start= Mtime.of_uint64_ns Int64.zero}
+  Command.{op= NoOp; id= -1; trace_start= -1.}
 
 let make_command =
   let rid = ref 0 in
   fun c ->
     rid := !rid + 1 ;
-    Command.{op= c; id= !rid; trace_start = Mtime.of_uint64_ns Int64.zero}
+    Command.{op= c; id= !rid; trace_start = -1.}
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]

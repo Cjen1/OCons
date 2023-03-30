@@ -10,7 +10,7 @@ module VRMain = Infra.Make (Impl_core.VRaft)
 type kind = Paxos | Raft | VPaxos | VRaft
 
 let run kind node_id node_addresses internal_port external_port tick_period
-    election_timeout max_outstanding stream_length =
+    election_timeout max_outstanding stream_length stat_report =
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
@@ -33,7 +33,8 @@ let run kind node_id node_addresses internal_port external_port tick_period
       ; stream_length
       ; tick_period
       ; nodes= other_nodes
-      ; node_id }
+      ; node_id 
+      ; stat_report}
   in
   match kind with
   | Paxos ->
@@ -159,6 +160,15 @@ let address_info =
          \"0:192.168.0.1:5000,1:192.168.0.2:5000\""
       [] )
 
+let stat_report_ot =
+  let open Arg in
+  let i =
+    info ~docv:"STAT_REPORT_INTERVAL"
+      ~doc:"How long between stat reports, -ve numbers will never report"
+      ["stat"]
+  in
+  opt float (-1.) i
+
 let cmd =
   let kind_t =
     let kind =
@@ -186,6 +196,7 @@ let cmd =
       $ Arg.value election_tick_period_ot
       $ Arg.value election_timeout_ot
       $ Arg.value max_outstanding_ot
-      $ Arg.value stream_length_ot )
+      $ Arg.value stream_length_ot 
+      $ Arg.value stat_report_ot)
 
 let () = exit Cmd.(eval cmd)

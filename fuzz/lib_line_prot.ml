@@ -13,8 +13,8 @@ module Gen = struct
       ; const NoOp ]
 
   let command =
-    map [op; int; int64] (fun op id ts ->
-        Ocons_core.Types.Command.{op; id; trace_start= Mtime.of_uint64_ns ts} )
+    map [op; int; float] (fun op id trace_start ->
+        Ocons_core.Types.Command.{op; id; trace_start} )
 
   let log_entry =
     map [command; int] (fun command term -> Ocons_core.Types.{command; term})
@@ -104,5 +104,5 @@ let () =
   let open Crowbar in
   add_test ~name:"client_request" [Gen.command] (fun command ->
       test_client_request command ) ;
-  add_test ~name:"client_response" [int; Gen.op_response; int64] (fun id response ts ->
-      test_client_response (id, response, Mtime.of_uint64_ns ts ) )
+  add_test ~name:"client_response" [int; Gen.op_response; float] (fun id response ts ->
+      test_client_response (id, response, ts) )

@@ -24,8 +24,9 @@ module Make (C : Consensus_intf.S) = struct
     ; no_space_reporter: unit InternalReporter.reporter
     ; commit_reporter: unit InternalReporter.reporter
     ; command_starts: (command_id, Mtime.t) Hashtbl.t
+    ; read_in_delay_reporter: float InternalReporter.reporter
     ; commit_delay_reporter: float InternalReporter.reporter
-    ; clock: Eio.Time.Mono.t }
+    ; clock: Eio.Time.clock }
 
   type t =
     { c_rx: command Eio.Stream.t
@@ -37,8 +38,6 @@ module Make (C : Consensus_intf.S) = struct
     ; internal_streams: (node_id, C.message Eio.Stream.t) Hashtbl.t
     ; debug: debug }
 
-  let trace_start command = command.Command.trace_start <- Mtime_clock.now ()
-
   let apply (t : t) (cmd : command) : op_result =
     (* TODO truncate
           ie from each client record the high water mark of results and remove lower than that
@@ -47,13 +46,11 @@ module Make (C : Consensus_intf.S) = struct
     update_state_machine t.state_machine cmd
 
   let slow_command_check cmd t =
-    let open Mtime in
-    let st = cmd.Command.trace_start in
-    if st != Mtime.of_uint64_ns Int64.zero then (
-      let ed = Eio.Time.Mono.now t.debug.clock in
-      let diff = span st ed in
-      let ( / ) = Float.div in
-      let delay_ms = Span.to_float_ns diff / Span.to_float_ns Span.ms in
+    let st = get_command_trace_time cmd in
+    if st != -1. then (
+      let ed = Eio.Time.now t.debug.clock in
+      let diff = ed -. st in
+      let delay_ms = diff *. 1000. in
       t.debug.commit_delay_reporter delay_ms ;
       if delay_ms > 500. then Magic_trace.take_snapshot () )
 
@@ -70,8 +67,7 @@ module Make (C : Consensus_intf.S) = struct
               slow_command_check cmd t ;
               let res = apply t cmd in
               if C.should_ack_clients t.cons then (
-                Eio.Stream.add t.c_tx
-                  (cmd.id, res, Eio.Time.Mono.now t.debug.clock) ;
+                Eio.Stream.add t.c_tx (cmd.id, res, Eio.Time.now t.debug.clock) ;
                 t.debug.commit_reporter () ;
                 dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ) ;
           dtraceln "Committed %a"
@@ -114,15 +110,16 @@ module Make (C : Consensus_intf.S) = struct
                 | i when i <= 0 ->
                     ()
                 | rem -> (
-                    assert (rem > 0) ;
-                    match Eio.Stream.take_nonblocking t.c_rx with
-                    | None ->
-                        ()
-                    | Some c ->
-                        t.debug.request_reporter () ;
-                        trace_start c ;
-                        f c ;
-                        aux (rem - 1) )
+                  match Eio.Stream.take_nonblocking t.c_rx with
+                  | None ->
+                      ()
+                  | Some c ->
+                      t.debug.request_reporter () ;
+                      t.debug.read_in_delay_reporter
+                        (Unix.gettimeofday () -. get_command_trace_time c) ;
+                      update_command_time c ;
+                      f c ;
+                      aux (rem - 1) )
               in
               aux (num_to_take - 1)
             in
@@ -155,8 +152,8 @@ module Make (C : Consensus_intf.S) = struct
       traceln "Failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
 
-  let run_inter ~sw (clock : #Eio.Time.clock) (mclock : #Eio.Time.Mono.t) config
-      period resolvers client_msgs client_resps internal_streams =
+  let run_inter ~sw (clock : #Eio.Time.clock) config period resolvers
+      client_msgs client_resps internal_streams =
     let cmgr =
       Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
           Eio.Time.sleep clock 1. )
@@ -171,8 +168,11 @@ module Make (C : Consensus_intf.S) = struct
       ; request_reporter= InternalReporter.rate_reporter 0 "request"
       ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space"
       ; commit_reporter= InternalReporter.rate_reporter 0 "commit"
-      ; commit_delay_reporter= InternalReporter.avg_reporter Fun.id "latency"
-      ; clock= (mclock :> Eio.Time.Mono.t)
+      ; read_in_delay_reporter=
+          InternalReporter.avg_reporter Fun.id "read-in-latency"
+      ; commit_delay_reporter=
+          InternalReporter.avg_reporter Fun.id "leader-commit-latency"
+      ; clock= (clock :> Eio.Time.clock)
       ; command_starts= Hashtbl.create 100 }
     in
     let t =
@@ -239,9 +239,8 @@ module Make (C : Consensus_intf.S) = struct
         Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
           (accept_handler internal_streams) ) ;
     let resolvers = resolver_handshake node_id resolvers in
-    run_inter ~sw env#clock
-      (Eio.Stdenv.mono_clock env)
-      config period resolvers client_msgs client_resps internal_streams
+    run_inter ~sw env#clock config period resolvers client_msgs client_resps
+      internal_streams
 end
 
 module Test = struct
@@ -249,13 +248,11 @@ module Test = struct
     Command.
       { op= Write (k, n)
       ; id= Core.Random.int Core.Int.max_value
-      ; trace_start= Mtime.of_uint64_ns Int64.zero }
+      ; trace_start= -1. }
 
   let r n =
     Command.
-      { op= Read n
-      ; id= Core.Random.int Core.Int.max_value
-      ; trace_start= Mtime.of_uint64_ns Int64.zero }
+      {op= Read n; id= Core.Random.int Core.Int.max_value; trace_start= -1.}
 
   module CT = struct
     type message = Core.String.t [@@deriving sexp]

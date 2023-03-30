@@ -21,7 +21,7 @@ let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
           Command.
             { op= Write ("asdf", "asdf")
             ; id= i
-            ; trace_start= Mtime.of_uint64_ns Int64.zero }
+            ; trace_start= Unix.gettimeofday () }
         in
         let target = Mtime.add_span prev period |> Option.get in
         if Mtime.is_later target ~than:(MT.now mclock) then
