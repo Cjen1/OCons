@@ -86,23 +86,42 @@ module InternalReporter = struct
     let update x = state := x :: !state in
     register_reporter pp reset ; update
 
+  type avg_reporter_state =
+    { mutable max: float
+    ; mutable tdigest: Tdigest.t
+    ; mutable sum: float
+    ; mutable count: int }
+
   let avg_reporter : 'a. ('a -> float) -> string -> 'a reporter =
    fun conv name ->
-    let state = ref [] in
-    let reset () = state := [] in
+    let state = {max= -1.; tdigest= Tdigest.create (); sum= 0.; count= 0} in
+    let reset () =
+      state.max <- -1. ;
+      state.tdigest <- Tdigest.create () ;
+      state.sum <- 0. ;
+      state.count <- 0
+    in
     let open Fmt in
-    let open Owl.Stats in
     let pp_stats ppf s =
       let pp =
+        let percentile s p =
+          Tdigest.percentile s.tdigest p |> snd |> Core.Option.value ~default:Float.nan
+        in
         record
-          [ field "avg" (fun s -> mean s) float
-          ; field "50%" (fun s -> percentile s 50.) float
-          ; field "99%" (fun s -> percentile s 99.) float
-          ; field "max" (fun s -> max s) float ]
+          [ field "avg" (fun s -> s.sum /. Float.of_int s.count) float
+          ; field "50%" (fun s -> percentile s 0.5) float
+          ; field "99%" (fun s -> percentile s 0.99) float
+          ; field "max" (fun s -> s.max) float ]
       in
       pf ppf "%a" pp s
     in
-    let pp = [field name (fun _ -> !state |> Array.of_list) pp_stats] in
-    let update x = state := conv x :: !state in
+    let pp = [field name (fun _ -> state) pp_stats] in
+    let update x =
+      let dp = conv x in
+      state.max <- max dp state.max ;
+      state.tdigest <- Tdigest.add ~data:dp state.tdigest ;
+      state.count <- state.count + 1 ;
+      state.sum <- state.sum +. dp
+    in
     register_reporter pp reset ; update
 end
