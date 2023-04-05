@@ -33,6 +33,8 @@
         devShell = pkgs.mkShell {
           inputsFrom = [scope.ocons];
           buildInputs = devPackages ++ [
+            pkgs.linuxPackages_latest.perf
+            pkgs.fzf
           ];
         };
       });

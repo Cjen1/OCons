@@ -4,9 +4,9 @@ open! Utils
 
 let request_yield_energy = 16
 
-let response_flush_energy = 16
+let response_flush_energy = 8
 
-let result_yield_energy = 128
+let result_yield_energy = 8096
 
 let dtraceln = Utils.dtraceln
 
@@ -27,6 +27,19 @@ type t =
   ; res_str: response Eio.Stream.t
   ; req_reporter: unit InternalReporter.reporter }
 
+let maybe_yield ?(min_str_size = 100) ~energy ~f t =
+  let curr_energy = ref energy in
+  fun () ->
+    curr_energy := !curr_energy - 1 ;
+    match () with
+    | () when Eio.Stream.length t.res_str > min_str_size ->
+        f ()
+    | () when !curr_energy <= 0 ->
+        curr_energy := energy ;
+        f ()
+    | () ->
+        ()
+
 let accept_handler t sock addr =
   dtraceln "Accepted conn from: %a" Eio.Net.Sockaddr.pp addr ;
   Switch.run
@@ -40,7 +53,9 @@ let accept_handler t sock addr =
   *)
   Switch.on_release sw (fun () -> Hashtbl.remove t.conn_tbl cid) ;
   let request_fiber () =
-    let maybe_yield = Utils.maybe_yield ~energy:request_yield_energy in
+    let yielder =
+      maybe_yield ~energy:request_yield_energy ~f:Eio.Fiber.yield t
+    in
     while true do
       Fiber.check () ;
       dtraceln "Waiting for request from: %d" cid ;
@@ -49,7 +64,7 @@ let accept_handler t sock addr =
       dtraceln "Got request from %d: %a" cid Command.pp r ;
       Hashtbl.add t.req_tbl r.id cid ;
       Eio.Stream.add t.cmd_str r ;
-      maybe_yield ()
+      yielder ()
     done
   in
   let result_fiber () =

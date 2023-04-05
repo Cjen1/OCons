@@ -23,6 +23,7 @@ depends: [
   "eio"
   "eio_main"
   "eio_linux"
+  "tdigest"
   "odoc" {with-doc}
 ]
 build: [

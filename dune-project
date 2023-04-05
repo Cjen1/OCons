@@ -28,4 +28,5 @@
     eio
     eio_main
     eio_linux
+    tdigest
     ))
