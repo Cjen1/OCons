@@ -26,6 +26,7 @@ module Make (C : Consensus_intf.S) = struct
     ; command_starts: (command_id, Mtime.t) Hashtbl.t
     ; read_in_delay_reporter: float InternalReporter.reporter
     ; commit_delay_reporter: float InternalReporter.reporter
+    ; main_loop_length_reporter: float InternalReporter.reporter
     ; clock: Eio.Time.clock }
 
   type t =
@@ -90,49 +91,61 @@ module Make (C : Consensus_intf.S) = struct
        Iter.of_gen (fun () -> Eio.Stream.take_nonblocking s)
        |> Iter.iter (iter_msg src)
 
+  let take_at_least_one =
+    let open struct
+      exception ExitTake
+    end in
+    fun n seq k ->
+      if n < 1 then
+        Fmt.invalid_arg "take_at_least_one must take at least one, but took %d"
+          n ;
+      let count = ref 1 in
+      try
+        seq (fun x ->
+            k x ;
+            if !count = n then raise_notrace ExitTake ;
+            incr count )
+      with ExitTake -> ()
+
   (** Recv client msgs *)
   let admit_client_requests t =
-    (* length = 0 => num_to_take = 0
-       By contrapositive: num_to_take > 0 then length > 0
-    *)
     match C.available_space_for_commands t.cons with
-    | 0 ->
+    | num_to_take when num_to_take <= 0 ->
         t.debug.no_space_reporter ()
     | num_to_take -> (
-        assert (num_to_take > 0) ;
-        let fst = Eio.Stream.take_nonblocking t.c_rx in
-        match fst with
-        | None ->
-            t.debug.no_commands_reporter ()
-        | Some c1 ->
-            let iter f =
-              let rec aux = function
-                | i when i <= 0 ->
-                    ()
-                | rem -> (
-                  match Eio.Stream.take_nonblocking t.c_rx with
-                  | None ->
-                      ()
-                  | Some c ->
-                      t.debug.request_reporter () ;
-                      t.debug.read_in_delay_reporter
-                        (Unix.gettimeofday () -. get_command_trace_time c) ;
-                      update_command_time c ;
-                      f c ;
-                      aux (rem - 1) )
-              in
-              aux (num_to_take - 1)
-            in
-            let iter = Iter.cons c1 iter in
-            let tcons, actions = C.advance t.cons (Commands iter) in
-            t.cons <- tcons ;
-            handle_actions t actions )
+      match Eio.Stream.take_nonblocking t.c_rx with
+      | None ->
+          t.debug.no_commands_reporter ()
+      | Some c1 ->
+          let rec str_iter k =
+            Eio.Stream.take_nonblocking t.c_rx
+            |> Option.iter (fun i -> k i ; (str_iter [@tailcall]) k)
+          in
+          let iter =
+            Iter.cons c1 str_iter
+            |> take_at_least_one num_to_take
+            |> Iter.map (fun c ->
+                   t.debug.request_reporter () ;
+                   t.debug.read_in_delay_reporter
+                     (Unix.gettimeofday () -. get_command_trace_time c) ;
+                   update_command_time c ;
+                   c )
+          in
+          let tcons, actions = C.advance t.cons (Commands iter) in
+          t.cons <- tcons ;
+          handle_actions t actions )
 
-  let ensure_sent t =
-    try CMgr.flush_all t.cmgr
-    with e when Utils.is_not_cancel e ->
-      dtraceln "Failed to flush %a" Fmt.exn_backtrace
-        (e, Printexc.get_raw_backtrace ())
+  let ensure_sent _t =
+    (* We should flush here to ensure queueus aren't building up.
+       However in practise that results in about a 2x drop in highest throughput
+       So we just yield to the scheduler. This should cause writes to still be
+       flushed, but does not wait for confirmation that they have been flushed.
+
+       This improves latency at high rates by ~1 order of magnitude
+
+       Expected outcome at system capacity is for queuing on outbound network capacity
+     *)
+    Fiber.yield ()
 
   let tick t () =
     dtraceln "Tick" ;
@@ -143,11 +156,16 @@ module Make (C : Consensus_intf.S) = struct
   let main_loop t =
     try
       (* Do internal mostly non-blocking things *)
+      let st = Eio.Time.now t.debug.clock in
       internal_msgs t ;
       admit_client_requests t ;
       Ticker.tick t.ticker (tick t) ;
       (* Then block to send all things *)
-      ensure_sent t
+      ensure_sent t ;
+      let dur = (Eio.Time.now t.debug.clock -. st) *. 1000. in
+      if dur > 0.01 then t.debug.main_loop_length_reporter dur ;
+      if dur > 1. then Magic_trace.take_snapshot () ;
+      ()
     with e when Utils.is_not_cancel e ->
       traceln "Failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
@@ -172,6 +190,8 @@ module Make (C : Consensus_intf.S) = struct
           InternalReporter.avg_reporter Fun.id "read-in-latency"
       ; commit_delay_reporter=
           InternalReporter.avg_reporter Fun.id "leader-commit-latency"
+      ; main_loop_length_reporter=
+          InternalReporter.avg_reporter Fun.id "main_loop_delay"
       ; clock= (clock :> Eio.Time.clock)
       ; command_starts= Hashtbl.create 100 }
     in
