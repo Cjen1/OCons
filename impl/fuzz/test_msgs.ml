@@ -15,7 +15,9 @@ module Gen = struct
             CAS {key; value; value'} )
       ; const NoOp ]
 
-  let command = map [op; int] (fun op id -> Ocons_core.Types.Command.{op; id; trace_start = -1.})
+  let command =
+    map [op; int] (fun op id ->
+        Ocons_core.Types.Command.{op; id; trace_start= -1.} )
 
   let log_entry =
     map [command; int] (fun command term -> Ocons_core.Types.{command; term})

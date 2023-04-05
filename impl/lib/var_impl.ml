@@ -248,7 +248,8 @@ struct
     ; node_state= Follower {timeout= config.election_timeout; voted_for= None}
     ; current_term= 0
     ; append_entries_length=
-        Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length" }
+        Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
+    }
 
   let create_node = create
 

@@ -144,7 +144,7 @@ module Make (C : Consensus_intf.S) = struct
        This improves latency at high rates by ~1 order of magnitude
 
        Expected outcome at system capacity is for queuing on outbound network capacity
-     *)
+    *)
     Fiber.yield ()
 
   let tick t () =

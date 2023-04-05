@@ -33,8 +33,8 @@ let run kind node_id node_addresses internal_port external_port tick_period
       ; stream_length
       ; tick_period
       ; nodes= other_nodes
-      ; node_id 
-      ; stat_report}
+      ; node_id
+      ; stat_report }
   in
   match kind with
   | Paxos ->
@@ -173,10 +173,7 @@ let cmd =
   let kind_t =
     let kind =
       Arg.enum
-        [("paxos", Paxos)
-        ; ("raft", Raft)
-        ; ("vpaxos", VPaxos)
-        ; ("vraft", VRaft)]
+        [("paxos", Paxos); ("raft", Raft); ("vpaxos", VPaxos); ("vraft", VRaft)]
     in
     Arg.(
       required
@@ -196,7 +193,6 @@ let cmd =
       $ Arg.value election_tick_period_ot
       $ Arg.value election_timeout_ot
       $ Arg.value max_outstanding_ot
-      $ Arg.value stream_length_ot 
-      $ Arg.value stat_report_ot)
+      $ Arg.value stream_length_ot $ Arg.value stat_report_ot )
 
 let () = exit Cmd.(eval cmd)

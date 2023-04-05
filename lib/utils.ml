@@ -105,7 +105,9 @@ module InternalReporter = struct
     let pp_stats ppf s =
       let pp =
         let percentile s p =
-          Tdigest.percentile s.tdigest p |> snd |> Core.Option.value ~default:Float.nan
+          Tdigest.percentile s.tdigest p
+          |> snd
+          |> Core.Option.value ~default:Float.nan
         in
         record
           [ field "avg" (fun s -> s.sum /. Float.of_int s.count) float

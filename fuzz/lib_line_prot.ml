@@ -104,5 +104,5 @@ let () =
   let open Crowbar in
   add_test ~name:"client_request" [Gen.command] (fun command ->
       test_client_request command ) ;
-  add_test ~name:"client_response" [int; Gen.op_response; float] (fun id response ts ->
-      test_client_response (id, response, ts) )
+  add_test ~name:"client_response" [int; Gen.op_response; float]
+    (fun id response ts -> test_client_response (id, response, ts))

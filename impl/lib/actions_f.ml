@@ -47,6 +47,7 @@ module type ActionFunc = functor (C : CTypes) ->
     with type t = C.t
      and type message = C.message
      and type action = C.action
+
 module ImperativeActions (C : CTypes) :
   ActionSig
     with type t = C.t

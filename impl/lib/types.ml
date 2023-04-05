@@ -331,9 +331,13 @@ module type StrategyTypes = sig
       A.General.t
 
     val parse_request_vote : request_vote Eio.Buf_read.parser
+
     val serialise_request_vote : request_vote -> Eio.Buf_write.t -> unit
+
     val parse_request_vote_response : request_vote_response Eio.Buf_read.parser
-    val serialise_request_vote_response : request_vote_response -> Eio.Buf_write.t -> unit
+
+    val serialise_request_vote_response :
+      request_vote_response -> Eio.Buf_write.t -> unit
   end
 end
 

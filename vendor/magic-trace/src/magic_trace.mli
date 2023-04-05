@@ -2,22 +2,22 @@
     allows you to easily mark places in your code to take a snapshot, and enables
     additional features like passing a value and marking the start of a duration. *)
 
+val take_snapshot : unit -> unit
 (** This is the default symbol that the magic-trace command will attach to and use to
     take a snapshot. Use it if you want to take a snapshot based on custom logic, and it
     will save you the step of selecting the symbol you want to stop on.
 
     It's an external C function that does nothing and should be very fast to call. It's
     only a C function to ensure it has a stable and exact symbol. *)
-val take_snapshot : unit -> unit
 
-(** Passes an integer along that will show up in the resulting trace *)
 val take_snapshot_with_arg : int -> unit
+(** Passes an integer along that will show up in the resulting trace *)
 
-(** Passes both the start tsc for the operation and an argument. *)
 val take_snapshot_with_time_and_arg : Time_stamp_counter.t -> int -> unit
+(** Passes both the start tsc for the operation and an argument. *)
 
-(** Mark the start time of some operation which may lead to a snapshot. *)
 val mark_start : unit -> unit
+(** Mark the start time of some operation which may lead to a snapshot. *)
 
 (** Intended for use like so:
 
@@ -40,12 +40,12 @@ val mark_start : unit -> unit
 module Min_duration : sig
   type t
 
+  val of_ns : int -> t
   (** This involves using and forcing [Time_stamp_counter.calibrator] so should probably
       be done only once at the top level as opposed to every time. *)
-  val of_ns : int -> t
 
-  (** Returns true if the time since [mark_start] is over the threshold *)
   val over : t -> bool
+  (** Returns true if the time since [mark_start] is over the threshold *)
 end
 
 (** Internal details about how to interact with the snapshot function from outside *)
