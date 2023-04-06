@@ -23,9 +23,6 @@ module Make (C : Consensus_intf.S) = struct
     ; request_reporter: unit InternalReporter.reporter
     ; no_space_reporter: unit InternalReporter.reporter
     ; commit_reporter: unit InternalReporter.reporter
-    ; command_starts: (command_id, Mtime.t) Hashtbl.t
-    ; read_in_delay_reporter: float InternalReporter.reporter
-    ; commit_delay_reporter: float InternalReporter.reporter
     ; main_loop_length_reporter: float InternalReporter.reporter
     ; clock: Eio.Time.clock }
 
@@ -46,15 +43,6 @@ module Make (C : Consensus_intf.S) = struct
     *)
     update_state_machine t.state_machine cmd
 
-  let slow_command_check cmd t =
-    let st = get_command_trace_time cmd in
-    if st != -1. then (
-      let ed = Eio.Time.now t.debug.clock in
-      let diff = ed -. st in
-      let delay_ms = diff *. 1000. in
-      t.debug.commit_delay_reporter delay_ms ;
-      if delay_ms > 500. then Magic_trace.take_snapshot () )
-
   let handle_actions t actions =
     let f : C.action -> unit = function
       | C.Send (dst, msg) ->
@@ -65,10 +53,10 @@ module Make (C : Consensus_intf.S) = struct
           dtraceln "Broadcast %a" C.message_pp msg
       | C.CommitCommands citer ->
           citer (fun cmd ->
-              slow_command_check cmd t ;
               let res = apply t cmd in
+              TRACE.commit cmd;
               if C.should_ack_clients t.cons then (
-                Eio.Stream.add t.c_tx (cmd.id, res, Eio.Time.now t.debug.clock) ;
+                Eio.Stream.add t.c_tx (cmd.id, res, get_command_trace_time cmd) ;
                 t.debug.commit_reporter () ;
                 dtraceln "Stored result of %d: %a" cmd.id op_result_pp res ) ) ;
           dtraceln "Committed %a"
@@ -126,16 +114,14 @@ module Make (C : Consensus_intf.S) = struct
             |> take_at_least_one num_to_take
             |> Iter.map (fun c ->
                    t.debug.request_reporter () ;
-                   t.debug.read_in_delay_reporter
-                     (Unix.gettimeofday () -. get_command_trace_time c) ;
-                   update_command_time c ;
+                   TRACE.ex_in c ;
                    c )
           in
           let tcons, actions = C.advance t.cons (Commands iter) in
           t.cons <- tcons ;
           handle_actions t actions )
 
-  let ensure_sent _t =
+  let ensure_sent t =
     (* We should flush here to ensure queueus aren't building up.
        However in practise that results in about a 2x drop in highest throughput
        So we just yield to the scheduler. This should cause writes to still be
@@ -186,14 +172,9 @@ module Make (C : Consensus_intf.S) = struct
       ; request_reporter= InternalReporter.rate_reporter 0 "request"
       ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space"
       ; commit_reporter= InternalReporter.rate_reporter 0 "commit"
-      ; read_in_delay_reporter=
-          InternalReporter.avg_reporter Fun.id "read-in-latency"
-      ; commit_delay_reporter=
-          InternalReporter.avg_reporter Fun.id "leader-commit-latency"
       ; main_loop_length_reporter=
           InternalReporter.avg_reporter Fun.id "main_loop_delay"
-      ; clock= (clock :> Eio.Time.clock)
-      ; command_starts= Hashtbl.create 100 }
+      ; clock= (clock :> Eio.Time.clock) }
     in
     let t =
       { c_tx= client_resps
@@ -205,9 +186,8 @@ module Make (C : Consensus_intf.S) = struct
       ; internal_streams
       ; debug }
     in
-    let yielder = maybe_yield ~energy:10 in
     while true do
-      main_loop t ; yielder ()
+      main_loop t
     done ;
     Ocons_conn_mgr.close t.cmgr
 

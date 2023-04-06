@@ -20,12 +20,13 @@ let to_float_ms span =
   let open Mtime.Span in
   to_float_ns span /. to_float_ns ms
 
+
 type t =
   { conn_tbl: (client_id, socket_responder) Hashtbl.t
   ; req_tbl: (command_id, client_id) Hashtbl.t
   ; cmd_str: request Eio.Stream.t
   ; res_str: response Eio.Stream.t
-  ; req_reporter: unit InternalReporter.reporter }
+  ; req_reporter: unit InternalReporter.reporter}
 
 let maybe_yield ?(min_str_size = 100) ~energy ~f t =
   let curr_energy = ref energy in
@@ -61,6 +62,7 @@ let accept_handler t sock addr =
       dtraceln "Waiting for request from: %d" cid ;
       let r = Line_prot.External_infra.parse_request br in
       t.req_reporter () ;
+      Utils.TRACE.cli_ex r;
       dtraceln "Got request from %d: %a" cid Command.pp r ;
       Hashtbl.add t.req_tbl r.id cid ;
       Eio.Stream.add t.cmd_str r ;
@@ -85,15 +87,6 @@ let accept_handler t sock addr =
   | e when is_not_cancel e ->
       traceln "Client handler failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
-
-let slow_result_check trace (clock : #Eio.Time.clock) reporter =
-  let st = trace in
-  if st != -1. then (
-    let ed = Eio.Time.now clock in
-    let diff = ed -. st in
-    let delay_ms = diff *. 1000. in
-    reporter delay_ms ;
-    if delay_ms > 500. then (*Magic_trace.take_snapshot*) () )
 
 let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
   Switch.run
@@ -120,16 +113,13 @@ let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
       sock accept_handler
   in
   let result_fiber () =
-    let reporter =
-      InternalReporter.avg_reporter Fun.id "internal->external latency"
-    in
     let yielder = Utils.maybe_yield ~energy:result_yield_energy in
     (* Guaranteed to get at most one result per registered request *)
     while true do
       let cycle_timer = Mtime_clock.counter () in
       dtraceln "Waiting for response" ;
       let cid, res, trace = Eio.Stream.take res_str in
-      slow_result_check trace clock reporter ;
+      TRACE.in_ex trace;
       dtraceln "Got response for %d" cid ;
       let _try_send_response =
         let ( let* ) m f = Option.iter f m in

@@ -1,6 +1,10 @@
 let debug_flag = false
 
-let dtraceln fmt = if debug_flag then Eio.traceln fmt else Fmt.kstr ignore fmt
+let dtraceln fmt =
+  let ignore_format = Format.ikfprintf ignore Fmt.stderr in
+  let traceln fmt = Eio.traceln ("%a" ^^ fmt) Time_unix.pp (Time_unix.now ()) in
+  if debug_flag then traceln fmt else ignore_format fmt
+
 
 module AStruct = struct
   type 'a t = {buf: 'a Array.t; off: int; len: int}

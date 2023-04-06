@@ -2,6 +2,6 @@
  (name ocons_conn_mgr)
  (public_name ocons.cmgr)
  (inline_tests)
- (libraries base eio accessor eio_main eio.mock)
+ (libraries base core_unix.time_unix eio accessor eio_main eio.mock)
  (preprocess
   (pps ppx_jane ppx_expect ppx_accessor)))

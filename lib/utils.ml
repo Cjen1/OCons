@@ -19,7 +19,8 @@ end
 
 let dtraceln fmt =
   let ignore_format = Format.ikfprintf ignore Fmt.stderr in
-  if debug_flag then Eio.traceln fmt else ignore_format fmt
+  let traceln fmt = Eio.traceln ("@[<hov 1>%a: " ^^ fmt ^^ "@]") Time_unix.pp (Time_unix.now ()) in
+  if debug_flag then traceln fmt else ignore_format fmt
 
 let is_not_cancel = function Eio.Cancel.Cancelled _ -> false | _ -> true
 
@@ -126,4 +127,29 @@ module InternalReporter = struct
       state.sum <- state.sum +. dp
     in
     register_reporter pp reset ; update
+
+  let trace_reporter : string -> time reporter =
+   fun name ->
+    let conv t = (Unix.gettimeofday () -. t) *. 1000. in
+    avg_reporter conv name
+
+  let command_trace_reporter : string -> Command.t reporter =
+   fun name ->
+    let reporter = trace_reporter name in
+    fun c ->
+      let st = c.Command.trace_start in
+      update_command_time c ; reporter st
+end
+
+module TRACE = struct
+  (* External_infra.accept_handler *)
+  let cli_ex = InternalReporter.command_trace_reporter "TRACE:cli->ex"
+
+  let ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
+
+  let commit = InternalReporter.command_trace_reporter "TRACE:commit "
+
+  let in_ex = InternalReporter.trace_reporter "TRACE:in->ex "
+
+  let ex_cli = InternalReporter.trace_reporter "TRACE:ex->cli"
 end
