@@ -54,7 +54,7 @@ module Make (C : Consensus_intf.S) = struct
       | C.CommitCommands citer ->
           citer (fun cmd ->
               let res = apply t cmd in
-              TRACE.commit cmd;
+              TRACE.commit cmd ;
               if C.should_ack_clients t.cons then (
                 Eio.Stream.add t.c_tx (cmd.id, res, get_command_trace_time cmd) ;
                 t.debug.commit_reporter () ;
@@ -131,7 +131,7 @@ module Make (C : Consensus_intf.S) = struct
 
        Expected outcome at system capacity is for queuing on outbound network capacity
     *)
-    Fiber.yield ()
+    CMgr.flush_all t.cmgr ; Fiber.yield ()
 
   let tick t () =
     dtraceln "Tick" ;
@@ -223,6 +223,7 @@ module Make (C : Consensus_intf.S) = struct
     < clock: #Eio.Time.clock
     ; net: #Eio.Net.t
     ; mono_clock: #Eio.Time.Mono.t
+    ; domain_mgr: #Eio.Domain_manager.t
     ; .. >
     as
     'a
@@ -231,13 +232,16 @@ module Make (C : Consensus_intf.S) = struct
       client_resps port =
     let internal_streams = Hashtbl.create (List.length resolvers) in
     Fiber.fork ~sw (fun () ->
-        let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-        let sock =
-          Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw env#net addr
-        in
-        traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
-        Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
-          (accept_handler internal_streams) ) ;
+        Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) (fun () ->
+            Switch.run
+            @@ fun sw ->
+            let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
+            let sock =
+              Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw env#net addr
+            in
+            traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
+            Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
+              (accept_handler internal_streams) ) ) ;
     let resolvers = resolver_handshake node_id resolvers in
     run_inter ~sw env#clock config period resolvers client_msgs client_resps
       internal_streams

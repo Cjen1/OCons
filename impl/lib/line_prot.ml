@@ -39,8 +39,9 @@ struct
         W.BE.uint64 w (of_int prev_log_index) ;
         W.BE.uint64 w (of_int prev_log_term) ;
         SerPrim.entries entries w
-    | AppendEntriesResponse {term; success} -> (
+    | AppendEntriesResponse {term; success; trace} -> (
         W.BE.uint64 w (of_int term) ;
+        W.BE.double w trace ;
         match success with
         | Ok i ->
             W.uint8 w 0 ;
@@ -71,11 +72,14 @@ struct
              {term; leader_commit; prev_log_index; prev_log_term; entries}
     | 3 (* AppendEntriesResponse *) ->
         let* term = uint64
+        and* trace = R.BE.double
         and* success = R.map Char.code R.any_char
         and* index = uint64 in
         R.return
         @@ AppendEntriesResponse
-             {term; success= (if success = 0 then Ok index else Error index)}
+             { term
+             ; success= (if success = 0 then Ok index else Error index)
+             ; trace }
     | _ ->
         raise
         @@ Invalid_argument
@@ -113,8 +117,9 @@ module Paxos = struct
         W.BE.uint64 w (of_int prev_log_index) ;
         W.BE.uint64 w (of_int prev_log_term) ;
         SerPrim.entries entries w
-    | AppendEntriesResponse {term; success} -> (
+    | AppendEntriesResponse {term; success; trace} -> (
         W.BE.uint64 w (of_int term) ;
+        W.BE.double w trace;
         match success with
         | Ok i ->
             W.uint8 w 0 ;
@@ -147,11 +152,12 @@ module Paxos = struct
              {term; leader_commit; prev_log_index; prev_log_term; entries}
     | 3 (* AppendEntriesResponse *) ->
         let* term = uint64
+        and* trace = R.BE.double
         and* success = R.map Char.code R.any_char
         and* index = uint64 in
         R.return
         @@ AppendEntriesResponse
-             {term; success= (if success = 0 then Ok index else Error index)}
+             {term; success= (if success = 0 then Ok index else Error index); trace}
     | _ ->
         raise
         @@ Invalid_argument

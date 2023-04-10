@@ -7,6 +7,7 @@ module Make (C : Consensus_intf.S) : sig
     < clock: #Eio.Time.clock
     ; mono_clock: #Eio.Time.Mono.t
     ; net: #Eio.Net.t
+    ; domain_mgr: #Eio.Domain_manager.t
     ; .. >
     as
     'a

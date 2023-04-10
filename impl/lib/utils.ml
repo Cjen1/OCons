@@ -1,4 +1,4 @@
-let debug_flag = false
+let debug_flag = true
 
 let dtraceln fmt =
   let ignore_format = Format.ikfprintf ignore Fmt.stderr in

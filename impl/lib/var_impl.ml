@@ -163,7 +163,8 @@ struct
             @@ AppendEntriesResponse
                  { term= ct.current_term
                  ; success=
-                     Error (min (prev_log_index - 1) (Log.highest ct.log)) }
+                     Error (min (prev_log_index - 1) (Log.highest ct.log)) 
+                     ; trace = Unix.gettimeofday ()}
         | true ->
             ct.append_entries_length (snd entries) ;
             let index_iter =
@@ -183,7 +184,7 @@ struct
             A.map (t @> commit_index) ~f:(max leader_commit) () ;
             send lid
             @@ AppendEntriesResponse
-                 {term= ct.current_term; success= Ok max_entry} )
+                 {term= ct.current_term; success= Ok max_entry; trace = Unix.gettimeofday ()} )
     (*Invalid or already handled *)
     | _ ->
         ()

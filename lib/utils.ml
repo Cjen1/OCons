@@ -1,6 +1,6 @@
 open Types
 
-let debug_flag = false
+let debug_flag = true
 
 module Quorum = struct
   open! Core
@@ -146,6 +146,9 @@ module TRACE = struct
   let cli_ex = InternalReporter.command_trace_reporter "TRACE:cli->ex"
 
   let ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
+
+  let rep = InternalReporter.command_trace_reporter "TRACE:replicate"
+  let rep_reply = InternalReporter.trace_reporter "TRACE:replicate_reply"
 
   let commit = InternalReporter.command_trace_reporter "TRACE:commit "
 

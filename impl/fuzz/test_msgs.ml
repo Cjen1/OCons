@@ -106,9 +106,10 @@ module Paxos = struct
           (fun term leader_commit prev_log_index prev_log_term entries ->
             AppendEntries
               {term; leader_commit; prev_log_index; prev_log_term; entries} )
-      ; map [int; bool; int] (fun term success index ->
+      ; map [int; bool; int; float] (fun term success index trace ->
             AppendEntriesResponse
-              {term; success= (if success then Ok index else Error index)} ) ]
+              {term; success= (if success then Ok index else Error index); trace} )
+      ]
 
   let msg_equal a b =
     match (a, b) with

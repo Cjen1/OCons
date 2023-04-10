@@ -158,13 +158,16 @@ struct
           (t @> node_state @> Candidate.quorum)
           ~f:(Quorum.add src q_entries) ()
     (* Leader *)
-    | Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src), Leader _ ->
+    | Recv (AppendEntriesResponse ({success= Ok idx; trace; _} as m), src), Leader _ ->
+        Ocons_core.Utils.TRACE.rep_reply trace;
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_ackd) () ~f:(IntMap.add src idx)
-    | Recv (AppendEntriesResponse ({success= Error idx; _} as m), src), Leader _
+    | Recv (AppendEntriesResponse ({success= Error idx; trace; _} as m), src), Leader _
       ->
+        Ocons_core.Utils.TRACE.rep_reply trace;
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
+        (*Eio.traceln "Message was lost or reordered";*)
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
         dtraceln "Failed to match\n%a" t_pp ex.@(t)
     (* Follower *)
@@ -193,7 +196,7 @@ struct
         | false ->
             (* Reply with the highest index known not to be replicated *)
             (* This will be the prev_log_index of the next msg *)
-            dtraceln
+            Eio.traceln
               "Failed to match\n\
                rooted_at_start(%b), matching_index_and_term(%b):\n\
                %a"
@@ -204,7 +207,8 @@ struct
             @@ AppendEntriesResponse
                  { term= ct.current_term
                  ; success=
-                     Error (min (prev_log_index - 1) (Log.highest ct.log)) }
+                     Error (min (prev_log_index - 1) (Log.highest ct.log))
+                 ; trace= Unix.gettimeofday () }
         | true ->
             ct.append_entries_length (snd entries) ;
             let index_iter =
@@ -216,7 +220,9 @@ struct
                    if
                      (not (Log.mem ct.log idx))
                      || (Log.get ct.log idx).term < le.term
-                   then Log.set ct.log idx le ) ;
+                   then (
+                     Log.set ct.log idx le ;
+                     Ocons_core.Utils.TRACE.rep le.command ) ) ;
             let max_entry =
               index_iter |> Iter.map fst |> Iter.fold max prev_log_index
             in
@@ -224,7 +230,9 @@ struct
             A.map (t @> commit_index) ~f:(max leader_commit) () ;
             send lid
             @@ AppendEntriesResponse
-                 {term= ct.current_term; success= Ok max_entry} )
+                 { term= ct.current_term
+                 ; success= Ok max_entry
+                 ; trace= Unix.gettimeofday () } )
     (*Invalid or already handled *)
     | _ ->
         ()

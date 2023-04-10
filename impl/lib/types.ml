@@ -53,7 +53,7 @@ module PaxosTypes = struct
         ; prev_log_term: term
         ; entries: log_entry Iter.t * int }
     | AppendEntriesResponse of
-        {term: term; success: (log_index, log_index) Result.t}
+        {term: term; success: (log_index, log_index) Result.t; trace: time}
 
   type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
 
@@ -121,7 +121,7 @@ module PaxosTypes = struct
           term leader_commit prev_log_index prev_log_term (snd entries)
           (brackets @@ list ~sep:(const char ',') log_entry_pp)
           (fst entries |> Iter.to_list)
-    | AppendEntriesResponse {term; success} ->
+    | AppendEntriesResponse {term; success; _} ->
         pf ppf "AppendEntriesResponse {term: %d; success: %a}" term
           (result
              ~ok:(const string "Ok: " ++ int)
@@ -375,7 +375,8 @@ module type ImplTypes = sig
         ; prev_log_index: term
         ; prev_log_term: term
         ; entries: log_entry Iter.t * term }
-    | AppendEntriesResponse of {term: term; success: (term, term) result}
+    | AppendEntriesResponse of
+        {term: term; success: (term, term) result; trace: time}
 
   val term_a : ('a -> term -> 'b, 'a -> message -> 'c, [< A.getter]) A.General.t
 
@@ -438,7 +439,7 @@ module VarImplTypes (StrategyTypes : StrategyTypes) :
         ; prev_log_term: term
         ; entries: log_entry Iter.t * int }
     | AppendEntriesResponse of
-        {term: term; success: (log_index, log_index) Result.t}
+        {term: term; success: (log_index, log_index) Result.t; trace: time}
 
   type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
 
@@ -510,7 +511,7 @@ module VarImplTypes (StrategyTypes : StrategyTypes) :
           term leader_commit prev_log_index prev_log_term (snd entries)
           (brackets @@ list ~sep:(const char ',') log_entry_pp)
           (fst entries |> Iter.to_list)
-    | AppendEntriesResponse {term; success} ->
+    | AppendEntriesResponse {term; success; _} ->
         pf ppf "AppendEntriesResponse {term: %d; success: %a}" term
           (result
              ~ok:(const string "Ok: " ++ int)
