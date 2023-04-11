@@ -5,7 +5,6 @@ let dtraceln fmt =
   let traceln fmt = Eio.traceln ("%a" ^^ fmt) Time_unix.pp (Time_unix.now ()) in
   if debug_flag then traceln fmt else ignore_format fmt
 
-
 module AStruct = struct
   type 'a t = {buf: 'a Array.t; off: int; len: int}
 

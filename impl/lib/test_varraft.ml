@@ -264,7 +264,7 @@ let%expect_test "Loop" =
     t2: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11}]; commit_index:-1; current_term: 11; node_state:Follower{timeout:0; voted_for:0}}
     a2:
     [Send(0, AppendEntriesResponse {term: 11; success: Ok: 1})] |}] ;
-  let aer = AppendEntriesResponse {term= 11; success= Ok 1; trace = -1.} in
+  let aer = AppendEntriesResponse {term= 11; success= Ok 1; trace= -1.} in
   let t, _ = Impl.advance t (Recv (aer, 1)) in
   let t, actions = Impl.advance t (Recv (aer, 2)) in
   Fmt.pr "t: %a\n" t_pp t ;
@@ -355,7 +355,7 @@ let%expect_test "Loop" =
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 4); term : 12}]; commit_index:-1; current_term: 12; node_state:Follower{timeout:0; voted_for:1}}
     actions:
     [Send(1, AppendEntriesResponse {term: 12; success: Ok: 3})] |}] ;
-  let aerm4 = AppendEntriesResponse {term= 12; success= Ok 3; trace = -1.} in
+  let aerm4 = AppendEntriesResponse {term= 12; success= Ok 3; trace= -1.} in
   let t1, actions = Impl.advance t1 (Recv (aerm4, 2)) in
   pp_res t1 actions ;
   [%expect
@@ -587,7 +587,7 @@ let%expect_test "Missing elements" =
     t: {log: []; commit_index:-1; current_term: 11; node_state:Follower{timeout:0; voted_for:0}}
     actions:
     [Send(0, AppendEntriesResponse {term: 11; success: Error: -1})] |}] ;
-  let aer = AppendEntriesResponse {term= 11; success= Error (-1); trace = -1.} in
+  let aer = AppendEntriesResponse {term= 11; success= Error (-1); trace= -1.} in
   let t, actions = Impl.advance t (Recv (aer, 1)) in
   pp_res t actions ;
   [%expect

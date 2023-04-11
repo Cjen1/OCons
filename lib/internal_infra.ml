@@ -193,7 +193,7 @@ module Make (C : Consensus_intf.S) = struct
 
   let accept_handler internal_streams : Eio.Net.connection_handler =
    fun sock addr ->
-    Utils.set_nodelay sock;
+    Utils.set_nodelay sock ;
     try
       let parse =
         let open Eio.Buf_read in

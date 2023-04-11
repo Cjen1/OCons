@@ -119,7 +119,7 @@ module Paxos = struct
         SerPrim.entries entries w
     | AppendEntriesResponse {term; success; trace} -> (
         W.BE.uint64 w (of_int term) ;
-        W.BE.double w trace;
+        W.BE.double w trace ;
         match success with
         | Ok i ->
             W.uint8 w 0 ;
@@ -157,7 +157,9 @@ module Paxos = struct
         and* index = uint64 in
         R.return
         @@ AppendEntriesResponse
-             {term; success= (if success = 0 then Ok index else Error index); trace}
+             { term
+             ; success= (if success = 0 then Ok index else Error index)
+             ; trace }
     | _ ->
         raise
         @@ Invalid_argument

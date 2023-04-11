@@ -20,13 +20,12 @@ let to_float_ms span =
   let open Mtime.Span in
   to_float_ns span /. to_float_ns ms
 
-
 type t =
   { conn_tbl: (client_id, socket_responder) Hashtbl.t
   ; req_tbl: (command_id, client_id) Hashtbl.t
   ; cmd_str: request Eio.Stream.t
   ; res_str: response Eio.Stream.t
-  ; req_reporter: unit InternalReporter.reporter}
+  ; req_reporter: unit InternalReporter.reporter }
 
 let maybe_yield ?(min_str_size = 100) ~energy ~f t =
   let curr_energy = ref energy in
@@ -45,7 +44,7 @@ let accept_handler t sock addr =
   dtraceln "Accepted conn from: %a" Eio.Net.Sockaddr.pp addr ;
   Switch.run
   @@ fun sw ->
-  Utils.set_nodelay sock;
+  Utils.set_nodelay sock ;
   let br = Eio.Buf_read.of_flow ~max_size:8192 sock in
   let cid = Eio.Buf_read.BE.uint64 br |> Int64.to_int in
   dtraceln "Setting up conns for %d" cid ;
@@ -63,7 +62,7 @@ let accept_handler t sock addr =
       dtraceln "Waiting for request from: %d" cid ;
       let r = Line_prot.External_infra.parse_request br in
       t.req_reporter () ;
-      Utils.TRACE.cli_ex r;
+      Utils.TRACE.cli_ex r ;
       dtraceln "Got request from %d: %a" cid Command.pp r ;
       Hashtbl.add t.req_tbl r.id cid ;
       Eio.Stream.add t.cmd_str r ;
@@ -120,7 +119,7 @@ let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
       let cycle_timer = Mtime_clock.counter () in
       dtraceln "Waiting for response" ;
       let cid, res, trace = Eio.Stream.take res_str in
-      TRACE.in_ex trace;
+      TRACE.in_ex trace ;
       dtraceln "Got response for %d" cid ;
       let _try_send_response =
         let ( let* ) m f = Option.iter f m in

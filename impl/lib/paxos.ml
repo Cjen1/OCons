@@ -158,13 +158,14 @@ struct
           (t @> node_state @> Candidate.quorum)
           ~f:(Quorum.add src q_entries) ()
     (* Leader *)
-    | Recv (AppendEntriesResponse ({success= Ok idx; trace; _} as m), src), Leader _ ->
-        Ocons_core.Utils.TRACE.rep_reply trace;
+    | ( Recv (AppendEntriesResponse ({success= Ok idx; trace; _} as m), src)
+      , Leader _ ) ->
+        Ocons_core.Utils.TRACE.rep_reply trace ;
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_ackd) () ~f:(IntMap.add src idx)
-    | Recv (AppendEntriesResponse ({success= Error idx; trace; _} as m), src), Leader _
-      ->
-        Ocons_core.Utils.TRACE.rep_reply trace;
+    | ( Recv (AppendEntriesResponse ({success= Error idx; trace; _} as m), src)
+      , Leader _ ) ->
+        Ocons_core.Utils.TRACE.rep_reply trace ;
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
         (*Eio.traceln "Message was lost or reordered";*)

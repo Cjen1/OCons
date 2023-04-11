@@ -2,7 +2,7 @@
  (name ocons_core)
  (public_name ocons.core)
  (inline_tests)
- (libraries base core core_kernel.uuid core_unix core_unix.time_unix eio accessor ocons.cmgr iter
-   owl ocons.magic_trace tdigest)
+ (libraries base core core_kernel.uuid core_unix core_unix.time_unix eio
+   accessor ocons.cmgr iter owl ocons.magic_trace tdigest)
  (preprocess
   (pps ppx_jane ppx_accessor)))
