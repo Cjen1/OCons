@@ -1,5 +1,12 @@
 open! Eio.Std
 
+let set_nodelay sock =
+  match sock |> Eio_unix.FD.peek_opt with
+  | None ->
+      Fmt.invalid_arg "Could not get underlying file descriptor"
+  | Some fd ->
+      Unix.setsockopt fd Unix.TCP_NODELAY true
+
 let server addr =
   Eio_main.run
   @@ fun env ->
@@ -11,6 +18,7 @@ let server addr =
   let br = Eio.Buf_read.of_flow ~max_size:10_000 sock in
   Eio.Buf_write.with_flow sock
   @@ fun bw ->
+  set_nodelay sock ;
   while true do
     let tx = Eio.Buf_read.BE.double br in
     let rx = Eio.Time.now env#clock in
@@ -29,6 +37,7 @@ let client addr n rate =
   let td_sc = ref @@ Tdigest.create ~delta:Tdigest.Discrete () in
   let count = ref 0 in
   let sock = Eio.Net.connect ~sw env#net addr in
+  set_nodelay sock ;
   let br = Eio.Buf_read.of_flow ~max_size:10_000 sock in
   Eio.Buf_write.with_flow sock
   @@ fun bw ->
@@ -39,7 +48,7 @@ let client addr n rate =
         if Eio.Time.now env#clock < target then
           Eio.Time.sleep_until env#clock target ;
         Eio.Buf_write.BE.double bw (Eio.Time.now env#clock) ;
-        Eio.Buf_write.flush bw;
+        Eio.Buf_write.flush bw ;
         dispatch (target +. period) (i - 1)
   in
   let rec collect () =

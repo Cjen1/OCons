@@ -21,10 +21,13 @@
           ocamlformat = "*";
           utop = "*";
         };
+        repos = [
+          opam-repository
+        ];
         query = devPackagesQuery // {
           ocaml-base-compiler = "5.0.0";
         };
-        scope = on.buildDuneProject { } "ocons" ./. query;
+        scope = on.buildDuneProject { inherit repos; } "ocons" ./. query;
         devPackages = builtins.attrValues
           (pkgs.lib.getAttrs (builtins.attrNames query) scope);
       in
@@ -39,3 +42,4 @@
         };
       });
 }
+

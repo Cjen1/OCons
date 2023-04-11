@@ -31,7 +31,8 @@ module Make (C : Consensus_intf.S) = struct
     Utils.InternalReporter.run ~sw env#clock config.stat_report ;
     let result_stream = Eio.Stream.create Int.max_int in
     let create_conn addr sw =
-      (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)
+      let c = (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way) in
+      Utils.set_nodelay c ; c
     in
     let conns : connection_creater list =
       config.nodes

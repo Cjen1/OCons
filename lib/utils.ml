@@ -1,6 +1,36 @@
 open Types
 
-let debug_flag = true
+let debug_flag = false
+
+let set_nodelay ?(should_warn = true) sock =
+  match sock |> Eio_unix.FD.peek_opt with
+  | None when should_warn ->
+      Eio.traceln
+        "WARNING: unable to set TCP_NODELAY, higher than required latencies \
+         may be experienced"
+  | None ->
+      ()
+  | Some fd ->
+      Unix.setsockopt fd Unix.TCP_NODELAY true
+
+let dtraceln fmt =
+  let ignore_format = Format.ikfprintf ignore Fmt.stderr in
+  let traceln fmt =
+    Eio.traceln ("@[<hov 1>%a: " ^^ fmt ^^ "@]") Time_unix.pp (Time_unix.now ())
+  in
+  if debug_flag then traceln fmt else ignore_format fmt
+
+let is_not_cancel = function Eio.Cancel.Cancelled _ -> false | _ -> true
+
+let maybe_do ~energy ~f =
+  let curr = ref energy in
+  fun () ->
+    if !curr <= 0 then (
+      curr := energy ;
+      f () ) ;
+    curr := !curr - 1
+
+let maybe_yield = maybe_do ~f:Eio.Fiber.yield
 
 module Quorum = struct
   open! Core
@@ -16,23 +46,6 @@ module Quorum = struct
 
   let satisified t = t.n >= t.threshold
 end
-
-let dtraceln fmt =
-  let ignore_format = Format.ikfprintf ignore Fmt.stderr in
-  let traceln fmt = Eio.traceln ("@[<hov 1>%a: " ^^ fmt ^^ "@]") Time_unix.pp (Time_unix.now ()) in
-  if debug_flag then traceln fmt else ignore_format fmt
-
-let is_not_cancel = function Eio.Cancel.Cancelled _ -> false | _ -> true
-
-let maybe_do ~energy ~f =
-  let curr = ref energy in
-  fun () ->
-    if !curr <= 0 then (
-      curr := energy ;
-      f () ) ;
-    curr := !curr - 1
-
-let maybe_yield = maybe_do ~f:Eio.Fiber.yield
 
 module InternalReporter = struct
   type reporter_pp = time Fmt.t
@@ -148,6 +161,7 @@ module TRACE = struct
   let ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
 
   let rep = InternalReporter.command_trace_reporter "TRACE:replicate"
+
   let rep_reply = InternalReporter.trace_reporter "TRACE:replicate_reply"
 
   let commit = InternalReporter.command_trace_reporter "TRACE:commit "

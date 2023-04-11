@@ -16,3 +16,4 @@ let maybe_yield ~energy =
       curr := energy ;
       Eio.Fiber.yield () ) ;
     curr := !curr - 1
+

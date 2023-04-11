@@ -45,6 +45,7 @@ let accept_handler t sock addr =
   dtraceln "Accepted conn from: %a" Eio.Net.Sockaddr.pp addr ;
   Switch.run
   @@ fun sw ->
+  Utils.set_nodelay sock;
   let br = Eio.Buf_read.of_flow ~max_size:8192 sock in
   let cid = Eio.Buf_read.BE.uint64 br |> Int64.to_int in
   dtraceln "Setting up conns for %d" cid ;
