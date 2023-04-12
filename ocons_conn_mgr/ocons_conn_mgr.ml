@@ -26,10 +26,18 @@ let connect_connected conns_list = function
       conns_list |> List.map (fun p () -> Promise.await p) |> Fiber.any ;
       Promise.resolve (snd connected) ()
 
-let make_kind_impl ~sw conns parse kind =
+let make_kind_impl ~sw ?use_domain conns parse kind =
+  let run =
+    match use_domain with
+    | None ->
+        Fiber.fork_daemon ~sw
+    | Some domain_mgr ->
+        fun f ->
+          Fiber.fork_daemon ~sw (fun () -> Domain_manager.run domain_mgr f)
+  in
   match kind with
   | Iter f ->
-      Fiber.fork_daemon ~sw (fun () ->
+      run (fun () ->
           conns
           |> List.map (fun (id, p) () ->
                  PCon.recv_iter p parse (fun v -> f (id, v)) )
@@ -38,7 +46,7 @@ let make_kind_impl ~sw conns parse kind =
       IIter
   | Recv {max_recv_buf} ->
       let reader_channel = Stream.create max_recv_buf in
-      Fiber.fork_daemon ~sw (fun () ->
+      run (fun () ->
           let f id v = Stream.add reader_channel (id, v) in
           conns
           |> List.map (fun (id, p) () -> PCon.recv_iter p parse (f id))
@@ -46,7 +54,8 @@ let make_kind_impl ~sw conns parse kind =
           Fiber.await_cancel () ) ;
       IRecv reader_channel
 
-let create ?(kind = Iter ignore) ?connected ~sw resolvers parse delayer =
+let create ?(kind = Iter ignore) ?use_domain ?connected ~sw resolvers
+    parse delayer =
   let conns_list_prom =
     StdLabels.List.map resolvers ~f:(fun (id, r) ->
         let conn = Promise.create () in
@@ -59,7 +68,7 @@ let create ?(kind = Iter ignore) ?connected ~sw resolvers parse delayer =
   { conns_list
   ; conns_map
   ; recv_cond= Condition.create ()
-  ; kind= make_kind_impl ~sw conns_list parse kind }
+  ; kind= make_kind_impl ~sw ?use_domain conns_list parse kind }
 
 let close t = t.conns_list |> List.iter (fun (_, c) -> PCon.close c)
 
@@ -90,6 +99,13 @@ let rec recv_any ?(force = false) t f =
       | None ->
           () ) ;
       recv_any ~force:false t f
+
+let can_recv t =
+  match t.kind with
+  | IIter ->
+      Fmt.invalid_arg "can_recv on Iter cmgr"
+  | IRecv reader_channel ->
+      Stream.length reader_channel > 0
 
 let flush_all t =
   let f (_, c) = PCon.flush c in

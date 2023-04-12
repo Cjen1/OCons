@@ -12,6 +12,7 @@ type 'a kind = Iter of (id * 'a -> unit) | Recv of {max_recv_buf: int}
 
 val create :
      ?kind:'a kind
+  -> ?use_domain:#Eio.Domain_manager.t
   -> ?connected:unit Promise.t * unit Promise.u
   -> sw:Switch.t
   -> (id * resolver) list
@@ -36,5 +37,7 @@ val flush_all : 'a t -> unit
 val close : 'a t -> unit
 
 val set_debug_flag : unit -> unit
+
+val can_recv : 'a t -> bool
 
 module PCon = Persistent_conn

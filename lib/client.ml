@@ -22,11 +22,11 @@ let resolver_with_handshake ~id (res : Cmgr.resolver) sw =
   f
 
 (* Add the handshake *)
-let create_cmgr ~sw ?kind resolvers id =
+let create_cmgr ~sw ?use_domain ?kind resolvers id =
   let resolvers =
     resolvers |> List.map (fun (i, r) -> (i, resolver_with_handshake ~id r))
   in
-  Cmgr.create ~sw ?kind resolvers parse_resp
+  Cmgr.create ~sw ?use_domain ?kind resolvers parse_resp
 
 let submit_request cmgr req = Cmgr.broadcast_blit cmgr (ser_req req)
 
