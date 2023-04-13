@@ -3,7 +3,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "opam-nix/nixpkgs";
     opam-repository = {
-      url = "github:ocaml/opam-repository/562afb69b736d0b96a88588228dd55ae9cfefe60";
+      url = "github:ocaml/opam-repository";#562afb69b736d0b96a88588228dd55ae9cfefe60";
       flake = false;
     };
     opam-nix = {
@@ -26,6 +26,7 @@
         ];
         query = devPackagesQuery // {
           ocaml-base-compiler = "5.0.0";
+          ocamlfind = "1.9.5";
         };
         scope = on.buildDuneProject { inherit repos; } "ocons" ./. query;
         devPackages = builtins.attrValues

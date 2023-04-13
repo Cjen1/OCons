@@ -69,16 +69,25 @@ let pp_stats ppf s =
     in
     (throughput, latencies)
   in
+  let mean s =
+    Array.fold_left ( +. ) 0. s /. (Array.length s |> Float.of_int)
+  in
+  let percentile s p =
+    let td = Tdigest.create ~delta:Tdigest.Discrete () in
+    let td = Array.fold_left (fun a v -> Tdigest.add ~data:v a) td s in
+    Tdigest.percentile td p |> snd
+  in
   let pp_stats =
     let open Fmt in
-    let open Owl.Stats in
     let fields =
       [ field "throughput" (fun (t, _) -> t) float
       ; field "mean" (fun (_, s) -> mean s) float
-      ; field "l_p50" (fun (_, s) -> percentile s 50.) float
-      ; field "l_p75" (fun (_, s) -> percentile s 75.) float
-      ; field "l_p99" (fun (_, s) -> percentile s 99.) float
-      ; field "l_max" (fun (_, s) -> max s) float
+      ; field "l_p50" (fun (_, s) -> percentile s 50.) (option float)
+      ; field "l_p75" (fun (_, s) -> percentile s 75.) (option float)
+      ; field "l_p99" (fun (_, s) -> percentile s 99.) (option float)
+      ; field "l_max"
+          (fun (_, s) -> Array.fold_left max Float.min_float s)
+          float
       ; field "number" (fun (_, s) -> Array.length s) int ]
     in
     record fields
