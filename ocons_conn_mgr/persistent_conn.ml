@@ -100,8 +100,7 @@ let close t =
   close_inflight t ;
   Promise.await (fst t.closed_promise)
 
-let flush t =
-  match t.conn_state with Open s -> Buf_write.flush s.w | Closed -> ()
+let flush t = do_if_open ~default:() t (fun (w, _) -> Buf_write.flush w)
 
 let is_open t = not t.should_close
 
