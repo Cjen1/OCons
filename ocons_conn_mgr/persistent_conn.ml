@@ -54,46 +54,15 @@ let recv ?default t parse =
   let read (_, r) = parse r in
   do_if_open ?default t read
 
-let recv_iter t val_parse f =
-  (* Reconnect loop *)
+let recv_iter t val_parse =
   let yielder = Util.maybe_yield ~energy:128 in
-  let parse =
-    let open Buf_read in
-    let open Syntax in
-    let* b = at_end_of_input in
-    if b then return None
-    else
-      let* v = val_parse in
-      return (Some v)
+  let iter f =
+    while not t.should_close do
+      yielder ();
+      f (do_if_open ?default:None t (fun (_,r) -> Some (val_parse r)))
+    done
   in
-  let open struct
-    exception EOF
-  end in
-  while not t.should_close do
-    Fiber.check () ;
-    try
-      (* Recv loop *)
-      while not t.should_close do
-        Fiber.check () ;
-        match t.conn_state with
-        | Closed ->
-            dtraceln "recv_iter: closed retrying" ;
-            Condition.await_no_mutex t.has_recovered_cond
-        | Open {r; _} -> (
-          match parse r with
-          | None ->
-              raise EOF
-          | Some v ->
-              dtraceln "recv_iter: read" ; f v ; yielder () )
-      done
-    with
-    | EOF ->
-        close_inflight t
-    | e when Util.is_not_cancel e ->
-        traceln "Failed while using conn: %a" Fmt.exn_backtrace
-          (e, Printexc.get_raw_backtrace ()) ;
-        close_inflight t
-  done
+  iter |> Iter.filter_map (Fun.id)
 
 let close t =
   t.should_close <- true ;
