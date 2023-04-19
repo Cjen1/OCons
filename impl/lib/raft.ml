@@ -48,16 +48,21 @@ struct
 
   let transit_follower ?voted_for term =
     Eio.traceln "Follower for term %d" term ;
-    ex.@(t @> node_state) <- Follower {timeout= 0; voted_for} ;
+    ex.@(t @> node_state) <-
+      Follower {timeout= ex.@(t @> config @> election_timeout); voted_for} ;
     ex.@(t @> current_term) <- term
 
-  let transit_candidate () =
+  let transit_candidate ?(repeat = 1) () =
+    let timeout =
+      let et = ex.@(t @> config @> election_timeout) in
+      Random.State.full_int ex.@(t @> random) (max (et * repeat) 0) + 1
+    in
     let new_term = ex.@(t @> current_term) + 1 in
     let num_nodes = ex.@(t @> config @> num_nodes) in
     Eio.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     ex.@(t @> node_state) <-
-      Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0} ;
+      Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout; repeat} ;
     ex.@(t @> current_term) <- new_term ;
     let lastIndex = Log.highest ex.@(t @> log) in
     let lastTerm = get_log_term ex.@(t @> log) lastIndex in
@@ -104,16 +109,16 @@ struct
     | _ ->
         ()
 
-  let incr h = h + 1
+  let decr i = i - 1
 
   let resolve_event e =
     if_recv_advance_term e ;
     match (e, ex.@(t @> node_state)) with
-    (* Increment ticks *)
+    (* Decr ticks *)
     | Tick, (Follower _ | Leader _) ->
-        A.map (t @> node_state @> timeout_a) ~f:incr ()
+        A.map (t @> node_state @> timeout_a) ~f:decr ()
     | Tick, Candidate _ ->
-        A.map (t @> node_state @> timeout_a) ~f:incr ()
+        A.map (t @> node_state @> timeout_a) ~f:decr ()
     (* Recv commands *)
     | Commands cs, Leader _ ->
         cs (fun c ->
@@ -167,7 +172,8 @@ struct
           , lid )
       , Follower _ ) -> (
         (* Reset leader alive timeout *)
-        ex.@(t @> node_state @> Follower.timeout) <- 0 ;
+        ex.@(t @> node_state @> Follower.timeout) <-
+          ex.@(t @> config @> election_timeout) ;
         ex.@(t @> node_state @> Follower.voted_for) <- Some lid ;
         (* reply to append entries request *)
         let ct = ex.@(t) in
@@ -232,10 +238,10 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     (* When should ticking result in an action? *)
-    | Follower s when s.timeout >= ct.config.election_timeout ->
+    | Follower s when s.timeout <= 0 ->
         transit_candidate ()
-    | Candidate {timeout; _} when timeout >= ct.config.election_timeout ->
-        transit_candidate ()
+    | Candidate {timeout; repeat; _} when timeout <= 0 ->
+        transit_candidate ~repeat:(repeat + 1) ()
     | Leader {heartbeat; _} when heartbeat > 0 ->
         send_append_entries ~force:true () ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 0
@@ -273,11 +279,11 @@ struct
     { log
     ; commit_index= -1
     ; config
-    ; node_state= Follower {timeout= config.election_timeout; voted_for= None}
+    ; node_state= Follower {timeout= 0; voted_for= None}
     ; current_term= 0
     ; append_entries_length=
         Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
-    }
+    ; random= Random.State.make [|config.node_id|] }
 end
 
 module Impl = Make (ImperativeActions (RaftTypes))

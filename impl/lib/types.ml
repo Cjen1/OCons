@@ -198,7 +198,8 @@ module RaftTypes = struct
 
   type node_state =
     | Follower of {timeout: int; voted_for: node_id option}
-    | Candidate of {mutable quorum: unit Quorum.t; mutable timeout: int}
+    | Candidate of
+        {mutable quorum: unit Quorum.t; mutable timeout: int; repeat: int}
     | Leader of
         { mutable rep_ackd: log_index IntMap.t (* MatchIdx *)
         ; mutable rep_sent: log_index IntMap.t (* NextIdx *)
@@ -230,7 +231,8 @@ module RaftTypes = struct
     ; config: config
     ; node_state: node_state
     ; current_term: term
-    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter }
+    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter
+    ; random: Random.State.t }
   [@@deriving accessors]
 
   let message_pp ppf v =
@@ -284,8 +286,9 @@ module RaftTypes = struct
         pf ppf "Follower{timeout:%d; voted_for:%a}" timeout
           Fmt.(option ~none:(const string "None") int)
           voted_for
-    | Candidate {quorum; timeout} ->
-        pf ppf "Candidate{quorum:%a, timeout:%d}" Quorum.pp quorum timeout
+    | Candidate {quorum; timeout; repeat} ->
+        pf ppf "Candidate{quorum:%a, timeout:%d, repeat:%d}" Quorum.pp quorum
+          timeout repeat
     | Leader {rep_ackd; rep_sent; heartbeat} ->
         let format_rep_map : int IntMap.t Fmt.t =
          fun ppf v ->
@@ -450,7 +453,7 @@ module VarImplTypes (StrategyTypes : StrategyTypes) :
 
   type node_state =
     | Follower of {timeout: int; voted_for: node_id option}
-    | Candidate of {mutable quorum: quorum_type Quorum.t; mutable timeout: term}
+    | Candidate of {mutable quorum: quorum_type Quorum.t; mutable timeout: int}
     | Leader of
         { mutable rep_ackd: log_index IntMap.t (* MatchIdx *)
         ; mutable rep_sent: log_index IntMap.t (* NextIdx *)

@@ -612,6 +612,10 @@ let%expect_test "Missing elements" =
   pp_res t1 actions ;
   [%expect
     {|
+    +Failed to match
+    +rooted_at_start(false), matching_index_and_term(false):
+    +{log:
+    +[]; commit_index:-1; current_term: 12; node_state:Follower(0)}
     t: {log: []; commit_index:-1; current_term: 12; node_state:Follower(0)}
     actions:
     [Send(0, AppendEntriesResponse {term: 12; success: Error: -1})] |}] ;
