@@ -3,7 +3,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "opam-nix/nixpkgs";
     opam-repository = {
-      url = "github:ocaml/opam-repository";#562afb69b736d0b96a88588228dd55ae9cfefe60";
+      url = "github:ocaml/opam-repository";
       flake = false;
     };
     opam-nix = {

@@ -24,7 +24,6 @@
     base
     core
     core_unix
-    owl
     eio
     eio_main
     eio_linux
