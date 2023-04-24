@@ -1,12 +1,11 @@
 open Types
 open Accessor.O
+open Ocons_core.Consensus_intf
 
 module type ActionSig = sig
   type t
 
   type message
-
-  type action
 
   val send : node_id -> message -> unit
 
@@ -14,7 +13,7 @@ module type ActionSig = sig
 
   val t : ('i -> t -> t, 'i -> unit -> unit, [< A.field]) A.General.t
 
-  val run_side_effects : (unit -> unit) -> t -> t * action list
+  val run_side_effects : (unit -> unit) -> t -> t * message action list
 end
 
 module type CTypes = sig
@@ -25,13 +24,6 @@ module type CTypes = sig
   type message
 
   val message_pp : message Fmt.t
-
-  type action =
-    | Send of node_id * message
-    | Broadcast of message
-    | CommitCommands of command Iter.t
-
-  val action_pp : action Fmt.t
 
   val log :
     ( 'a -> log_entry Utils.SegmentLog.t -> log_entry Utils.SegmentLog.t
@@ -46,17 +38,13 @@ module type ActionFunc = functor (C : CTypes) ->
   ActionSig
     with type t = C.t
      and type message = C.message
-     and type action = C.action
 
 module ImperativeActions (C : CTypes) :
-  ActionSig
-    with type t = C.t
-     and type message = C.message
-     and type action = C.action = struct
+  ActionSig with type t = C.t and type message = C.message = struct
   include C
 
   type s =
-    {mutable action_acc: action list; mutable starting_cid: int; mutable t: t}
+    {mutable action_acc: message action list; mutable starting_cid: int; mutable t: t}
 
   let s = ref None
 

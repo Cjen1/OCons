@@ -5,6 +5,9 @@ module Imp = ImperativeActions (RaftTypes)
 module Impl = Raft.Make (Imp)
 open! RaftTypes
 open! Impl
+open Ocons_core.Consensus_intf
+
+let action_pp = action_pp ~pp_msg:message_pp
 
 let c1 = make_config ~node_id:0 ~node_list:[0] ~election_timeout:5 ()
 
@@ -377,10 +380,10 @@ let%expect_test "Loop" =
     {|
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12}]; commit_index:3; current_term: 12; node_state:Leader{heartbeat:0; rep_ackd:
     [{0, -1}, {2, 3}]; rep_sent:[{0, 3}, {2, 3}]}
-    actions: [CommitCommands[Command(NoOp, -1)
-                                                            Command(Read m1, 1)
-                                                            Command(NoOp, -1)
-                                                            Command(Read m4, 3)]] |}] ;
+    actions: [CommitCommands(Command(NoOp, -1),
+                                                            Command(Read m1, 1),
+                                                            Command(NoOp, -1),
+                                                            Command(Read m4, 3))] |}] ;
   (* ------------ Add m5,m6 ----------------- *)
   let m5 = C.Types.(make_command (Read "m5")) in
   let m6 = C.Types.(make_command (Read "m6")) in

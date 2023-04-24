@@ -2,6 +2,7 @@ open Eio.Std
 open Types
 module CMgr = Ocons_conn_mgr
 open Utils
+open Consensus_intf
 
 module Ticker = struct
   type t = {mutable next_tick: float; period: float; clock: Eio.Time.clock}
@@ -44,14 +45,14 @@ module Make (C : Consensus_intf.S) = struct
     update_state_machine t.state_machine cmd
 
   let handle_actions t actions =
-    let f : C.action -> unit = function
-      | C.Send (dst, msg) ->
+    let f : C.message action -> unit = function
+      | Send (dst, msg) ->
           CMgr.send_blit t.cmgr dst (C.serialise msg) ;
           dtraceln "Sent to %d: %a" dst C.message_pp msg
-      | C.Broadcast msg ->
+      | Broadcast msg ->
           CMgr.broadcast_blit t.cmgr (C.serialise msg) ;
           dtraceln "Broadcast %a" C.message_pp msg
-      | C.CommitCommands citer ->
+      | CommitCommands citer ->
           citer (fun cmd ->
               let res = apply t cmd in
               TRACE.commit cmd ;
@@ -156,13 +157,13 @@ module Make (C : Consensus_intf.S) = struct
       traceln "Failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
 
-  let run_inter ~sw (clock : #Eio.Time.clock) config period resolvers
+  let run_inter ~sw (clock : #Eio.Time.clock) node_id config period resolvers
       client_msgs client_resps internal_streams =
     let cmgr =
       Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
           Eio.Time.sleep clock 1. )
     in
-    let cons = C.create_node config in
+    let cons = C.create_node node_id config in
     let state_machine = Core.Hashtbl.create (module Core.String) in
     let ticker = Ticker.create (clock :> Eio.Time.clock) period in
     let debug =
@@ -244,8 +245,8 @@ module Make (C : Consensus_intf.S) = struct
             Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
               (accept_handler internal_streams) ) ) ;
     let resolvers = resolver_handshake node_id resolvers in
-    run_inter ~sw env#clock config period resolvers client_msgs client_resps
-      internal_streams
+    run_inter ~sw env#clock node_id config period resolvers client_msgs
+      client_resps internal_streams
 end
 
 module Test = struct
@@ -259,43 +260,12 @@ module Test = struct
     Command.
       {op= Read n; id= Core.Random.int Core.Int.max_value; trace_start= -1.}
 
-  module CT = struct
+  module CT : Consensus_intf.S = struct
     type message = Core.String.t [@@deriving sexp]
 
     let should_ack_clients _ = true
 
     let message_pp = Fmt.string
-
-    (** All the events incomming into the advance function *)
-    type event =
-      | Tick
-      | Recv of (message * node_id)
-      | Commands of command Iter.t
-
-    let event_pp ppf v =
-      let open Fmt in
-      match v with
-      | Tick ->
-          pf ppf "Tick"
-      | Recv (m, src) ->
-          pf ppf "Recv(%a, %d)" message_pp m src
-      | Commands _ ->
-          pf ppf "Commands"
-
-    type action =
-      | Send of int * message
-      | Broadcast of message
-      | CommitCommands of command Iter.t
-
-    let action_pp ppf v =
-      let open Fmt in
-      match v with
-      | Send (d, m) ->
-          pf ppf "Send(%d, %a)" d message_pp m
-      | Broadcast m ->
-          pf ppf "Broadcast(%a)" message_pp m
-      | CommitCommands _ ->
-          pf ppf "CommitCommands"
 
     let parse buf =
       let r = Eio.Buf_read.line buf in
@@ -313,7 +283,7 @@ module Test = struct
 
     let t_pp ppf _ = Fmt.pf ppf "T"
 
-    let create_node () = {arr= Array.make 10 None; len= 0}
+    let create_node _ () = {arr= Array.make 10 None; len= 0}
 
     let available_space_for_commands _t = 5
 

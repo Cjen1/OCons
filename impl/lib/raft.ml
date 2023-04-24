@@ -3,14 +3,14 @@ open Utils
 open C.Types
 open Actions_f
 open A.O
+open Ocons_core.Consensus_intf
 
 let dtraceln = Utils.dtraceln
 
 module Make
     (Act : ActionSig
              with type t = RaftTypes.t
-              and type message = RaftTypes.message
-              and type action = RaftTypes.action) =
+              and type message = RaftTypes.message) =
 struct
   include RaftTypes
   open Act
@@ -171,6 +171,8 @@ struct
               {prev_log_term; prev_log_index; entries; leader_commit; _}
           , lid )
       , Follower _ ) -> (
+        (**)
+        ex.@(t @> current_leader) <- Some lid;
         (* Reset leader alive timeout *)
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout) ;
@@ -283,7 +285,10 @@ struct
     ; current_term= 0
     ; append_entries_length=
         Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
-    ; random= Random.State.make [|config.node_id|] }
+    ; random= Random.State.make [|config.node_id|] 
+    ; current_leader = None}
+
+  let get_leader t = t.current_leader
 end
 
 module Impl = Make (ImperativeActions (RaftTypes))

@@ -32,12 +32,17 @@ module SerPrim = struct
     W.BE.double w trace_start ;
     sm_op op w
 
-  let entries (es, length) w =
+  let log_entry {term; command= cmd} w =
+    W.BE.uint64 w (Int64.of_int term) ;
+    command cmd w
+
+  let iter ser (is, length) w =
     W.BE.uint64 w (Int64.of_int length) ;
-    es
-    |> Iter.iter (fun {term; command= cmd} ->
-           W.BE.uint64 w (Int64.of_int term) ;
-           command cmd w )
+    is |> Iter.iter (fun v -> ser v w)
+
+  let array ser arr = iter ser (Iter.of_array arr, Array.length arr)
+
+  let entries es w = iter log_entry es w
 end
 
 module DeserPrim = struct
@@ -84,19 +89,23 @@ module DeserPrim = struct
     and* op = sm_op in
     R.return Command.{op; id; trace_start}
 
-  let entries r =
+  let log_entry =
+    let* term = R.map Int64.to_int R.BE.uint64 and* command = command in
+    R.return {term; command}
+
+  let array parse r =
     let len = R.BE.uint64 r |> Int64.to_int in
     if len < 0 then
       raise
       @@ Fmt.invalid_arg "Len less than 0: %d\n %a" len Fmt.exn_backtrace
            (Invalid_argument "", Printexc.get_callstack 10) ;
-    let arr = Array.init len (fun _ -> {term= -1; command= empty_command}) in
-    for i = 0 to len - 1 do
-      let term = R.BE.uint64 r |> Int64.to_int in
-      let command = command r in
-      Array.set arr i {term; command}
-    done ;
-    (Iter.of_array arr, len)
+    Array.init len (fun _ -> parse r)
+
+  let iter parse =
+    let* entries = array parse in
+    R.return (Iter.of_array entries, Array.length entries)
+
+  let entries = iter log_entry
 end
 
 module External_infra = struct

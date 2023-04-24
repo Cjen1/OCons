@@ -4,10 +4,9 @@ open! Impl_core.Types
 module Cli = Ocons_core.Client
 module PMain = Infra.Make (Impl_core.Paxos)
 module RMain = Infra.Make (Impl_core.Raft)
-module VPMain = Infra.Make (Impl_core.VPaxos)
-module VRMain = Infra.Make (Impl_core.VRaft)
+module FRMain = Infra.Make (Impl_core.ForwardRaft)
 
-type kind = Paxos | Raft | VPaxos | VRaft
+type kind = Paxos | Raft | FRaft
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length stat_report =
@@ -47,16 +46,11 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
         shared_config ;
       Eio_main.run @@ fun env -> RMain.run env cfg
-  | VPaxos ->
+  | FRaft ->
       let cfg = config shared_config in
-      Eio.traceln "Starting VPaxos system:" ;
-      Eio.traceln "%a" Impl_core.Types.config_pp shared_config ;
-      Eio_main.run @@ fun env -> VPMain.run env cfg
-  | VRaft ->
-      let cfg = config shared_config in
-      Eio.traceln "Starting VRaft system:" ;
-      Eio.traceln "%a" Impl_core.Types.config_pp shared_config ;
-      Eio_main.run @@ fun env -> VRMain.run env cfg
+      Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
+        shared_config ;
+      Eio_main.run @@ fun env -> FRMain.run env cfg
 
 open Cmdliner
 
@@ -171,10 +165,7 @@ let stat_report_ot =
 
 let cmd =
   let kind_t =
-    let kind =
-      Arg.enum
-        [("paxos", Paxos); ("raft", Raft); ("vpaxos", VPaxos); ("vraft", VRaft)]
-    in
+    let kind = Arg.enum [("paxos", Paxos); ("raft", Raft)] in
     Arg.(
       required
       & pos 0 (some kind) None (info ~docv:"KIND" ~doc:"Protocol to use" []) )

@@ -55,13 +55,6 @@ module PaxosTypes = struct
     | AppendEntriesResponse of
         {term: term; success: (log_index, log_index) Result.t; trace: time}
 
-  type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
-
-  type action =
-    | Send of node_id * message
-    | Broadcast of message
-    | CommitCommands of command Iter.t
-
   type node_state =
     | Follower of {timeout: int}
     | Candidate of
@@ -128,26 +121,6 @@ module PaxosTypes = struct
              ~error:(const string "Error: " ++ int) )
           success
 
-  let event_pp ppf v =
-    let open Fmt in
-    match v with
-    | Tick ->
-        pf ppf "Tick"
-    | Recv (m, src) ->
-        pf ppf "Recv(%a, %d)" message_pp m src
-    | Commands _ ->
-        pf ppf "Commands"
-
-  let action_pp ppf v =
-    let open Fmt in
-    match v with
-    | Send (d, m) ->
-        pf ppf "Send(%d, %a)" d message_pp m
-    | Broadcast m ->
-        pf ppf "Broadcast(%a)" message_pp m
-    | CommitCommands i ->
-        pf ppf "CommitCommands[%a]" (list ~sep:sp Command.pp) (i |> Iter.to_list)
-
   let node_state_pp : node_state Fmt.t =
    fun ppf v ->
     let open Fmt in
@@ -189,13 +162,6 @@ module RaftTypes = struct
     | AppendEntriesResponse of
         {term: term; success: (log_index, log_index) Result.t}
 
-  type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
-
-  type action =
-    | Send of node_id * message
-    | Broadcast of message
-    | CommitCommands of command Iter.t
-
   type node_state =
     | Follower of {timeout: int; voted_for: node_id option}
     | Candidate of
@@ -232,7 +198,8 @@ module RaftTypes = struct
     ; node_state: node_state
     ; current_term: term
     ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter
-    ; random: Random.State.t }
+    ; random: Random.State.t 
+    ; current_leader: node_id option}
   [@@deriving accessors]
 
   let message_pp ppf v =
@@ -257,26 +224,6 @@ module RaftTypes = struct
              ~ok:(const string "Ok: " ++ int)
              ~error:(const string "Error: " ++ int) )
           success
-
-  let event_pp ppf v =
-    let open Fmt in
-    match v with
-    | Tick ->
-        pf ppf "Tick"
-    | Recv (m, src) ->
-        pf ppf "Recv(%a, %d)" message_pp m src
-    | Commands _ ->
-        pf ppf "Commands"
-
-  let action_pp ppf v =
-    let open Fmt in
-    match v with
-    | Send (d, m) ->
-        pf ppf "Send(%d, %a)" d message_pp m
-    | Broadcast m ->
-        pf ppf "Broadcast(%a)" message_pp m
-    | CommitCommands i ->
-        pf ppf "CommitCommands[%a]" (list ~sep:sp Command.pp) (i |> Iter.to_list)
 
   let node_state_pp : node_state Fmt.t =
    fun ppf v ->
@@ -383,13 +330,6 @@ module type ImplTypes = sig
 
   val term_a : ('a -> term -> 'b, 'a -> message -> 'c, [< A.getter]) A.General.t
 
-  type event = Tick | Recv of (message * term) | Commands of command Iter.t
-
-  type action =
-    | Send of term * message
-    | Broadcast of message
-    | CommitCommands of command Iter.t
-
   type node_state =
     | Follower of {timeout: term; voted_for: term option}
     | Candidate of {mutable quorum: quorum_type Quorum.t; mutable timeout: term}
@@ -416,10 +356,6 @@ module type ImplTypes = sig
 
   val message_pp : Format.formatter -> message -> unit
 
-  val event_pp : Format.formatter -> event -> unit
-
-  val action_pp : Format.formatter -> action -> unit
-
   val node_state_pp : node_state Fmt.t
 
   val t_pp : t Fmt.t
@@ -443,13 +379,6 @@ module VarImplTypes (StrategyTypes : StrategyTypes) :
         ; entries: log_entry Iter.t * int }
     | AppendEntriesResponse of
         {term: term; success: (log_index, log_index) Result.t; trace: time}
-
-  type event = Tick | Recv of (message * node_id) | Commands of command Iter.t
-
-  type action =
-    | Send of node_id * message
-    | Broadcast of message
-    | CommitCommands of command Iter.t
 
   type node_state =
     | Follower of {timeout: int; voted_for: node_id option}
@@ -520,26 +449,6 @@ module VarImplTypes (StrategyTypes : StrategyTypes) :
              ~ok:(const string "Ok: " ++ int)
              ~error:(const string "Error: " ++ int) )
           success
-
-  let event_pp ppf v =
-    let open Fmt in
-    match v with
-    | Tick ->
-        pf ppf "Tick"
-    | Recv (m, src) ->
-        pf ppf "Recv(%a, %d)" message_pp m src
-    | Commands _ ->
-        pf ppf "Commands"
-
-  let action_pp ppf v =
-    let open Fmt in
-    match v with
-    | Send (d, m) ->
-        pf ppf "Send(%d, %a)" d message_pp m
-    | Broadcast m ->
-        pf ppf "Broadcast(%a)" message_pp m
-    | CommitCommands i ->
-        pf ppf "CommitCommands[%a]" (list ~sep:sp Command.pp) (i |> Iter.to_list)
 
   let node_state_pp : node_state Fmt.t =
    fun ppf v ->

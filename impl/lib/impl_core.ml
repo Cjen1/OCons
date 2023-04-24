@@ -2,11 +2,7 @@ open! Types
 module Line_prot = Line_prot
 module Types = Types
 
-module Paxos :
-  Ocons_core.Consensus_intf.S
-    with type message = PaxosTypes.message
-     and type event = PaxosTypes.event
-     and type config = Types.config = struct
+module Paxos = struct
   include PaxosTypes
   include Paxos.Impl
 
@@ -31,11 +27,7 @@ module Paxos :
   let serialise = Line_prot.Paxos.serialise
 end
 
-module Raft :
-  Ocons_core.Consensus_intf.S
-    with type message = RaftTypes.message
-     and type event = RaftTypes.event
-     and type config = Types.config = struct
+module Raft = struct
   include RaftTypes
   include Raft.Impl
 
@@ -43,7 +35,7 @@ module Raft :
 
   let config_pp = Types.config_pp
 
-  let create_node = create
+  let create_node _ = create
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.log - t.commit_index in
@@ -60,20 +52,4 @@ module Raft :
   let serialise = Line_prot.Raft.serialise
 end
 
-module VPaxos : Ocons_core.Consensus_intf.S with type config = Types.config =
-struct
-  type config = Types.config
-
-  let config_pp = Types.config_pp
-
-  include Var_paxos.MakePaxos (Actions_f.ImperativeActions)
-end
-
-module VRaft : Ocons_core.Consensus_intf.S with type config = Types.config =
-struct
-  type config = Types.config
-
-  let config_pp = Types.config_pp
-
-  include Var_raft.MakeRaft (Actions_f.ImperativeActions)
-end
+module ForwardRaft = Client_forwarder.Make(Raft)

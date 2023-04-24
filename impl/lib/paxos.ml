@@ -3,14 +3,14 @@ open Utils
 open C.Types
 open Actions_f
 open A.O
+open Ocons_core.Consensus_intf
 
 let dtraceln = Utils.dtraceln
 
 module Make
     (Act : ActionSig
              with type t = PaxosTypes.t
-              and type message = PaxosTypes.message
-              and type action = PaxosTypes.action) =
+              and type message = PaxosTypes.message) =
 struct
   include PaxosTypes
   open Act
@@ -290,7 +290,7 @@ struct
 
   let advance t e = run_side_effects (fun () -> advance_raw e) t
 
-  let create config =
+  let create _ config =
     let log = SegmentLog.create {term= -1; command= empty_command} in
     { log
     ; commit_index= -1
