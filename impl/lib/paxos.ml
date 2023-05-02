@@ -19,6 +19,17 @@ struct
 
   let get_log_term log idx = if idx < 0 then 0 else (Log.get log idx).term
 
+  let set_le ct idx le =
+    if Log.mem ct.log idx then
+      CIDHashtbl.remove ct.log_contains (Log.get ct.log idx).command.id ;
+    CIDHashtbl.replace ct.log_contains le.command.id () ;
+    Log.set ct.log idx le
+
+  let cut_log_after ct idx =
+    Log.iter ct.log ~lo:(idx + 1) (fun le ->
+        CIDHashtbl.remove ct.log_contains le.command.id ) ;
+    Log.cut_after ct.log idx
+
   let send_append_entries ?(force = false) () =
     let ct = ex.@(t) in
     match ct.node_state with
@@ -79,7 +90,7 @@ struct
                  if
                    (not (Log.mem ct.log idx))
                    || (Log.get ct.log idx).term < le.term
-                 then Log.set ct.log idx le )
+                 then set_le ct idx le )
         in
         quorum.Quorum.elts |> IntMap.to_seq |> Seq.iter per_seq ;
         (* replace term with current term since we are re-proposing it *)
@@ -131,8 +142,12 @@ struct
              ; leader_commit= ex.@(t @> commit_index) }
     (* Recv commands *)
     | Commands cs, Leader _ ->
-        cs (fun c ->
-            Log.add ex.@(t @> log) {command= c; term= ex.@(t @> current_term)} )
+        let current_ids = ex.@(t @> log_contains) in
+        cs
+        |> Iter.filter (fun c -> not @@ CIDHashtbl.mem current_ids c.Command.id)
+        |> Iter.iter (fun c ->
+               CIDHashtbl.replace current_ids c.Command.id () ;
+               Log.add ex.@(t @> log) {command= c; term= ex.@(t @> current_term)} )
     | Commands _cs, _ ->
         assert false (* only occurs if space_available > 0 and not leader *)
     (* Ignore msgs from lower terms *)
@@ -222,12 +237,12 @@ struct
                      (not (Log.mem ct.log idx))
                      || (Log.get ct.log idx).term < le.term
                    then (
-                     Log.set ct.log idx le ;
+                     set_le ct idx le ;
                      Ocons_core.Utils.TRACE.rep le.command ) ) ;
             let max_entry =
               index_iter |> Iter.map fst |> Iter.fold max prev_log_index
             in
-            Log.cut_after ct.log max_entry ;
+            cut_log_after ct max_entry ;
             A.map (t @> commit_index) ~f:(max leader_commit) () ;
             send lid
             @@ AppendEntriesResponse
@@ -293,6 +308,7 @@ struct
   let create _ config =
     let log = SegmentLog.create {term= -1; command= empty_command} in
     { log
+    ; log_contains= CIDHashtbl.create 0
     ; commit_index= -1
     ; config
     ; node_state= Follower {timeout= config.election_timeout}

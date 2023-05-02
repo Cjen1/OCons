@@ -4,12 +4,13 @@ open! Impl_core.Types
 module Cli = Ocons_core.Client
 module PMain = Infra.Make (Impl_core.Paxos)
 module RMain = Infra.Make (Impl_core.Raft)
-module FRMain = Infra.Make (Impl_core.ForwardRaft)
+module PRMain = Infra.Make (Impl_core.PrevoteRaft)
 
-type kind = Paxos | Raft | FRaft
+type kind = Paxos | Raft | PRaft
 
 let run kind node_id node_addresses internal_port external_port tick_period
-    election_timeout max_outstanding stream_length stat_report =
+    election_timeout max_outstanding stream_length stat_report
+    rand_startup_delay =
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
@@ -35,22 +36,27 @@ let run kind node_id node_addresses internal_port external_port tick_period
       ; node_id
       ; stat_report }
   in
+  Eio_main.run
+  @@ fun env ->
+  Random.self_init () ;
+  if rand_startup_delay > 0. then
+    Eio.Time.sleep env#clock (Random.float rand_startup_delay) ;
   match kind with
   | Paxos ->
       let cfg = config shared_config in
       Eio.traceln "Starting Paxos system:\nconfig = %a"
         Impl_core.Types.config_pp shared_config ;
-      Eio_main.run @@ fun env -> PMain.run env cfg
+      PMain.run env cfg
   | Raft ->
       let cfg = config shared_config in
       Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
         shared_config ;
-      Eio_main.run @@ fun env -> RMain.run env cfg
-  | FRaft ->
+      RMain.run env cfg
+  | PRaft ->
       let cfg = config shared_config in
       Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
         shared_config ;
-      Eio_main.run @@ fun env -> FRMain.run env cfg
+      PRMain.run env cfg
 
 open Cmdliner
 
@@ -163,9 +169,22 @@ let stat_report_ot =
   in
   opt float (-1.) i
 
+let rand_startup_delay_ot =
+  let open Arg in
+  let i =
+    info ~docv:"MAX_STARTUP_DELAY"
+      ~doc:
+        "Randomise time to wait before starting to ensure no coordination of \
+         timers."
+      ["rand-start"]
+  in
+  opt float (-1.) i
+
 let cmd =
   let kind_t =
-    let kind = Arg.enum [("paxos", Paxos); ("raft", Raft)] in
+    let kind =
+      Arg.enum [("paxos", Paxos); ("raft", Raft); ("prevote-raft", PRaft)]
+    in
     Arg.(
       required
       & pos 0 (some kind) None (info ~docv:"KIND" ~doc:"Protocol to use" []) )
@@ -184,6 +203,7 @@ let cmd =
       $ Arg.value election_tick_period_ot
       $ Arg.value election_timeout_ot
       $ Arg.value max_outstanding_ot
-      $ Arg.value stream_length_ot $ Arg.value stat_report_ot )
+      $ Arg.value stream_length_ot $ Arg.value stat_report_ot
+      $ Arg.value rand_startup_delay_ot )
 
 let () = exit Cmd.(eval cmd)

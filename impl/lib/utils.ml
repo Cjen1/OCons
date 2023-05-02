@@ -184,6 +184,14 @@ module SegmentLog = struct
     {segmentsize; segments= []; allocated= -1; vhi= -1; init}
 end
 
+module CIDHashtbl = Hashtbl.Make (struct
+  type t = int
+
+  let equal = Int.equal
+
+  let hash = Fun.id
+end)
+
 module IntMap = Map.Make (struct
   type t = int
 

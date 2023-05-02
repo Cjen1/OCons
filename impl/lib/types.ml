@@ -87,6 +87,7 @@ module PaxosTypes = struct
 
   type t =
     { log: log_entry SegmentLog.t
+    ; log_contains : unit CIDHashtbl.t
     ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
     ; config: config
     ; node_state: node_state
@@ -193,6 +194,7 @@ module RaftTypes = struct
 
   type t =
     { log: log_entry SegmentLog.t
+    ; log_contains: unit CIDHashtbl.t
     ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
     ; config: config
     ; node_state: node_state
