@@ -45,6 +45,12 @@ let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
 let to_float_ms s =
   Mtime.Span.to_float_ns s /. Mtime.Span.to_float_ns Mtime.Span.ms
 
+let to_float_s =
+  let min = Mtime.min_stamp in
+  fun s ->
+    let s = Mtime.span min s in
+    Mtime.Span.to_float_ns s /. Mtime.Span.to_float_ns Mtime.Span.s
+
 let latency_reporter = O.Utils.InternalReporter.avg_reporter Fun.id "lat"
 
 let catcher_iter mclock requests responses (_, (cid, _, _)) =
@@ -56,39 +62,45 @@ let catcher_iter mclock requests responses (_, (cid, _, _)) =
     latency_reporter latency )
 
 let pp_stats ppf s =
-  let min_time a b = if Mtime.is_later a ~than:b then b else a in
-  let max_time a b = if Mtime.is_later a ~than:b then a else b in
   let s =
-    let ends = Array.map (fun (_, (_, v)) -> v) s in
-    let lowest = Array.fold_left min_time Mtime.max_stamp ends in
-    let highest = Array.fold_left max_time Mtime.min_stamp ends in
-    let duration = Mtime.span lowest highest |> to_float_ms in
+    let ends = Array.map (fun (_, (_, v)) -> to_float_s v) s in
+    let lowest = Array.fold_left Float.min Float.max_float ends in
+    let highest = Array.fold_left Float.max Float.min_float ends in
+    let duration = highest -. lowest in
     let throughput = Float.div (Array.length ends |> Float.of_int) duration in
     let latencies =
       Array.map (fun (_, (s, e)) -> Mtime.span s e |> to_float_ms) s
     in
-    (throughput, latencies)
+    let tdigest =
+      Array.fold_left
+        (fun a v -> Tdigest.add ~data:v a)
+        (Tdigest.create ()) latencies
+    in
+    (throughput, latencies, tdigest)
   in
   let mean s =
     Array.fold_left ( +. ) 0. s /. (Array.length s |> Float.of_int)
   in
-  let percentile s p =
-    let td = Tdigest.create ~delta:Tdigest.Discrete () in
-    let td = Array.fold_left (fun a v -> Tdigest.add ~data:v a) td s in
-    Tdigest.percentile td p |> snd
-  in
   let pp_stats =
     let open Fmt in
     let fields =
-      [ field "throughput" (fun (t, _) -> t) float
-      ; field "mean" (fun (_, s) -> mean s) float
-      ; field "l_p50" (fun (_, s) -> percentile s 50.) (option float)
-      ; field "l_p75" (fun (_, s) -> percentile s 75.) (option float)
-      ; field "l_p99" (fun (_, s) -> percentile s 99.) (option float)
+      [ field "throughput"
+          (fun (t, _, _) -> t)
+          (fun ppf v -> Fmt.pf ppf "%.1f" v)
+      ; field "mean" (fun (_, s, _) -> mean s) (fun ppf v -> Fmt.pf ppf "%.1f" v)
+      ; field "l_p50"
+          (fun (_, _, s) -> Tdigest.percentile s 0.5 |> snd)
+          (option float)
+      ; field "l_p75"
+          (fun (_, _, s) -> Tdigest.percentile s 0.75 |> snd)
+          (option float)
+      ; field "l_p99"
+          (fun (_, _, s) -> Tdigest.percentile s 0.99 |> snd)
+          (option float)
       ; field "l_max"
-          (fun (_, s) -> Array.fold_left max Float.min_float s)
+          (fun (_, s, _) -> Array.fold_left max Float.min_float s)
           float
-      ; field "number" (fun (_, s) -> Array.length s) int ]
+      ; field "number" (fun (_, s, _) -> Array.length s) int ]
     in
     record fields
   in
