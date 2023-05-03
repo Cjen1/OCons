@@ -213,7 +213,7 @@ struct
           |> Seq.map (fun i -> (i, Log.highest ct.log))
           |> IntMap.of_seq
         in
-        ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 0} ;
+        ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
         (* Add a no-op to ensure that we always have a command to commit in the newest leader's term *)
         Log.add
           ex.@(t @> log)
@@ -240,6 +240,22 @@ struct
         ()
 
   let decr i = i - 1
+
+  let request_vote_valid m =
+    match m with
+    | RequestVote m ->
+        let highest_index = Log.highest ex.@(t @> log) in
+        let highest_term = get_log_term ex.@(t @> log) highest_index in
+        let newer_log =
+          m.lastTerm > highest_term
+          || (m.lastTerm = highest_term && m.lastIndex >= highest_index)
+        in
+        if m.prevote then newer_log
+        else
+          A.get_option (t @> node_state @> Follower.voted_for) () = Some None
+          && newer_log
+    | _ ->
+        invalid_arg "Can only act on RequestVote"
 
   let resolve_event e =
     if_recv_advance_term e ;
@@ -293,23 +309,19 @@ struct
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
         dtraceln "Failed to match\n%a" t_pp ex.@(t)
+    (* All nodes must be able to receive prevote *)
+    | Recv ((RequestVote {prevote= true; term; _} as m), cid), _
+      when term > ex.@(t @> current_term) && request_vote_valid m ->
+        send cid
+        @@ RequestVoteResponse
+             {term; success= true; prevote= true}
     (* Follower *)
-    | Recv (RequestVote m, cid), Follower {voted_for; _} ->
-        let highest_index = Log.highest ex.@(t @> log) in
-        let highest_term = get_log_term ex.@(t @> log) highest_index in
-        let newer_log =
-          m.lastTerm > highest_term
-          || (m.lastTerm = highest_term && m.lastIndex >= highest_index)
-        in
-        let success =
-          if m.prevote then newer_log else voted_for = None && newer_log
-        in
-        if success then (
-          if not m.prevote then
-            ex.@(t @> node_state @> Follower.voted_for) <- Some cid ;
-          send cid
-          @@ RequestVoteResponse
-               {term= ex.@(t @> current_term); success; prevote= m.prevote} )
+    | Recv ((RequestVote {prevote= false; _} as m), cid), Follower _
+      when request_vote_valid m ->
+        ex.@(t @> node_state @> Follower.voted_for) <- Some cid ;
+        send cid
+        @@ RequestVoteResponse
+             {term= ex.@(t @> current_term); success= true; prevote= false}
     | ( Recv
           ( AppendEntries
               {prev_log_term; prev_log_index; entries; leader_commit; _}
@@ -398,9 +410,9 @@ struct
         transit_candidate ()
     | Candidate {timeout; repeat; _} when timeout <= 0 ->
         transit_candidate ~repeat:(repeat + 1) ()
-    | Leader {heartbeat; _} when heartbeat > 0 ->
+    | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
-        ex.@(t @> node_state @> Leader.heartbeat) <- 0
+        ex.@(t @> node_state @> Leader.heartbeat) <- 1
     | _ ->
         ()
 

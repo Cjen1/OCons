@@ -28,7 +28,7 @@ module Paxos = struct
 end
 
 module Raft = struct
-  include RaftTypes
+  include Raft.Types
   include Raft.Impl
 
   type config = Types.config

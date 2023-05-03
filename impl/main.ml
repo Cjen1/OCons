@@ -54,7 +54,7 @@ let run kind node_id node_addresses internal_port external_port tick_period
       RMain.run env cfg
   | PRaft ->
       let cfg = config shared_config in
-      Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
+      Eio.traceln "Starting Prevote-Raft system:\nconfig = %a" Impl_core.Types.config_pp
         shared_config ;
       PRMain.run env cfg
 

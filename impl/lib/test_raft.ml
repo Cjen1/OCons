@@ -1,9 +1,9 @@
 open! Types
 open! Utils
 open! Actions_f
-module Imp = ImperativeActions (RaftTypes)
+module Imp = ImperativeActions (Raft.Types)
 module Impl = Raft.Make (Imp)
-open! RaftTypes
+open! Raft.Types
 open! Impl
 open Ocons_core.Consensus_intf
 
@@ -74,7 +74,7 @@ let%expect_test "transit_leader" =
     {|
     +Candidate for term 1
     +Leader for term 1
-    t': {log: [{command: Command(NoOp, -1); term : 1}]; commit_index:-1; current_term: 1; node_state:Leader{heartbeat:0; rep_ackd:
+    t': {log: [{command: Command(NoOp, -1); term : 1}]; commit_index:-1; current_term: 1; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 0}, {2, 0}]}
     actions: [Send(1, AppendEntries {term: 1; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 1}]})
@@ -230,7 +230,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 11
-    t: {log: [{command: Command(NoOp, -1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 0}, {2, 0}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 11}]})
@@ -243,7 +243,7 @@ let%expect_test "Loop" =
     actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 0}, {2, 0}]}
     actions: [] |}] ;
   (* ------------ Add m1 ----------------- *)
@@ -255,7 +255,7 @@ let%expect_test "Loop" =
     actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 1}, {2, 1}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: -1; prev_log_index: 0; prev_log_term: 11; entries_length: 1; entries:
                                                              [{command: Command(Read m1, 1); term : 11}]})
@@ -297,7 +297,7 @@ let%expect_test "Loop" =
     actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11}]; commit_index:1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11}]; commit_index:1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, 1}, {2, 1}]; rep_sent:[{1, 1}, {2, 1}]}
     actions: [] |}] ;
   (* ------------ Add m2 ----------------- *)
@@ -309,7 +309,7 @@ let%expect_test "Loop" =
     actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, 1}, {2, 1}]; rep_sent:[{1, 2}, {2, 2}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: 1; prev_log_index: 1; prev_log_term: 11; entries_length: 1; entries:
                                                            [{command: Command(Read m2, 2); term : 11}]})
@@ -343,7 +343,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 12
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12}]; commit_index:-1; current_term: 12; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12}]; commit_index:-1; current_term: 12; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {2, -1}]; rep_sent:[{0, 2}, {2, 2}]}
     actions: [Send(0, AppendEntries {term: 12; leader_commit: -1; prev_log_index: 1; prev_log_term: 11; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 12}]})
@@ -355,7 +355,7 @@ let%expect_test "Loop" =
   pp_res t1 actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12}]; commit_index:-1; current_term: 12; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12}]; commit_index:-1; current_term: 12; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {2, -1}]; rep_sent:[{0, 3}, {2, 3}]}
     actions: [Send(0, AppendEntries {term: 12; leader_commit: -1; prev_log_index: 2; prev_log_term: 12; entries_length: 1; entries:
                                                              [{command: Command(Read m4, 3); term : 12}]})
@@ -384,7 +384,7 @@ let%expect_test "Loop" =
   pp_res t1 actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12}]; commit_index:3; current_term: 12; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12}]; commit_index:3; current_term: 12; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {2, 3}]; rep_sent:[{0, 3}, {2, 3}]}
     actions: [CommitCommands(Command(NoOp, -1),
                                                             Command(Read m1, 1),
@@ -397,7 +397,7 @@ let%expect_test "Loop" =
   Fmt.pr "t: %a\n" t_pp t1 ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(Read m5, 4); term : 12},{command: Command(Read m6, 5); term : 12}]; commit_index:3; current_term: 12; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(Read m5, 4); term : 12},{command: Command(Read m6, 5); term : 12}]; commit_index:3; current_term: 12; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {2, 3}]; rep_sent:[{0, 5}, {2, 5}]} |}] ;
   (* ------------ elect 2 with 0 ----------------- *)
   let t2, _ = Impl.advance t2 Tick in
@@ -427,7 +427,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 13
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13}]; commit_index:-1; current_term: 13; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13}]; commit_index:-1; current_term: 13; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 4}, {1, 4}]}
     actions: [Send(0, AppendEntries {term: 13; leader_commit: -1; prev_log_index: 3; prev_log_term: 12; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 13}]})
@@ -439,7 +439,7 @@ let%expect_test "Loop" =
   Fmt.pr "t: %a\n" t_pp t2 ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13},{command: Command(Read m7, 6); term : 13}]; commit_index:-1; current_term: 13; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13},{command: Command(Read m7, 6); term : 13}]; commit_index:-1; current_term: 13; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 5}, {1, 5}]} |}] ;
   (* ---------- Elect all nodes using votes from other 2 faked out ---------- *)
   let t, _ =
@@ -490,7 +490,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 101
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11},{command: Command(NoOp, -1); term : 101}]; commit_index:1; current_term: 101; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11},{command: Command(NoOp, -1); term : 101}]; commit_index:1; current_term: 101; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 3}, {2, 3}]}
     actions: [Send(1, AppendEntries {term: 101; leader_commit: 1; prev_log_index: 2; prev_log_term: 11; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 101}]})
@@ -514,7 +514,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 101
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(Read m5, 4); term : 12},{command: Command(Read m6, 5); term : 12},{command: Command(NoOp, -1); term : 101}]; commit_index:3; current_term: 101; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(Read m5, 4); term : 12},{command: Command(Read m6, 5); term : 12},{command: Command(NoOp, -1); term : 101}]; commit_index:3; current_term: 101; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {2, -1}]; rep_sent:[{0, 6}, {2, 6}]}
     actions: [Send(0, AppendEntries {term: 101; leader_commit: 3; prev_log_index: 5; prev_log_term: 12; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 101}]})
@@ -538,7 +538,7 @@ let%expect_test "Loop" =
   [%expect
     {|
     +Leader for term 101
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13},{command: Command(Read m7, 6); term : 13},{command: Command(NoOp, -1); term : 101}]; commit_index:-1; current_term: 101; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(NoOp, -1); term : 12},{command: Command(Read m4, 3); term : 12},{command: Command(NoOp, -1); term : 13},{command: Command(Read m7, 6); term : 13},{command: Command(NoOp, -1); term : 101}]; commit_index:-1; current_term: 101; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 6}, {1, 6}]}
     actions: [Send(0, AppendEntries {term: 101; leader_commit: -1; prev_log_index: 5; prev_log_term: 13; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 101}]})
@@ -570,7 +570,7 @@ let%expect_test "Missing elements" =
     +Candidate for term 11
     +Follower for term 11
     +Leader for term 11
-    t: {log: [{command: Command(NoOp, -1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 0}, {2, 0}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 1; entries:
                                                              [{command: Command(NoOp, -1); term : 11}]})
@@ -585,7 +585,7 @@ let%expect_test "Missing elements" =
   pp_res t actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 2}, {2, 2}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: -1; prev_log_index: 1; prev_log_term: 11; entries_length: 1; entries:
                                                              [{command: Command(Read m2, 2); term : 11}]})
@@ -617,7 +617,7 @@ let%expect_test "Missing elements" =
   pp_res t actions ;
   [%expect
     {|
-    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:0; rep_ackd:
+    t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 2}, {2, 2}]}
     actions: [Send(1, AppendEntries {term: 11; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 3; entries:
                                                              [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]})] |}]

@@ -167,7 +167,7 @@ module Paxos = struct
 end
 
 module Raft = struct
-  open RaftTypes
+  open Raft.Types
 
   let enum_msg = function
     | RequestVote _ ->

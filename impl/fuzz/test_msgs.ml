@@ -163,7 +163,7 @@ module Paxos = struct
 end
 
 module Raft = struct
-  open Impl_core.Types.RaftTypes
+  open Impl_core.Raft
   open LP.Raft
 
   let msg_gen =
