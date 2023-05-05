@@ -5,8 +5,6 @@ open Actions_f
 open A.O
 open Ocons_core.Consensus_intf
 
-let dtraceln = Utils.dtraceln
-
 module Make
     (Act : ActionSig
              with type t = PaxosTypes.t
@@ -58,7 +56,7 @@ struct
         assert false
 
   let transit_follower ?voted_for:_ term =
-    Eio.traceln "Follower for term %d" term ;
+    Utils.traceln "Follower for term %d" term ;
     ex.@(t @> node_state) <- Follower {timeout= 0} ;
     ex.@(t @> current_term) <- term
 
@@ -71,7 +69,7 @@ struct
       if cterm < curr_epoch_term then curr_epoch_term
       else curr_epoch_term + num_nodes
     in
-    Eio.traceln "Candidate for term %d" new_term ;
+    Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     ex.@(t @> node_state) <-
       Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0} ;
@@ -83,7 +81,7 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     | Candidate {quorum; _} ->
-        Eio.traceln "Leader for term %d" ct.current_term ;
+        Utils.traceln "Leader for term %d" ct.current_term ;
         let per_seq (_, seq) =
           seq
           |> Iter.iter (fun (idx, le) ->
@@ -185,7 +183,7 @@ struct
         assert (m.term = ex.@(t @> current_term)) ;
         (*Eio.traceln "Message was lost or reordered";*)
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        dtraceln "Failed to match\n%a" t_pp ex.@(t)
+        Utils.dtraceln "Failed to match\n%a" t_pp ex.@(t)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _ ->
         let t = ex.@(t) in
@@ -212,7 +210,7 @@ struct
         | false ->
             (* Reply with the highest index known not to be replicated *)
             (* This will be the prev_log_index of the next msg *)
-            Eio.traceln
+            Utils.traceln
               "Failed to match\n\
                rooted_at_start(%b), matching_index_and_term(%b):\n\
                %a"

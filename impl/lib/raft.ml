@@ -5,8 +5,6 @@ open Actions_f
 open A.O
 open Ocons_core.Consensus_intf
 
-let dtraceln = Utils.dtraceln
-
 module Types = struct
   type message =
     | RequestVote of {term: term; lastIndex: log_index; lastTerm: term}
@@ -159,7 +157,7 @@ struct
         assert false
 
   let transit_follower ?voted_for term =
-    Eio.traceln "Follower for term %d" term ;
+    Utils.traceln "Follower for term %d" term ;
     ex.@(t @> node_state) <-
       Follower {timeout= ex.@(t @> config @> election_timeout); voted_for} ;
     ex.@(t @> current_term) <- term
@@ -171,7 +169,7 @@ struct
     in
     let new_term = ex.@(t @> current_term) + 1 in
     let num_nodes = ex.@(t @> config @> num_nodes) in
-    Eio.traceln "Candidate for term %d" new_term ;
+    Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     ex.@(t @> node_state) <-
       Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout; repeat} ;
@@ -184,7 +182,7 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     | Candidate _ ->
-        Eio.traceln "Leader for term %d" ct.current_term ;
+        Utils.traceln "Leader for term %d" ct.current_term ;
         let rep_ackd =
           ct.config.other_nodes |> List.to_seq
           |> Seq.map (fun i -> (i, -1))
@@ -282,7 +280,7 @@ struct
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        dtraceln "Failed to match\n%a" t_pp ex.@(t)
+        Utils.dtraceln "Failed to match\n%a" t_pp ex.@(t)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _
       when request_vote_valid (RequestVote m) ->
@@ -310,7 +308,7 @@ struct
         | false ->
             (* Reply with the highest index known not to be replicated *)
             (* This will be the prev_log_index of the next msg *)
-            dtraceln
+            Utils.dtraceln
               "Failed to match\n\
                rooted_at_start(%b), matching_index_and_term(%b):\n\
                %a"
