@@ -1,6 +1,6 @@
 open Types
 
-let debug_flag = false
+let debug_flag = true
 
 let set_nodelay ?(should_warn = true) sock =
   match sock |> Eio_unix.FD.peek_opt with
@@ -13,12 +13,19 @@ let set_nodelay ?(should_warn = true) sock =
   | Some fd ->
       Unix.setsockopt fd Unix.TCP_NODELAY true
 
-let traceln fmt =
-  Eio.traceln ("@[<hov 1>%a: " ^^ fmt ^^ "@]") Time_unix.pp (Time_unix.now ())
+let time_pp ppf t =
+  let tm = Unix.localtime t in
+  Fmt.pf ppf "%02d:%02d:%02d.%06d"
+  tm.tm_hour tm.tm_min tm.tm_sec (int_of_float ((t -. floor t) *. 1_000_000.))
 
-let dtraceln fmt =
-  let ignore_format = Format.ikfprintf ignore Fmt.stderr in
-  if debug_flag then traceln fmt else ignore_format fmt
+let traceln fmt =
+  Eio.traceln
+    ("@[<hov 1>%a: " ^^ fmt ^^ "@]")
+    time_pp (Unix.gettimeofday ())
+
+let ignore_format fmt = Format.ikfprintf ignore Fmt.stderr fmt
+
+let dtraceln fmt = if debug_flag then traceln fmt else ignore_format fmt
 
 let is_not_cancel = function Eio.Cancel.Cancelled _ -> false | _ -> true
 
