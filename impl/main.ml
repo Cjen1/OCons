@@ -4,9 +4,10 @@ open! Impl_core.Types
 module Cli = Ocons_core.Client
 module PMain = Infra.Make (Impl_core.Paxos)
 module RMain = Infra.Make (Impl_core.Raft)
+module RMain_sbn = Infra.Make (Impl_core.RaftSBN)
 module PRMain = Infra.Make (Impl_core.PrevoteRaft)
 
-type kind = Paxos | Raft | PRaft
+type kind = Paxos | Raft | PRaft | Raft_sbn
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length stat_report
@@ -52,10 +53,15 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Starting Raft system:\nconfig = %a" Impl_core.Types.config_pp
         shared_config ;
       RMain.run env cfg
+  | Raft_sbn ->
+      let cfg = config shared_config in
+      Eio.traceln "Starting Raft with static-ballot-numbers" ;
+      Eio.traceln "config = %a" Impl_core.Types.config_pp shared_config ;
+      RMain_sbn.run env cfg
   | PRaft ->
       let cfg = config shared_config in
-      Eio.traceln "Starting Prevote-Raft system:\nconfig = %a" Impl_core.Types.config_pp
-        shared_config ;
+      Eio.traceln "Starting Prevote-Raft system:\nconfig = %a"
+        Impl_core.Types.config_pp shared_config ;
       PRMain.run env cfg
 
 open Cmdliner
@@ -183,7 +189,11 @@ let rand_startup_delay_ot =
 let cmd =
   let kind_t =
     let kind =
-      Arg.enum [("paxos", Paxos); ("raft", Raft); ("prevote-raft", PRaft)]
+      Arg.enum
+        [ ("paxos", Paxos)
+        ; ("raft", Raft)
+        ; ("raft+sbn", Raft_sbn)
+        ; ("prevote-raft", PRaft) ]
     in
     Arg.(
       required
