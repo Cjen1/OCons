@@ -5,8 +5,6 @@ open Actions_f
 open A.O
 open Ocons_core.Consensus_intf
 
-let dtraceln = Utils.dtraceln
-
 module Types = struct
   type message =
     | RequestVote of
@@ -22,13 +20,10 @@ module Types = struct
         {term: term; success: (log_index, log_index) Result.t}
 
   type node_state =
-    | Follower of {timeout: int; voted_for: node_id option}
+    | Follower of
+        {timeout: int; voted_for: node_id option; prevotes: unit Quorum.t option}
     | Candidate of
-        { mutable quorum: unit Quorum.t
-        ; mutable timeout: int
-        ; repeat: int
-        ; prevotes: unit Quorum.t
-        ; prevote_complete: bool }
+        {mutable quorum: unit Quorum.t; mutable timeout: int; repeat: int}
     | Leader of
         { mutable rep_ackd: log_index IntMap.t (* MatchIdx *)
         ; mutable rep_sent: log_index IntMap.t (* NextIdx *)
@@ -94,15 +89,15 @@ module Types = struct
    fun ppf v ->
     let open Fmt in
     match v with
-    | Follower {timeout; voted_for} ->
-        pf ppf "Follower{timeout:%d; voted_for:%a}" timeout
+    | Follower {timeout; voted_for; prevotes} ->
+        pf ppf "Follower{timeout:%d; voted_for:%a; prevotes:%a}" timeout
           Fmt.(option ~none:(const string "None") int)
           voted_for
-    | Candidate {quorum; timeout; repeat; prevotes; prevote_complete} ->
-        pf ppf
-          "Candidate{quorum:%a, timeout:%d, repeat:%d; prevote:%a; \
-           prevote_complete:%b}"
-          Quorum.pp quorum timeout repeat Quorum.pp prevotes prevote_complete
+          Fmt.(option ~none:(const string "None") Quorum.pp)
+          prevotes
+    | Candidate {quorum; timeout; repeat} ->
+        pf ppf "Candidate{quorum:%a, timeout:%d, repeat:%d}" Quorum.pp quorum
+          timeout repeat
     | Leader {rep_ackd; rep_sent; heartbeat} ->
         let format_rep_map : int IntMap.t Fmt.t =
          fun ppf v ->
@@ -167,13 +162,16 @@ struct
         assert false
 
   let transit_follower ?voted_for term =
-    Eio.traceln "Follower for term %d" term ;
+    Utils.traceln "Follower for term %d" term ;
     ex.@(t @> node_state) <-
-      Follower {timeout= ex.@(t @> config @> election_timeout); voted_for} ;
+      Follower
+        { timeout= ex.@(t @> config @> election_timeout)
+        ; voted_for
+        ; prevotes= None } ;
     ex.@(t @> current_term) <- term
 
   let send_request_vote ?(is_prevote = false) () =
-    let term = ex.@(t @> current_term) in
+    let term = ex.@(t @> current_term) + if is_prevote then 1 else 0 in
     let lastIndex = Log.highest ex.@(t @> log) in
     let lastTerm = get_log_term ex.@(t @> log) lastIndex in
     broadcast @@ RequestVote {term; lastIndex; lastTerm; prevote= is_prevote}
@@ -185,24 +183,19 @@ struct
     in
     let new_term = ex.@(t @> current_term) + 1 in
     let num_nodes = ex.@(t @> config @> num_nodes) in
-    Eio.traceln "Candidate for term %d" new_term ;
+    Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     let threshold = (num_nodes / 2) + 1 - 1 in
     ex.@(t @> node_state) <-
-      Candidate
-        { quorum= Quorum.empty threshold
-        ; timeout
-        ; repeat
-        ; prevotes= Quorum.empty threshold
-        ; prevote_complete= false } ;
+      Candidate {quorum= Quorum.empty threshold; timeout; repeat} ;
     ex.@(t @> current_term) <- new_term ;
-    send_request_vote ~is_prevote:true ()
+    send_request_vote ()
 
   let transit_leader () =
     let ct = ex.@(t) in
     match ct.node_state with
     | Candidate _ ->
-        Eio.traceln "Leader for term %d" ct.current_term ;
+        Utils.traceln "Leader for term %d" ct.current_term ;
         let rep_ackd =
           ct.config.other_nodes |> List.to_seq
           |> Seq.map (fun i -> (i, -1))
@@ -265,7 +258,7 @@ struct
         A.map (t @> node_state @> timeout_a) ~f:decr ()
     | Tick, Candidate _ ->
         A.map (t @> node_state @> timeout_a) ~f:decr ()
-    (* Recv commands *)
+    (* Intake commands *)
     | Commands cs, Leader _ ->
         let current_ids = ex.@(t @> log_contains) in
         cs
@@ -287,18 +280,19 @@ struct
         ()
     (* Recv msgs from this term*)
     (* Candidate*)
-    | Recv (RequestVoteResponse ({prevote; _} as m), src), Candidate s ->
+    | ( Recv (RequestVoteResponse ({prevote= true; term; _} as m), src)
+      , Follower _ ) ->
+        if m.success && term = ex.@(t @> current_term) + 1 then
+          A.map
+            A.(t @> node_state @> Follower.prevotes)
+            ~f:(Option.map (Quorum.add src ()))
+            ()
+    | Recv (RequestVoteResponse ({prevote= false; _} as m), src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
         if m.success then
-          if prevote then
-            A.map
-              A.(t @> node_state @> Candidate.prevotes)
-              ~f:(Quorum.add src ()) ()
-          else (
-            assert (Quorum.satisified s.prevotes) ;
-            A.map
-              A.(t @> node_state @> Candidate.quorum)
-              ~f:(Quorum.add src ()) () )
+          A.map
+            A.(t @> node_state @> Candidate.quorum)
+            ~f:(Quorum.add src ()) ()
     (* Leader *)
     | Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src), Leader _ ->
         assert (m.term = ex.@(t @> current_term)) ;
@@ -308,13 +302,11 @@ struct
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        dtraceln "Failed to match\n%a" t_pp ex.@(t)
+        Utils.dtraceln "Failed to match\n%a" t_pp ex.@(t)
     (* All nodes must be able to receive prevote *)
     | Recv ((RequestVote {prevote= true; term; _} as m), cid), _
       when term > ex.@(t @> current_term) && request_vote_valid m ->
-        send cid
-        @@ RequestVoteResponse
-             {term; success= true; prevote= true}
+        send cid @@ RequestVoteResponse {term; success= true; prevote= true}
     (* Follower *)
     | Recv ((RequestVote {prevote= false; _} as m), cid), Follower _
       when request_vote_valid m ->
@@ -332,6 +324,7 @@ struct
         (* Reset leader alive timeout *)
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout) ;
+        ex.@(t @> node_state @> Follower.prevotes) <- None ;
         ex.@(t @> node_state @> Follower.voted_for) <- Some lid ;
         (* reply to append entries request *)
         let ct = ex.@(t) in
@@ -344,7 +337,7 @@ struct
         | false ->
             (* Reply with the highest index known not to be replicated *)
             (* This will be the prev_log_index of the next msg *)
-            dtraceln
+            Utils.dtraceln
               "Failed to match\n\
                rooted_at_start(%b), matching_index_and_term(%b):\n\
                %a"
@@ -384,17 +377,9 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     (* candidate election complete check *)
-    | Candidate {prevotes; prevote_complete= false; repeat; _}
-      when Quorum.satisified prevotes ->
-        ex.@(t @> node_state @> Candidate.prevote_complete) <- true ;
-        let timeout =
-          let et = ex.@(t @> config @> election_timeout) in
-          Random.State.full_int ex.@(t @> random) (max (et * repeat) 0) + 1
-        in
-        ex.@(t @> node_state @> Candidate.timeout) <- timeout ;
-        send_request_vote ~is_prevote:false ()
-    | Candidate {quorum; prevote_complete= true; _}
-      when Quorum.satisified quorum ->
+    | Follower {prevotes= Some prevotes; _} when Quorum.satisified prevotes ->
+        transit_candidate ()
+    | Candidate {quorum; _} when Quorum.satisified quorum ->
         transit_leader ()
     (* send msg if exists entries to send *)
     | Leader _ ->
@@ -407,7 +392,12 @@ struct
     match ct.node_state with
     (* When should ticking result in an action? *)
     | Follower s when s.timeout <= 0 ->
-        transit_candidate ()
+        let threshold = (ex.@(t @> config @> num_nodes) / 2) + 1 - 1 in
+        ex.@(t @> node_state @> Follower.prevotes) <-
+          Some (Quorum.empty threshold) ;
+        send_request_vote ~is_prevote:true () ;
+        ex.@(t @> node_state @> Follower.timeout) <-
+          ex.@(t @> config @> election_timeout)
     | Candidate {timeout; repeat; _} when timeout <= 0 ->
         transit_candidate ~repeat:(repeat + 1) ()
     | Leader {heartbeat; _} when heartbeat <= 0 ->
@@ -448,7 +438,7 @@ struct
     ; log_contains= CIDHashtbl.create 0
     ; commit_index= -1
     ; config
-    ; node_state= Follower {timeout= 0; voted_for= None}
+    ; node_state= Follower {timeout= 0; voted_for= None; prevotes= None}
     ; current_term= 0
     ; append_entries_length=
         Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
