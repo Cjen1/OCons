@@ -115,14 +115,13 @@ module Make (C : Consensus_intf.S) = struct
             |> take_at_least_one num_to_take
             |> Iter.map (fun c ->
                    t.debug.request_reporter () ;
-                   TRACE.ex_in c ;
                    c )
           in
           let tcons, actions = C.advance t.cons (Commands iter) in
           t.cons <- tcons ;
           handle_actions t actions )
 
-  let ensure_sent t =
+  let ensure_sent _t =
     (* We should flush here to ensure queueus aren't building up.
        However in practise that results in about a 2x drop in highest throughput
        So we just yield to the scheduler. This should cause writes to still be
@@ -132,7 +131,7 @@ module Make (C : Consensus_intf.S) = struct
 
        Expected outcome at system capacity is for queuing on outbound network capacity
     *)
-    CMgr.flush_all t.cmgr ; Fiber.yield ()
+    Fiber.yield ()
 
   let tick t () =
     dtraceln "Tick" ;
@@ -151,7 +150,7 @@ module Make (C : Consensus_intf.S) = struct
       ensure_sent t ;
       let dur = (Eio.Time.now t.debug.clock -. st) *. 1000. in
       if dur > 0.01 then t.debug.main_loop_length_reporter dur ;
-      if dur > 1. then Magic_trace.take_snapshot () ;
+      if dur > 100. then Magic_trace.take_snapshot () ;
       ()
     with e when Utils.is_not_cancel e ->
       traceln "Failed with %a" Fmt.exn_backtrace

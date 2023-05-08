@@ -15,13 +15,11 @@ let set_nodelay ?(should_warn = true) sock =
 
 let time_pp ppf t =
   let tm = Unix.localtime t in
-  Fmt.pf ppf "%02d:%02d:%02d.%06d"
-  tm.tm_hour tm.tm_min tm.tm_sec (int_of_float ((t -. floor t) *. 1_000_000.))
+  Fmt.pf ppf "%02d:%02d:%02d.%06d" tm.tm_hour tm.tm_min tm.tm_sec
+    (int_of_float ((t -. floor t) *. 1_000_000.))
 
 let traceln fmt =
-  Eio.traceln
-    ("@[<hov 1>%a: " ^^ fmt ^^ "@]")
-    time_pp (Unix.gettimeofday ())
+  Eio.traceln ("@[<hov 1>%a: " ^^ fmt ^^ "@]") time_pp (Unix.gettimeofday ())
 
 let ignore_format fmt = Format.ikfprintf ignore Fmt.stderr fmt
 
@@ -59,17 +57,21 @@ module InternalReporter = struct
 
   type reset = unit -> unit
 
-  let reporters : (reporter_pp * reset) list ref = ref []
+  let reporters : (reporter_pp * reset * bool ref) list ref = ref []
 
-  let register_reporter pps reset =
+  let register_reporter pps reset running =
     reporters :=
-      pps |> List.map (fun pp -> (pp, reset)) |> List.append !reporters
+      pps |> List.map (fun pp -> (pp, reset, running)) |> List.append !reporters
 
   let run_report period =
-    let pp_reporters = !reporters |> List.map fst in
+    let pp_reporters = !reporters |> List.map (fun (v, _, _) -> v) in
     Eio.traceln "---- Report ----" ;
     Eio.traceln "%a" (Fmt.record pp_reporters) period ;
-    List.iter (fun (_, r) -> r ()) !reporters
+    List.iter
+      (fun (_, r, f) ->
+        f := true ;
+        r () )
+      !reporters
 
   let run ~sw clock period =
     if period > 0. then
@@ -96,16 +98,20 @@ module InternalReporter = struct
           (fun p -> Core.Float.(Int.(to_float state.v' - to_float state.v) / p))
           float ]
     in
-    let update () = state.v' <- state.v' + 1 in
-    register_reporter pp reset ; update
+    let running = ref false in
+    let update () = if !running then state.v' <- state.v' + 1 in
+    register_reporter pp reset running ;
+    update
 
   let fold_reporter ~name ~f ~init ~pp : 'a reporter =
     let state = ref [] in
     let reset () = state := [] in
     let open Fmt in
     let pp = [field name (fun p -> (p, List.fold_left f init !state)) pp] in
-    let update x = state := x :: !state in
-    register_reporter pp reset ; update
+    let running = ref false in
+    let update x = if !running then state := x :: !state in
+    register_reporter pp reset running ;
+    update
 
   type avg_reporter_state =
     { mutable max: float
@@ -132,6 +138,7 @@ module InternalReporter = struct
         in
         record
           [ field "avg" (fun s -> s.sum /. Float.of_int s.count) float
+          ; field "#" (fun s -> s.count) int
           ; field "50%" (fun s -> percentile s 0.5) float
           ; field "99%" (fun s -> percentile s 0.99) float
           ; field "max" (fun s -> s.max) float ]
@@ -139,14 +146,17 @@ module InternalReporter = struct
       pf ppf "%a" pp s
     in
     let pp = [field name (fun _ -> state) pp_stats] in
+    let running = ref false in
     let update x =
-      let dp = conv x in
-      state.max <- max dp state.max ;
-      state.tdigest <- Tdigest.add ~data:dp state.tdigest ;
-      state.count <- state.count + 1 ;
-      state.sum <- state.sum +. dp
+      if !running then (
+        let dp = conv x in
+        state.max <- max dp state.max ;
+        state.tdigest <- Tdigest.add ~data:dp state.tdigest ;
+        state.count <- state.count + 1 ;
+        state.sum <- state.sum +. dp )
     in
-    register_reporter pp reset ; update
+    register_reporter pp reset running ;
+    update
 
   let trace_reporter : string -> time reporter =
    fun name ->
