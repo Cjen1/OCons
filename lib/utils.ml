@@ -1,6 +1,6 @@
 open Types
 
-let debug_flag = true
+let debug_flag = false
 
 let set_nodelay ?(should_warn = true) sock =
   match sock |> Eio_unix.FD.peek_opt with
