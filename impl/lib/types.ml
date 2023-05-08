@@ -12,7 +12,8 @@ type config =
   ; num_nodes: int
   ; node_id: node_id
   ; election_timeout: int
-  ; max_outstanding: int }
+  ; max_outstanding: int
+  ; max_append_entries: int }
 [@@deriving accessors]
 
 let config_pp : config Fmt.t =
@@ -24,7 +25,7 @@ let config_pp : config Fmt.t =
     v.other_nodes
 
 let make_config ~node_id ~node_list ~election_timeout ?(max_outstanding = 8192)
-    () =
+    ?(max_append_entries = 1024) () =
   let length = List.length node_list in
   let phase1quorum = (length + 1) / 2 in
   let phase2quorum = (length + 1) / 2 in
@@ -37,7 +38,8 @@ let make_config ~node_id ~node_list ~election_timeout ?(max_outstanding = 8192)
   ; num_nodes= length
   ; node_id
   ; election_timeout
-  ; max_outstanding }
+  ; max_outstanding
+  ; max_append_entries }
 
 let get_log_term log idx = if idx < 0 then 0 else (Log.get log idx).term
 
@@ -87,7 +89,7 @@ module PaxosTypes = struct
 
   type t =
     { log: log_entry SegmentLog.t
-    ; log_contains : unit CIDHashtbl.t
+    ; log_contains: unit CIDHashtbl.t
     ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
     ; config: config
     ; node_state: node_state
@@ -149,7 +151,6 @@ module PaxosTypes = struct
       (t.log |> Log.iter |> Iter.to_list)
       t.commit_index t.current_term node_state_pp t.node_state
 end
-
 
 module type StrategyTypes = sig
   type request_vote

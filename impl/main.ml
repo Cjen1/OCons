@@ -16,7 +16,7 @@ let run kind node_id node_addresses internal_port external_port tick_period
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
-  let shared_config =
+  let shared_config = 
     let num_nodes = List.length node_addresses in
     let majority_quorums = (num_nodes / 2) + 1 in
     { phase1quorum= majority_quorums
@@ -25,7 +25,8 @@ let run kind node_id node_addresses internal_port external_port tick_period
     ; num_nodes
     ; node_id
     ; election_timeout
-    ; max_outstanding }
+    ; max_outstanding 
+    ; max_append_entries = 1024}
   in
   let config cons_config =
     Infra.
@@ -134,7 +135,7 @@ let max_outstanding_ot =
          and the highest committed value."
       ["o"; "outstanding"; "max-outstanding"]
   in
-  opt int 65536 i
+  opt int 1024 i
 
 let stream_length_ot =
   let open Arg in

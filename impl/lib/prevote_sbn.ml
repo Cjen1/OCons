@@ -102,7 +102,8 @@ struct
         (* Assume we are going to send up to highest to each *)
         let send_f id highest_sent =
           let lo = highest_sent + 1 in
-          let hi = highest in
+          let len = min (highest - lo) ex.@(t @> config @> max_append_entries) in
+          let hi = lo + len in
           (* so we want to send the segment [lo -> hi] inclusive *)
           if lo <= hi || force then
             let prev_log_index = lo - 1 in
