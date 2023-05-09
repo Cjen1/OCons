@@ -58,11 +58,11 @@ let recv_iter t val_parse =
   let yielder = Util.maybe_yield ~energy:128 in
   let iter f =
     while not t.should_close do
-      yielder ();
-      f (do_if_open ?default:None t (fun (_,r) -> Some (val_parse r)))
+      yielder () ;
+      f (do_if_open ?default:None t (fun (_, r) -> Some (val_parse r)))
     done
   in
-  iter |> Iter.filter_map (Fun.id)
+  iter |> Iter.filter_map Fun.id
 
 let close t =
   t.should_close <- true ;

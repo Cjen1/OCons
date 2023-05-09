@@ -57,12 +57,12 @@ let get_command_trace_time c = c.Command.trace_start
 let empty_command = Command.{op= NoOp; id= -1; trace_start= -1.}
 
 let make_command_state = ref 0
+
 let reset_make_command_state () = make_command_state := 0
 
-let make_command =
-  fun c ->
-    make_command_state := !make_command_state + 1 ;
-    Command.{op= c; id= !make_command_state; trace_start= -1.}
+let make_command c =
+  make_command_state := !make_command_state + 1 ;
+  Command.{op= c; id= !make_command_state; trace_start= -1.}
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]

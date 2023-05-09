@@ -153,7 +153,8 @@ let%expect_test "append_entries from other leader" =
       t
   in
   Fmt.pr "t1: %a\n" t_pp t ;
-  [%expect {|
+  [%expect
+    {|
     +Follower for term 1
     t1: {log: []; commit_index:-1; current_term: 1; node_state:Follower{timeout:5; voted_for:1}} |}] ;
   let t, _ =
@@ -179,7 +180,7 @@ let pp_res t actions =
     actions
 
 let%expect_test "Loop" =
-  reset_make_command_state ();
+  reset_make_command_state () ;
   let t = create (c3 0) in
   let rv = RequestVote {term= 10; lastIndex= 5; lastTerm= 5} in
   (* --------- Get t to start election --------- *)
@@ -548,7 +549,7 @@ let%expect_test "Loop" =
   ()
 
 let%expect_test "Missing elements" =
-  reset_make_command_state ();
+  reset_make_command_state () ;
   (* --------- elect t and add 2 commands to log then send out later one --------- *)
   let t = create (c3 0) in
   let t1 = create (c3 1) in

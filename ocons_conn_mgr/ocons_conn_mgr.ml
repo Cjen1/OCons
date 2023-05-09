@@ -54,8 +54,8 @@ let make_kind_impl ~sw ?use_domain conns parse kind =
           Fiber.await_cancel () ) ;
       IRecv reader_channel
 
-let create ?(kind = Iter ignore) ?use_domain ?connected ~sw resolvers
-    parse delayer =
+let create ?(kind = Iter ignore) ?use_domain ?connected ~sw resolvers parse
+    delayer =
   let conns_list_prom =
     StdLabels.List.map resolvers ~f:(fun (id, r) ->
         let conn = Promise.create () in

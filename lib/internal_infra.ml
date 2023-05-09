@@ -112,7 +112,8 @@ module Make (C : Consensus_intf.S) = struct
           in
           let iter =
             Iter.cons c1 str_iter
-            |> take_at_least_one (min num_to_take 8192) (* Limit total intake size *)
+            |> take_at_least_one (min num_to_take 8192)
+               (* Limit total intake size *)
             |> Iter.map (fun c ->
                    t.debug.request_reporter () ;
                    c )
@@ -131,8 +132,7 @@ module Make (C : Consensus_intf.S) = struct
 
        Expected outcome at system capacity is for queuing on outbound network capacity
     *)
-    CMgr.flush_all t.cmgr ;
-    Fiber.yield ()
+    CMgr.flush_all t.cmgr ; Fiber.yield ()
 
   let tick t () =
     dtraceln "Tick" ;

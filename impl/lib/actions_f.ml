@@ -35,16 +35,16 @@ module type CTypes = sig
 end
 
 module type ActionFunc = functor (C : CTypes) ->
-  ActionSig
-    with type t = C.t
-     and type message = C.message
+  ActionSig with type t = C.t and type message = C.message
 
 module ImperativeActions (C : CTypes) :
   ActionSig with type t = C.t and type message = C.message = struct
   include C
 
   type s =
-    {mutable action_acc: message action list; mutable starting_cid: int; mutable t: t}
+    { mutable action_acc: message action list
+    ; mutable starting_cid: int
+    ; mutable t: t }
 
   let s = ref None
 
