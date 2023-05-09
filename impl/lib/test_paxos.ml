@@ -1,14 +1,14 @@
 open! Types
 open! Utils
 open! Actions_f
-module Imp = ImperativeActions (PaxosTypes)
+module Imp = ImperativeActions (Paxos.Types)
 module Impl = Paxos.Make (Imp)
-open! PaxosTypes
+open! Paxos.Types
 open! Impl
 open Ocons_core.Consensus_intf
 
 let action_pp = action_pp ~pp_msg:message_pp
-let create = create (-1)
+let create = create
 
 let c1 = make_config ~node_id:0 ~node_list:[0] ~election_timeout:5 ()
 

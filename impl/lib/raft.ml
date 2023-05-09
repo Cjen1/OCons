@@ -137,7 +137,9 @@ struct
         (* Assume we are going to send up to highest to each *)
         let send_f id highest_sent =
           let lo = highest_sent + 1 in
-          let len = min (highest - lo) ex.@(t @> config @> max_append_entries) in
+          let len =
+            min (highest - lo) ex.@(t @> config @> max_append_entries)
+          in
           let hi = lo + len in
           (* so we want to send the segment [lo -> hi] inclusive *)
           if lo <= hi || force then
@@ -172,8 +174,9 @@ struct
     let num_nodes = ex.@(t @> config @> num_nodes) in
     Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
+    let threshold = (num_nodes / 2) + 1 - 1 in
     ex.@(t @> node_state) <-
-      Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout; repeat} ;
+      Candidate {quorum= Quorum.empty threshold; timeout; repeat} ;
     ex.@(t @> current_term) <- new_term ;
     let lastIndex = Log.highest ex.@(t @> log) in
     let lastTerm = get_log_term ex.@(t @> log) lastIndex in
@@ -191,7 +194,7 @@ struct
         in
         let rep_sent =
           ct.config.other_nodes |> List.to_seq
-          |> Seq.map (fun i -> (i, Log.highest ct.log))
+          |> Seq.map (fun i -> (i, ct.commit_index))
           |> IntMap.of_seq
         in
         ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
@@ -294,10 +297,10 @@ struct
           , lid )
       , Follower _ ) -> (
         ex.@(t @> current_leader) <- Some lid ;
-        (* Reset leader alive timeout *)
+        (* Reset follower state *)
+        ex.@(t @> node_state @> Follower.voted_for) <- Some lid ;
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout) ;
-        ex.@(t @> node_state @> Follower.voted_for) <- Some lid ;
         (* reply to append entries request *)
         let ct = ex.@(t) in
         let rooted_at_start = prev_log_index = -1 && prev_log_term = 0 in
@@ -385,7 +388,7 @@ struct
         let majority_rep = List.nth acks (ct.config.phase2quorum - 1) in
         (* only commit if the commit index is from this term *)
         if get_log_term ex.@(t @> log) majority_rep = ex.@(t @> current_term)
-        then ex.@(t @> commit_index) <- majority_rep
+        then A.map (t @> commit_index) ~f:(max majority_rep) ()
     | _ ->
         ()
 

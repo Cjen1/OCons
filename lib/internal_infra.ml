@@ -112,7 +112,7 @@ module Make (C : Consensus_intf.S) = struct
           in
           let iter =
             Iter.cons c1 str_iter
-            |> take_at_least_one num_to_take
+            |> take_at_least_one (min num_to_take 8192) (* Limit total intake size *)
             |> Iter.map (fun c ->
                    t.debug.request_reporter () ;
                    c )
@@ -121,7 +121,7 @@ module Make (C : Consensus_intf.S) = struct
           t.cons <- tcons ;
           handle_actions t actions )
 
-  let ensure_sent _t =
+  let ensure_sent t =
     (* We should flush here to ensure queueus aren't building up.
        However in practise that results in about a 2x drop in highest throughput
        So we just yield to the scheduler. This should cause writes to still be
@@ -131,6 +131,7 @@ module Make (C : Consensus_intf.S) = struct
 
        Expected outcome at system capacity is for queuing on outbound network capacity
     *)
+    CMgr.flush_all t.cmgr ;
     Fiber.yield ()
 
   let tick t () =

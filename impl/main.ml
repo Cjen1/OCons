@@ -16,7 +16,7 @@ let run kind node_id node_addresses internal_port external_port tick_period
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
-  let shared_config = 
+  let shared_config =
     let num_nodes = List.length node_addresses in
     let majority_quorums = (num_nodes / 2) + 1 in
     { phase1quorum= majority_quorums
@@ -25,8 +25,8 @@ let run kind node_id node_addresses internal_port external_port tick_period
     ; num_nodes
     ; node_id
     ; election_timeout
-    ; max_outstanding 
-    ; max_append_entries = 1024}
+    ; max_outstanding
+    ; max_append_entries= 8192 }
   in
   let config cons_config =
     Infra.
@@ -47,7 +47,7 @@ let run kind node_id node_addresses internal_port external_port tick_period
   match kind with
   | Paxos ->
       let cfg = config shared_config in
-      Eio.traceln "Starting Paxos system:\nconfig = %a"
+      Eio.traceln "Starting Paxos v1 system:\nconfig = %a"
         Impl_core.Types.config_pp shared_config ;
       PMain.run env cfg
   | Raft ->
@@ -115,7 +115,7 @@ let election_timeout_ot =
       ~doc:"Number of ticks before an election is triggered."
       ["election-timeout"]
   in
-  opt int 5 i
+  opt int 10 i
 
 let election_tick_period_ot =
   let open Arg in
@@ -135,7 +135,7 @@ let max_outstanding_ot =
          and the highest committed value."
       ["o"; "outstanding"; "max-outstanding"]
   in
-  opt int 1024 i
+  opt int 65536 i
 
 let stream_length_ot =
   let open Arg in

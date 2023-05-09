@@ -87,7 +87,7 @@ struct
 end
 
 module Paxos = struct
-  open PaxosTypes
+  open Paxos.Types
 
   let enum_msg = function
     | RequestVote _ ->

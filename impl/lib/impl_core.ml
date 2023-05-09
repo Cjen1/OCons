@@ -3,14 +3,14 @@ module Line_prot = Line_prot
 module Types = Types
 
 module Paxos = struct
-  include PaxosTypes
+  include Paxos.Types
   include Paxos.Impl
 
   type config = Types.config
 
   let config_pp = Types.config_pp
 
-  let create_node = create
+  let create_node _ = create
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.log - t.commit_index in

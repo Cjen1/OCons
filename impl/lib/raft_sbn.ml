@@ -100,7 +100,9 @@ struct
         (* Assume we are going to send up to highest to each *)
         let send_f id highest_sent =
           let lo = highest_sent + 1 in
-          let len = min (highest - lo) ex.@(t @> config @> max_append_entries) in
+          let len =
+            min (highest - lo) ex.@(t @> config @> max_append_entries)
+          in
           let hi = lo + len in
           (* so we want to send the segment [lo -> hi] inclusive *)
           if lo <= hi || force then
@@ -120,7 +122,7 @@ struct
     | _ ->
         assert false
 
-  let send_request_vote () = 
+  let send_request_vote () =
     let term = ex.@(t @> current_term) in
     let lastIndex = Log.highest ex.@(t @> log) in
     let lastTerm = get_log_term ex.@(t @> log) lastIndex in
@@ -133,6 +135,7 @@ struct
     ex.@(t @> current_term) <- term
 
   let transit_candidate () =
+    let timeout = ex.@(t @> config @> election_timeout) in
     let cterm = ex.@(t @> current_term) in
     let num_nodes = ex.@(t @> config @> num_nodes) in
     let new_term =
@@ -144,9 +147,7 @@ struct
     Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     ex.@(t @> node_state) <-
-      Candidate
-        { quorum= Quorum.empty ((num_nodes / 2) + 1 - 1)
-        ; timeout= ex.@(t @> config @> election_timeout) } ;
+      Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout} ;
     ex.@(t @> current_term) <- new_term ;
     send_request_vote ()
 
@@ -162,7 +163,7 @@ struct
         in
         let rep_sent =
           ct.config.other_nodes |> List.to_seq
-          |> Seq.map (fun i -> (i, Log.highest ct.log))
+          |> Seq.map (fun i -> (i, ct.commit_index))
           |> IntMap.of_seq
         in
         ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
@@ -350,7 +351,7 @@ struct
         let majority_rep = List.nth acks (ct.config.phase2quorum - 1) in
         (* only commit if the commit index is from this term *)
         if get_log_term ex.@(t @> log) majority_rep = ex.@(t @> current_term)
-        then ex.@(t @> commit_index) <- majority_rep
+        then A.map (t @> commit_index) ~f:(max majority_rep) ()
     | _ ->
         ()
 

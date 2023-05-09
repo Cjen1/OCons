@@ -25,7 +25,7 @@ let config_pp : config Fmt.t =
     v.other_nodes
 
 let make_config ~node_id ~node_list ~election_timeout ?(max_outstanding = 8192)
-    ?(max_append_entries = 1024) () =
+    ?(max_append_entries = 8192) () =
   let length = List.length node_list in
   let phase1quorum = (length + 1) / 2 in
   let phase2quorum = (length + 1) / 2 in
@@ -42,115 +42,6 @@ let make_config ~node_id ~node_list ~election_timeout ?(max_outstanding = 8192)
   ; max_append_entries }
 
 let get_log_term log idx = if idx < 0 then 0 else (Log.get log idx).term
-
-module PaxosTypes = struct
-  type message =
-    | RequestVote of {term: term; leader_commit: log_index}
-    | RequestVoteResponse of
-        {term: term; start_index: log_index; entries: log_entry Iter.t * int}
-    | AppendEntries of
-        { term: term
-        ; leader_commit: log_index
-        ; prev_log_index: log_index
-        ; prev_log_term: term
-        ; entries: log_entry Iter.t * int }
-    | AppendEntriesResponse of
-        {term: term; success: (log_index, log_index) Result.t; trace: time}
-
-  type node_state =
-    | Follower of {timeout: int}
-    | Candidate of
-        { mutable quorum: (log_index * log_entry) Iter.t Quorum.t
-        ; mutable timeout: int }
-    | Leader of
-        { mutable rep_ackd: log_index IntMap.t (* MatchIdx *)
-        ; mutable rep_sent: log_index IntMap.t (* NextIdx *)
-        ; heartbeat: int }
-  [@@deriving accessors]
-
-  let timeout_a =
-    [%accessor
-      A.field
-        ~get:(function
-          | Follower {timeout} ->
-              timeout
-          | Candidate {timeout; _} ->
-              timeout
-          | Leader {heartbeat; _} ->
-              heartbeat )
-        ~set:(fun ns v ->
-          match ns with
-          | Follower _ ->
-              A.set Follower.timeout ~to_:v ns
-          | Candidate _ ->
-              A.set Candidate.timeout ~to_:v ns
-          | Leader _ ->
-              A.set Leader.heartbeat ~to_:v ns )]
-
-  type t =
-    { log: log_entry SegmentLog.t
-    ; log_contains: unit CIDHashtbl.t
-    ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
-    ; config: config
-    ; node_state: node_state
-    ; current_term: term
-    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter }
-  [@@deriving accessors]
-
-  let message_pp ppf v =
-    let open Fmt in
-    match v with
-    | RequestVote {term; leader_commit} ->
-        pf ppf "RequestVote {term:%d; leader_commit:%d}" term leader_commit
-    | RequestVoteResponse {term; start_index; entries= entries, len} ->
-        pf ppf
-          "RequestVoteResponse {term:%d; start_index:%d; entries_length:%d; \
-           entries: %a}"
-          term start_index len
-          (brackets @@ list ~sep:(const char ',') log_entry_pp)
-          (entries |> Iter.to_list)
-    | AppendEntries {term; leader_commit; prev_log_index; prev_log_term; entries}
-      ->
-        pf ppf
-          "AppendEntries {term: %d; leader_commit: %d; prev_log_index: %d; \
-           prev_log_term: %d; entries_length: %d; entries: %a}"
-          term leader_commit prev_log_index prev_log_term (snd entries)
-          (brackets @@ list ~sep:(const char ',') log_entry_pp)
-          (fst entries |> Iter.to_list)
-    | AppendEntriesResponse {term; success; _} ->
-        pf ppf "AppendEntriesResponse {term: %d; success: %a}" term
-          (result
-             ~ok:(const string "Ok: " ++ int)
-             ~error:(const string "Error: " ++ int) )
-          success
-
-  let node_state_pp : node_state Fmt.t =
-   fun ppf v ->
-    let open Fmt in
-    match v with
-    | Follower {timeout} ->
-        pf ppf "Follower(%d)" timeout
-    | Candidate {quorum; timeout} ->
-        pf ppf "Candidate {quorum:%a, timeout:%d}" Quorum.pp quorum timeout
-    | Leader {rep_ackd; rep_sent; heartbeat} ->
-        let format_rep_map : int IntMap.t Fmt.t =
-         fun ppf v ->
-          let open Fmt in
-          let elts = v |> IntMap.bindings in
-          pf ppf "%a"
-            (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
-            elts
-        in
-        pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
-          format_rep_map rep_ackd format_rep_map rep_sent
-
-  let t_pp : t Fmt.t =
-   fun ppf t ->
-    Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
-      Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
-      (t.log |> Log.iter |> Iter.to_list)
-      t.commit_index t.current_term node_state_pp t.node_state
-end
 
 module type StrategyTypes = sig
   type request_vote

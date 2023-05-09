@@ -142,7 +142,9 @@ struct
         (* Assume we are going to send up to highest to each *)
         let send_f id highest_sent =
           let lo = highest_sent + 1 in
-          let len = min (highest - lo) ex.@(t @> config @> max_append_entries) in
+          let len =
+            min (highest - lo) ex.@(t @> config @> max_append_entries)
+          in
           let hi = lo + len in
           (* so we want to send the segment [lo -> hi] inclusive *)
           if lo <= hi || force then
@@ -171,8 +173,14 @@ struct
         ; prevotes= None } ;
     ex.@(t @> current_term) <- term
 
+  let get_next_term () =
+    let cterm = ex.@(t @> current_term) in
+    cterm + 1
+
   let send_request_vote ?(is_prevote = false) () =
-    let term = ex.@(t @> current_term) + if is_prevote then 1 else 0 in
+    let term =
+      if is_prevote then get_next_term () else ex.@(t @> current_term)
+    in
     let lastIndex = Log.highest ex.@(t @> log) in
     let lastTerm = get_log_term ex.@(t @> log) lastIndex in
     broadcast @@ RequestVote {term; lastIndex; lastTerm; prevote= is_prevote}
@@ -204,7 +212,7 @@ struct
         in
         let rep_sent =
           ct.config.other_nodes |> List.to_seq
-          |> Seq.map (fun i -> (i, Log.highest ct.log))
+          |> Seq.map (fun i -> (i, ct.commit_index))
           |> IntMap.of_seq
         in
         ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
@@ -259,7 +267,7 @@ struct
         A.map (t @> node_state @> timeout_a) ~f:decr ()
     | Tick, Candidate _ ->
         A.map (t @> node_state @> timeout_a) ~f:decr ()
-    (* Intake commands *)
+    (* Recv commands *)
     | Commands cs, Leader _ ->
         let current_ids = ex.@(t @> log_contains) in
         cs
@@ -280,7 +288,7 @@ struct
       when term < ex.@(t @> current_term) ->
         ()
     (* Recv msgs from this term*)
-    (* Candidate*)
+    (* Follower *)
     | ( Recv (RequestVoteResponse ({prevote= true; term; _} as m), src)
       , Follower _ ) ->
         if m.success && term = ex.@(t @> current_term) + 1 then
@@ -288,6 +296,7 @@ struct
             A.(t @> node_state @> Follower.prevotes)
             ~f:(Option.map (Quorum.add src ()))
             ()
+    (* Candidate *)
     | Recv (RequestVoteResponse ({prevote= false; _} as m), src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
         if m.success then
@@ -309,8 +318,8 @@ struct
       when term > ex.@(t @> current_term) && request_vote_valid m ->
         send cid @@ RequestVoteResponse {term; success= true; prevote= true}
     (* Follower *)
-    | Recv ((RequestVote {prevote= false; _} as m), cid), Follower _
-      when request_vote_valid m ->
+    | Recv (RequestVote ({prevote= false; _} as m), cid), Follower _
+      when request_vote_valid (RequestVote m) ->
         ex.@(t @> node_state @> Follower.voted_for) <- Some cid ;
         send cid
         @@ RequestVoteResponse
@@ -320,13 +329,12 @@ struct
               {prev_log_term; prev_log_index; entries; leader_commit; _}
           , lid )
       , Follower _ ) -> (
-        (* *)
         ex.@(t @> current_leader) <- Some lid ;
-        (* Reset leader alive timeout *)
-        ex.@(t @> node_state @> Follower.timeout) <-
-          ex.@(t @> config @> election_timeout) ;
+        (* Reset follower state *)
         ex.@(t @> node_state @> Follower.prevotes) <- None ;
         ex.@(t @> node_state @> Follower.voted_for) <- Some lid ;
+        ex.@(t @> node_state @> Follower.timeout) <-
+          ex.@(t @> config @> election_timeout) ;
         (* reply to append entries request *)
         let ct = ex.@(t) in
         let rooted_at_start = prev_log_index = -1 && prev_log_term = 0 in
@@ -380,6 +388,7 @@ struct
     (* candidate election complete check *)
     | Follower {prevotes= Some prevotes; _} when Quorum.satisified prevotes ->
         transit_candidate ()
+    (* check if can become leader *)
     | Candidate {quorum; _} when Quorum.satisified quorum ->
         transit_leader ()
     (* send msg if exists entries to send *)
@@ -421,7 +430,7 @@ struct
         let majority_rep = List.nth acks (ct.config.phase2quorum - 1) in
         (* only commit if the commit index is from this term *)
         if get_log_term ex.@(t @> log) majority_rep = ex.@(t @> current_term)
-        then ex.@(t @> commit_index) <- majority_rep
+        then A.map (t @> commit_index) ~f:(max majority_rep) ()
     | _ ->
         ()
 

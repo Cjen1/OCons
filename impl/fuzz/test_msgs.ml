@@ -91,7 +91,7 @@ let test_entry_equality les =
   check_eq ~eq:entries_equal w_entries r_entries
 
 module Paxos = struct
-  open Impl_core.Types.PaxosTypes
+  open Impl_core.Paxos
   open LP.Paxos
 
   let msg_gen =

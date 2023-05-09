@@ -5,12 +5,120 @@ open Actions_f
 open A.O
 open Ocons_core.Consensus_intf
 
+module Types = struct
+  type message =
+    | RequestVote of {term: term; leader_commit: log_index}
+    | RequestVoteResponse of
+        {term: term; start_index: log_index; entries: log_entry Iter.t * int}
+    | AppendEntries of
+        { term: term
+        ; leader_commit: log_index
+        ; prev_log_index: log_index
+        ; prev_log_term: term
+        ; entries: log_entry Iter.t * int }
+    | AppendEntriesResponse of
+        {term: term; success: (log_index, log_index) Result.t; trace: time}
+
+  type node_state =
+    | Follower of {timeout: int}
+    | Candidate of
+        { mutable quorum: (log_index * log_entry) Iter.t Quorum.t
+        ; mutable timeout: int }
+    | Leader of
+        { mutable rep_ackd: log_index IntMap.t (* MatchIdx *)
+        ; mutable rep_sent: log_index IntMap.t (* NextIdx *)
+        ; heartbeat: int }
+  [@@deriving accessors]
+
+  let timeout_a =
+    [%accessor
+      A.field
+        ~get:(function
+          | Follower {timeout} ->
+              timeout
+          | Candidate {timeout; _} ->
+              timeout
+          | Leader {heartbeat; _} ->
+              heartbeat )
+        ~set:(fun ns v ->
+          match ns with
+          | Follower _ ->
+              A.set Follower.timeout ~to_:v ns
+          | Candidate _ ->
+              A.set Candidate.timeout ~to_:v ns
+          | Leader _ ->
+              A.set Leader.heartbeat ~to_:v ns )]
+
+  type t =
+    { log: log_entry SegmentLog.t
+    ; log_contains: unit CIDHashtbl.t
+    ; commit_index: log_index (* Guarantee that [commit_index] is >= log.vlo *)
+    ; config: config
+    ; node_state: node_state
+    ; current_term: term
+    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter
+    ; current_leader: node_id option }
+  [@@deriving accessors]
+
+  let message_pp ppf v =
+    let open Fmt in
+    match v with
+    | RequestVote {term; leader_commit} ->
+        pf ppf "RequestVote {term:%d; leader_commit:%d}" term leader_commit
+    | RequestVoteResponse {term; start_index; entries= entries, len} ->
+        pf ppf
+          "RequestVoteResponse {term:%d; start_index:%d; entries_length:%d; \
+           entries: %a}"
+          term start_index len
+          (brackets @@ list ~sep:(const char ',') log_entry_pp)
+          (entries |> Iter.to_list)
+    | AppendEntries {term; leader_commit; prev_log_index; prev_log_term; entries}
+      ->
+        pf ppf
+          "AppendEntries {term: %d; leader_commit: %d; prev_log_index: %d; \
+           prev_log_term: %d; entries_length: %d; entries: %a}"
+          term leader_commit prev_log_index prev_log_term (snd entries)
+          (brackets @@ list ~sep:(const char ',') log_entry_pp)
+          (fst entries |> Iter.to_list)
+    | AppendEntriesResponse {term; success; _} ->
+        pf ppf "AppendEntriesResponse {term: %d; success: %a}" term
+          (result
+             ~ok:(const string "Ok: " ++ int)
+             ~error:(const string "Error: " ++ int) )
+          success
+
+  let node_state_pp : node_state Fmt.t =
+   fun ppf v ->
+    let open Fmt in
+    match v with
+    | Follower {timeout} ->
+        pf ppf "Follower(%d)" timeout
+    | Candidate {quorum; timeout} ->
+        pf ppf "Candidate {quorum:%a, timeout:%d}" Quorum.pp quorum timeout
+    | Leader {rep_ackd; rep_sent; heartbeat} ->
+        let format_rep_map : int IntMap.t Fmt.t =
+         fun ppf v ->
+          let open Fmt in
+          let elts = v |> IntMap.bindings in
+          pf ppf "%a"
+            (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
+            elts
+        in
+        pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
+          format_rep_map rep_ackd format_rep_map rep_sent
+
+  let t_pp : t Fmt.t =
+   fun ppf t ->
+    Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
+      Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
+      (t.log |> Log.iter |> Iter.to_list)
+      t.commit_index t.current_term node_state_pp t.node_state
+end
+
 module Make
-    (Act : ActionSig
-             with type t = PaxosTypes.t
-              and type message = PaxosTypes.message) =
+    (Act : ActionSig with type t = Types.t and type message = Types.message) =
 struct
-  include PaxosTypes
+  include Types
   open Act
 
   let ex = ()
@@ -23,11 +131,6 @@ struct
     CIDHashtbl.replace ct.log_contains le.command.id () ;
     Log.set ct.log idx le
 
-  let cut_log_after ct idx =
-    Log.iter ct.log ~lo:(idx + 1) (fun le ->
-        CIDHashtbl.remove ct.log_contains le.command.id ) ;
-    Log.cut_after ct.log idx
-
   let send_append_entries ?(force = false) () =
     let ct = ex.@(t) in
     match ct.node_state with
@@ -36,7 +139,6 @@ struct
         (* Assume we are going to send up to highest to each *)
         let send_f id highest_sent =
           let lo = highest_sent + 1 in
-          (* limit maximum size of append entries to max_append_entries *)
           let len =
             min (highest - lo) ex.@(t @> config @> max_append_entries)
           in
@@ -61,10 +163,12 @@ struct
 
   let transit_follower ?voted_for:_ term =
     Utils.traceln "Follower for term %d" term ;
-    ex.@(t @> node_state) <- Follower {timeout= 0} ;
+    ex.@(t @> node_state) <-
+      Follower {timeout= ex.@(t @> config @> election_timeout)} ;
     ex.@(t @> current_term) <- term
 
   let transit_candidate () =
+    let timeout = ex.@(t @> config @> election_timeout) in
     let cterm = ex.@(t @> current_term) in
     let num_nodes = ex.@(t @> config @> num_nodes) in
     let new_term =
@@ -75,8 +179,8 @@ struct
     in
     Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
-    ex.@(t @> node_state) <-
-      Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout= 0} ;
+    let threshold = (num_nodes / 2) + 1 - 1 in
+    ex.@(t @> node_state) <- Candidate {quorum= Quorum.empty threshold; timeout} ;
     ex.@(t @> current_term) <- new_term ;
     broadcast
     @@ RequestVote {term= new_term; leader_commit= ex.@(t @> commit_index)}
@@ -110,7 +214,7 @@ struct
           |> Seq.map (fun i -> (i, ct.commit_index))
           |> IntMap.of_seq
         in
-        ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 0} ;
+        ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
         send_append_entries ~force:true ()
     | _ ->
         assert false
@@ -129,14 +233,14 @@ struct
     | _ ->
         ()
 
-  let incr h = h + 1
+  let decr i = i - 1
 
   let resolve_event e =
     if_recv_advance_term e ;
     match (e, ex.@(t @> node_state)) with
-    (* Increment ticks *)
+    (* Decr ticks *)
     | Tick, (Follower _ | Leader _) ->
-        A.map (t @> node_state @> timeout_a) ~f:incr ()
+        A.map (t @> node_state @> timeout_a) ~f:decr ()
     | Tick, Candidate _ ->
         broadcast
         @@ RequestVote
@@ -180,12 +284,10 @@ struct
         Ocons_core.Utils.TRACE.rep_reply trace ;
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_ackd) () ~f:(IntMap.add src idx)
-    | ( Recv (AppendEntriesResponse ({success= Error idx; trace; _} as m), src)
-      , Leader _ ) ->
-        Ocons_core.Utils.TRACE.rep_reply trace ;
+    | Recv (AppendEntriesResponse ({success= Error idx; _} as m), src), Leader _
+      ->
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
-        (*Eio.traceln "Message was lost or reordered";*)
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
         Utils.dtraceln "Failed to match\n%a" t_pp ex.@(t)
     (* Follower *)
@@ -201,8 +303,10 @@ struct
               {prev_log_term; prev_log_index; entries; leader_commit; _}
           , lid )
       , Follower _ ) -> (
-        (* Reset leader alive timeout *)
-        ex.@(t @> node_state @> Follower.timeout) <- 0 ;
+        ex.@(t @> current_leader) <- Some lid ;
+        (* Reset follower state *)
+        ex.@(t @> node_state @> Follower.timeout) <-
+          ex.@(t @> config @> election_timeout) ;
         (* reply to append entries request *)
         let ct = ex.@(t) in
         let rooted_at_start = prev_log_index = -1 && prev_log_term = 0 in
@@ -214,7 +318,7 @@ struct
         | false ->
             (* Reply with the highest index known not to be replicated *)
             (* This will be the prev_log_index of the next msg *)
-            Utils.traceln
+            Utils.dtraceln
               "Failed to match\n\
                rooted_at_start(%b), matching_index_and_term(%b):\n\
                %a"
@@ -238,13 +342,11 @@ struct
                    if
                      (not (Log.mem ct.log idx))
                      || (Log.get ct.log idx).term < le.term
-                   then (
-                     set_le ct idx le ;
-                     Ocons_core.Utils.TRACE.rep le.command ) ) ;
+                   then set_le ct idx le ) ;
             let max_entry =
               index_iter |> Iter.map fst |> Iter.fold max prev_log_index
             in
-            cut_log_after ct max_entry ;
+            Log.cut_after ct.log max_entry ;
             A.map (t @> commit_index) ~f:(max leader_commit) () ;
             send lid
             @@ AppendEntriesResponse
@@ -271,13 +373,13 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     (* When should ticking result in an action? *)
-    | Follower s when s.timeout >= ct.config.election_timeout ->
+    | Follower s when s.timeout <= 0 ->
         transit_candidate ()
-    | Candidate {timeout; _} when timeout >= ct.config.election_timeout ->
+    | Candidate {timeout; _} when timeout <= 0 ->
         transit_candidate ()
-    | Leader {heartbeat; _} when heartbeat > 0 ->
+    | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
-        ex.@(t @> node_state @> Leader.heartbeat) <- 0
+        ex.@(t @> node_state @> Leader.heartbeat) <- 1
     | _ ->
         ()
 
@@ -295,7 +397,7 @@ struct
         let majority_rep = List.nth acks (ct.config.phase2quorum - 1) in
         (* only commit if the commit index is from this term *)
         if get_log_term ex.@(t @> log) majority_rep = ex.@(t @> current_term)
-        then ex.@(t @> commit_index) <- majority_rep
+        then A.map (t @> commit_index) ~f:(max majority_rep) ()
     | _ ->
         ()
 
@@ -307,17 +409,19 @@ struct
 
   let advance t e = run_side_effects (fun () -> advance_raw e) t
 
-  let create _ config =
+  let create config =
     let log = SegmentLog.create {term= -1; command= empty_command} in
     { log
     ; log_contains= CIDHashtbl.create 0
     ; commit_index= -1
     ; config
-    ; node_state= Follower {timeout= config.election_timeout}
+    ; node_state= Follower {timeout= 0}
     ; current_term= 0
     ; append_entries_length=
         Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
-    }
+    ; current_leader= None }
+
+  let get_leader t = t.current_leader
 end
 
-module Impl = Make (ImperativeActions (PaxosTypes))
+module Impl = Make (ImperativeActions (Types))
