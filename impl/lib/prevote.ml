@@ -164,15 +164,6 @@ struct
     | _ ->
         assert false
 
-  let transit_follower ?voted_for term =
-    Utils.traceln "Follower for term %d" term ;
-    ex.@(t @> node_state) <-
-      Follower
-        { timeout= ex.@(t @> config @> election_timeout)
-        ; voted_for
-        ; prevotes= None } ;
-    ex.@(t @> current_term) <- term
-
   let get_next_term () =
     let cterm = ex.@(t @> current_term) in
     cterm + 1
@@ -184,6 +175,15 @@ struct
     let lastIndex = Log.highest ex.@(t @> log) in
     let lastTerm = get_log_term ex.@(t @> log) lastIndex in
     broadcast @@ RequestVote {term; lastIndex; lastTerm; prevote= is_prevote}
+
+  let transit_follower ?voted_for term =
+    Utils.traceln "Follower for term %d" term ;
+    ex.@(t @> node_state) <-
+      Follower
+        { timeout= ex.@(t @> config @> election_timeout)
+        ; voted_for
+        ; prevotes= None } ;
+    ex.@(t @> current_term) <- term
 
   let transit_candidate ?(repeat = 1) () =
     let timeout =
@@ -263,9 +263,7 @@ struct
     if_recv_advance_term e ;
     match (e, ex.@(t @> node_state)) with
     (* Decr ticks *)
-    | Tick, (Follower _ | Leader _) ->
-        A.map (t @> node_state @> timeout_a) ~f:decr ()
-    | Tick, Candidate _ ->
+    | Tick, _ ->
         A.map (t @> node_state @> timeout_a) ~f:decr ()
     (* Recv commands *)
     | Commands cs, Leader _ ->

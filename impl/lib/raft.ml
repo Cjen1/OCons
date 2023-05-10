@@ -243,9 +243,7 @@ struct
     if_recv_advance_term e ;
     match (e, ex.@(t @> node_state)) with
     (* Decr ticks *)
-    | Tick, (Follower _ | Leader _) ->
-        A.map (t @> node_state @> timeout_a) ~f:decr ()
-    | Tick, Candidate _ ->
+    | Tick, _ ->
         A.map (t @> node_state @> timeout_a) ~f:decr ()
     (* Recv commands *)
     | Commands cs, Leader _ ->
@@ -268,7 +266,7 @@ struct
       when term < ex.@(t @> current_term) ->
         ()
     (* Recv msgs from this term*)
-    (* Candidate*)
+    (* Candidate *)
     | Recv (RequestVoteResponse m, src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
         if m.success then

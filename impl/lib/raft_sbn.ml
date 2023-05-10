@@ -122,6 +122,14 @@ struct
     | _ ->
         assert false
 
+  let get_next_term () =
+    let cterm = ex.@(t @> current_term) in
+    let num_nodes = ex.@(t @> config @> num_nodes) in
+    let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
+    let curr_epoch_term = (quot * num_nodes) + ex.@(t @> config @> node_id) in
+    if cterm < curr_epoch_term then curr_epoch_term
+    else curr_epoch_term + num_nodes
+
   let send_request_vote () =
     let term = ex.@(t @> current_term) in
     let lastIndex = Log.highest ex.@(t @> log) in
@@ -135,14 +143,8 @@ struct
     ex.@(t @> current_term) <- term
 
   let transit_candidate () =
-    let cterm = ex.@(t @> current_term) in
+    let new_term = get_next_term () in
     let num_nodes = ex.@(t @> config @> num_nodes) in
-    let new_term =
-      let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
-      let curr_epoch_term = (quot * num_nodes) + ex.@(t @> config @> node_id) in
-      if cterm < curr_epoch_term then curr_epoch_term
-      else curr_epoch_term + num_nodes
-    in
     Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     let threshold = (num_nodes / 2) + 1 - 1 in
@@ -186,9 +188,6 @@ struct
       , _ )
       when term > ex.@(t @> current_term) ->
         transit_follower term
-    | Recv (AppendEntries {term; _}, lid), Candidate _
-      when term = ex.@(t @> current_term) ->
-        transit_follower ~voted_for:lid term
     | _ ->
         ()
 
@@ -259,7 +258,7 @@ struct
           , lid )
       , Follower _ ) -> (
         ex.@(t @> current_leader) <- Some lid ;
-        (* Reset leader alive timeout *)
+        (* Reset follower state *)
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout) ;
         (* reply to append entries request *)

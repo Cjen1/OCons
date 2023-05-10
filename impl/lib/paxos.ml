@@ -161,12 +161,6 @@ struct
     | _ ->
         assert false
 
-  let transit_follower ?voted_for:_ term =
-    Utils.traceln "Follower for term %d" term ;
-    ex.@(t @> node_state) <-
-      Follower {timeout= ex.@(t @> config @> election_timeout)} ;
-    ex.@(t @> current_term) <- term
-
   let get_next_term () =
     let cterm = ex.@(t @> current_term) in
     let num_nodes = ex.@(t @> config @> num_nodes) in
@@ -180,20 +174,20 @@ struct
     @@ RequestVote
          {term= ex.@(t @> current_term); leader_commit= ex.@(t @> commit_index)}
 
+  let transit_follower term =
+    Utils.traceln "Follower for term %d" term ;
+    ex.@(t @> node_state) <-
+      Follower {timeout= ex.@(t @> config @> election_timeout)} ;
+    ex.@(t @> current_term) <- term
+
   let transit_candidate () =
-    let timeout = ex.@(t @> config @> election_timeout) in
-    let cterm = ex.@(t @> current_term) in
+    let new_term = get_next_term () in
     let num_nodes = ex.@(t @> config @> num_nodes) in
-    let new_term =
-      let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
-      let curr_epoch_term = (quot * num_nodes) + ex.@(t @> config @> node_id) in
-      if cterm < curr_epoch_term then curr_epoch_term
-      else curr_epoch_term + num_nodes
-    in
     Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     let threshold = (num_nodes / 2) + 1 - 1 in
-    ex.@(t @> node_state) <- Candidate {quorum= Quorum.empty threshold; timeout} ;
+    ex.@(t @> node_state) <-
+      Candidate {quorum= Quorum.empty threshold; timeout= 1} ;
     ex.@(t @> current_term) <- new_term ;
     send_request_vote ()
 
@@ -251,13 +245,8 @@ struct
     if_recv_advance_term e ;
     match (e, ex.@(t @> node_state)) with
     (* Decr ticks *)
-    | Tick, (Follower _ | Leader _) ->
+    | Tick, _ ->
         A.map (t @> node_state @> timeout_a) ~f:decr ()
-    | Tick, Candidate _ ->
-        broadcast
-        @@ RequestVote
-             { term= ex.@(t @> current_term)
-             ; leader_commit= ex.@(t @> commit_index) }
     (* Recv commands *)
     | Commands cs, Leader _ ->
         let current_ids = ex.@(t @> log_contains) in
@@ -279,7 +268,7 @@ struct
       when term < ex.@(t @> current_term) ->
         ()
     (* Recv msgs from this term*)
-    (* Candidate*)
+    (* Candidate *)
     | Recv (RequestVoteResponse m, src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
         let entries, _ = m.entries in

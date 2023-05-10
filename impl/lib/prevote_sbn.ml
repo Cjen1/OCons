@@ -124,12 +124,6 @@ struct
     | _ ->
         assert false
 
-  let transit_follower ?voted_for:_ term =
-    Utils.traceln "Follower for term %d" term ;
-    ex.@(t @> node_state) <-
-      Follower {timeout= ex.@(t @> config @> election_timeout); prevotes= None} ;
-    ex.@(t @> current_term) <- term
-
   let get_next_term () =
     let cterm = ex.@(t @> current_term) in
     let num_nodes = ex.@(t @> config @> num_nodes) in
@@ -146,8 +140,14 @@ struct
     let lastTerm = get_log_term ex.@(t @> log) lastIndex in
     broadcast @@ RequestVote {term; lastIndex; lastTerm; prevote= is_prevote}
 
+  let transit_follower ?voted_for:_ term =
+    Utils.traceln "Follower for term %d" term ;
+    ex.@(t @> node_state) <-
+      Follower {timeout= ex.@(t @> config @> election_timeout); prevotes= None} ;
+    ex.@(t @> current_term) <- term
+
   let transit_candidate () =
-    let new_term = ex.@(t @> current_term) + 1 in
+    let new_term = get_next_term () in
     let num_nodes = ex.@(t @> config @> num_nodes) in
     Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
@@ -192,9 +192,6 @@ struct
       , _ )
       when term > ex.@(t @> current_term) ->
         transit_follower term
-    | Recv (AppendEntries {term; _}, lid), Candidate _
-      when term = ex.@(t @> current_term) ->
-        transit_follower ~voted_for:lid term
     | _ ->
         ()
 
