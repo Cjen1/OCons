@@ -167,6 +167,19 @@ struct
       Follower {timeout= ex.@(t @> config @> election_timeout)} ;
     ex.@(t @> current_term) <- term
 
+  let get_next_term () =
+    let cterm = ex.@(t @> current_term) in
+    let num_nodes = ex.@(t @> config @> num_nodes) in
+    let quot, _ = (Int.div cterm num_nodes, cterm mod num_nodes) in
+    let curr_epoch_term = (quot * num_nodes) + ex.@(t @> config @> node_id) in
+    if cterm < curr_epoch_term then curr_epoch_term
+    else curr_epoch_term + num_nodes
+
+  let send_request_vote () =
+    broadcast
+    @@ RequestVote
+         {term= ex.@(t @> current_term); leader_commit= ex.@(t @> commit_index)}
+
   let transit_candidate () =
     let timeout = ex.@(t @> config @> election_timeout) in
     let cterm = ex.@(t @> current_term) in
@@ -182,8 +195,7 @@ struct
     let threshold = (num_nodes / 2) + 1 - 1 in
     ex.@(t @> node_state) <- Candidate {quorum= Quorum.empty threshold; timeout} ;
     ex.@(t @> current_term) <- new_term ;
-    broadcast
-    @@ RequestVote {term= new_term; leader_commit= ex.@(t @> commit_index)}
+    send_request_vote ()
 
   let transit_leader () =
     let ct = ex.@(t) in
@@ -376,7 +388,8 @@ struct
     | Follower s when s.timeout <= 0 ->
         transit_candidate ()
     | Candidate {timeout; _} when timeout <= 0 ->
-        transit_candidate ()
+        send_request_vote () ;
+        ex.@(t @> node_state @> Candidate.timeout) <- 1
     | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1

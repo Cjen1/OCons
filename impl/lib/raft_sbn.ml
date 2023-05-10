@@ -135,7 +135,6 @@ struct
     ex.@(t @> current_term) <- term
 
   let transit_candidate () =
-    let timeout = ex.@(t @> config @> election_timeout) in
     let cterm = ex.@(t @> current_term) in
     let num_nodes = ex.@(t @> config @> num_nodes) in
     let new_term =
@@ -146,8 +145,9 @@ struct
     in
     Utils.traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
+    let threshold = (num_nodes / 2) + 1 - 1 in
     ex.@(t @> node_state) <-
-      Candidate {quorum= Quorum.empty ((num_nodes / 2) + 1 - 1); timeout} ;
+      Candidate {quorum= Quorum.empty threshold; timeout= 1} ;
     ex.@(t @> current_term) <- new_term ;
     send_request_vote ()
 
@@ -208,9 +208,7 @@ struct
     if_recv_advance_term e ;
     match (e, ex.@(t @> node_state)) with
     (* Decr ticks *)
-    | Tick, (Follower _ | Leader _) ->
-        A.map (t @> node_state @> timeout_a) ~f:decr ()
-    | Tick, Candidate _ ->
+    | Tick, _ ->
         A.map (t @> node_state @> timeout_a) ~f:decr ()
     (* Recv commands *)
     | Commands cs, Leader _ ->
@@ -330,7 +328,8 @@ struct
     | Follower s when s.timeout <= 0 ->
         transit_candidate ()
     | Candidate {timeout; _} when timeout <= 0 ->
-        send_request_vote ()
+        send_request_vote () ;
+        ex.@(t @> node_state @> Candidate.timeout) <- 1
     | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1
