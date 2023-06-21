@@ -146,6 +146,14 @@ module SegmentLog = struct
     Array.set (List.nth t.segments (id_to_seg t i)) (i mod t.segmentsize) v ;
     if t.vhi < i then t.vhi <- i
 
+  let to_seq t ?(lo = 0) ?(hi = t.vhi) : 'a Seq.t =
+    let lo = max 0 lo in
+    Seq.unfold (fun i -> if i = hi then Some (get t i, i + 1) else None) lo
+
+  let to_seqi t ?(lo = 0) ?(hi = t.vhi) : 'a Seq.t =
+    let lo = max 0 lo in
+    Seq.unfold (fun i -> if i = hi then Some ((i, get t i), i + 1) else None) lo
+
   let iteri t ?(lo = 0) ?(hi = t.vhi) : (int * 'a) Iter.t =
     let lo = max 0 lo in
     fun f ->
@@ -203,6 +211,9 @@ module Quorum = struct
   let add id e t = {t with elts= IntMap.add id e t.elts}
 
   let satisified t = IntMap.cardinal t.elts >= t.threshold
+
+  let satisifed_value t =
+    if IntMap.cardinal t.elts > t.threshold then Some t.elts else None
 
   let pp : _ t Fmt.t =
    fun ppf t ->
