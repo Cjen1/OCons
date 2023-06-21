@@ -10,6 +10,10 @@
       url = "github:tweag/opam-nix";
       inputs.opam-repository.follows = "opam-repository";
     };
+    #eio = {
+    #  url = "github:ocaml-multicore/eio";
+    #  flake = false;
+    #};
   };
   outputs = { self, flake-utils, opam-nix, nixpkgs, opam-repository}:
     flake-utils.lib.eachDefaultSystem (system:

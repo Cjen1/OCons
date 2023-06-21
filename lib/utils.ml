@@ -3,15 +3,15 @@ open Types
 let debug_flag = false
 
 let set_nodelay ?(should_warn = true) sock =
-  match sock |> Eio_unix.FD.peek_opt with
-  | None when should_warn ->
-      Eio.traceln
-        "WARNING: unable to set TCP_NODELAY, higher than required latencies \
-         may be experienced"
-  | None ->
-      ()
+  match sock |> Eio_unix.Resource.fd_opt with
   | Some fd ->
-      Unix.setsockopt fd Unix.TCP_NODELAY true
+      Eio_unix.Fd.use ~if_closed:ignore fd (fun fd ->
+          Unix.setsockopt fd Unix.TCP_NODELAY true )
+  | None ->
+      if should_warn then
+        Eio.traceln
+          "WARNING: unable to set TCP_NODELAY, higher than required latencies \
+           may be experienced"
 
 let time_pp ppf t =
   let tm = Unix.localtime t in

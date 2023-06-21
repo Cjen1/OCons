@@ -46,6 +46,8 @@ module Command = struct
     Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
 
   let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
+
+  let equal a b = a.id = b.id
 end
 
 type command = Command.t [@@deriving compare]
