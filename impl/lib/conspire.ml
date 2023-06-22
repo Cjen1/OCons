@@ -278,31 +278,33 @@ struct
           |> Iter.map (fun (src, vs) -> Seq.map (fun v -> (src, v)) vs)
           |> Iter.to_list
         in
-        let rec combine ls () =
-          match ls with
-          | [] ->
-              Seq.Nil
-          | seqs ->
-              let p = List.filter_map (fun s -> Seq.uncons s) seqs in
-              let vs = List.map fst p in
-              let seqs = List.map snd p in
-              Cons (vs, combine seqs)
-        in
-        let stateful_map : 'a -> ('a -> 'b -> 'a * 'c) -> 'b Seq.t -> 'c Seq.t =
-         fun init f s ->
-          let rec aux a s () =
-            match s () with
-            | Seq.Nil ->
-                Seq.Nil
-            | Cons (x, next) ->
-                let a, v = f a x in
-                Cons (v, aux a next)
-          in
-          aux init s
-        in
         let prev_hist = get_hist (start - 1) ex.@(t @> pro @> local_log) in
-        let combined_log_entries =
+        let per_log_entry_seq : (node_id * log_entry) list Seq.t =
+          let rec combine ls () =
+            match ls with
+            | [] ->
+                Seq.Nil
+            | seqs ->
+                let p = List.filter_map (fun s -> Seq.uncons s) seqs in
+                let vs = List.map fst p in
+                let seqs = List.map snd p in
+                Cons (vs, combine seqs)
+          in
           combine max_vterm_ballots
+        in
+        let combined_log_entries : log_entry Seq.t =
+          let stateful_map init f s =
+            let rec aux a s () =
+              match s () with
+              | Seq.Nil ->
+                  Seq.Nil
+              | Cons (x, next) ->
+                  let a, v = f a x in
+                  Cons (v, aux a next)
+            in
+            aux init s
+          in
+          per_log_entry_seq
           |> stateful_map (true, prev_hist) (fun (o4holds, prev_hist) votes ->
                  match
                    (o4holds, if o4holds then o4 votes voting_nodes else None)
