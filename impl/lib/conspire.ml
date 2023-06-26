@@ -17,7 +17,13 @@ module Types = struct
 
   let hash = Hashtbl.hash
 
-  let do_hash (prev_hist : hash) (value : value) = hash (prev_hist, value)
+  let prepare_hash (prev_hist : hash) (value : value) =
+    let v' =
+      value |> Iter.of_list
+      |> Iter.sort_uniq ~cmp:Command.compare
+      |> Iter.to_list
+    in
+    (v', hash (prev_hist, v'))
 
   type log_entry = {value: value; hist: hash} [@@deriving compare]
 
@@ -252,8 +258,8 @@ struct
       |> Iter.map (fun (_, {current_term; _}) -> current_term)
       |> Iter.fold max (-1)
     in
-    (* TODO ensure that once triggered, we do eventually get sufficient votes - recover msg? *)
-    (* If there is a vote for a higher term, then update each local state if sufficient votes *)
+    (* TODO ensure that once triggered, we do eventually get sufficient votes => recover msg? *)
+    (* If there is a vote for a higher term and sufficient votes, then update each local state *)
     if ex.@(t @> pro @> local_term) < max_term then
       let voting_nodes =
         ex.@(t @> pro @> other_nodes)
@@ -262,7 +268,7 @@ struct
                if current_term = max_term then Some i else None )
       in
       if is_quorum voting_nodes then
-        let max_vterm =
+        let max_voted_term =
           ex.@(t @> pro @> other_nodes)
           |> IdMap.to_iter
           |> Iter.fold (fun mt (_, s) -> max s.current_term mt) (-1)
@@ -272,7 +278,7 @@ struct
           ex.@(t @> pro @> other_nodes)
           |> IdMap.to_iter
           |> Iter.filter_map (fun (i, s) ->
-                 if s.current_term = max_vterm then
+                 if s.current_term = max_voted_term then
                    Some (i, get_ballot i start |> snd |> Seq.map snd)
                  else None )
           |> Iter.map (fun (src, vs) -> Seq.map (fun v -> (src, v)) vs)
@@ -292,7 +298,7 @@ struct
           in
           combine max_vterm_ballots
         in
-        let combined_log_entries : log_entry Seq.t =
+        let combined_log_entries =
           let stateful_map init f s =
             let rec aux a s () =
               match s () with
@@ -319,10 +325,45 @@ struct
                        |> Iter.to_list
                        |> List.sort_uniq Command.compare
                      in
-                     let hist = do_hash prev_hist value in
+                     let value, hist = prepare_hash prev_hist value in
                      ((false, hist), {hist; value}) )
         in
-        (* TODO check if any changes have been made then update relevant items in other_nodes_state *)
-        _
-  (* TODO forward all rep msgs to replica *)
+        let log = ex.@(t @> pro @> local_log) in
+        (* This is the point in the log after which is undefined *)
+        (* Hence if the log matched a remote before then it should match after *)
+        let match_upto =
+          combined_log_entries |> Iter.of_seq |> zip_from ~start
+          |> IterLabels.fold ~init:None ~f:(fun match_upto (idx, le) ->
+                 match match_upto with
+                 (* matching case*)
+                 | None when le.hist = get_hist idx log ->
+                     None
+                 (* Logs have diverged *)
+                 | None ->
+                     Log.cut_after log (idx - 1) ;
+                     Log.set log idx le ;
+                     Some (idx - 1)
+                 | Some _ ->
+                     Log.set log idx le ; match_upto )
+        in
+        A.map
+          (t @> pro @> other_nodes)
+          ()
+          ~f:(fun otm ->
+            IdMap.map
+              (fun {match_commit; matching; sent; conflicted; current_term} ->
+                let matching', sent' =
+                  match match_upto with
+                  | None ->
+                      (matching, sent)
+                  | Some idx ->
+                      let matching' = min matching idx in
+                      (matching', min sent matching')
+                in
+                { match_commit
+                ; current_term
+                ; conflicted
+                ; matching= matching'
+                ; sent= sent' } )
+              otm )
 end
