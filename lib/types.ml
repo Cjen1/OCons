@@ -115,7 +115,7 @@ type log_index = int [@@deriving bin_io, compare]
 
 type term = int [@@deriving compare, compare, bin_io]
 
-type log_entry = {command: command; term: term} [@@deriving compare]
+type log_entry = {command: command; term: term} [@@deriving accessors, compare]
 
 let log_entry_pp ppf v =
   Fmt.pf ppf "{command: %a; term : %d}" Command.pp v.command v.term

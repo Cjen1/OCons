@@ -7,7 +7,7 @@ open! Paxos.Types
 open! Impl
 open Ocons_core.Consensus_intf
 
-let action_pp = action_pp ~pp_msg:message_pp
+let action_pp = action_pp ~pp_msg:PP.message_pp
 
 let create = create
 
@@ -22,7 +22,7 @@ let%expect_test "transit_follower" =
   let t', actions =
     Imp.run_side_effects (fun () -> Impl.transit_follower 10) t
   in
-  Fmt.pr "state: %a\n" node_state_pp t'.node_state ;
+  Fmt.pr "state: %a\n" PP.node_state_pp t'.node_state ;
   Fmt.pr "term: %d\n" t'.current_term ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
@@ -37,11 +37,11 @@ let%expect_test "transit_follower" =
 let%expect_test "transit_candidate" =
   reset_make_command_state () ;
   let t = create (c3 0) in
-  Fmt.pr "t0: %a\n" t_pp t ;
+  Fmt.pr "t0: %a\n" PP.t_pp t ;
   [%expect
     {| t0: {log: []; commit_index:-1; current_term: 0; node_state:Follower(5)} |}] ;
   let t', actions = Imp.run_side_effects Impl.transit_candidate t in
-  Fmt.pr "t': %a\n" t_pp t' ;
+  Fmt.pr "t': %a\n" PP.t_pp t' ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -52,7 +52,7 @@ let%expect_test "transit_candidate" =
     []}, timeout:0}}
     actions: [Broadcast(RequestVote {term:3; leader_commit:-1})] |}] ;
   let t', actions = Imp.run_side_effects Impl.transit_candidate t' in
-  Fmt.pr "t': %a\n" t_pp t' ;
+  Fmt.pr "t': %a\n" PP.t_pp t' ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -68,7 +68,7 @@ let%expect_test "transit_leader" =
   let t = create (c3 0) in
   let t', _ = Imp.run_side_effects Impl.transit_candidate t in
   let t', actions = Imp.run_side_effects Impl.transit_leader t' in
-  Fmt.pr "t': %a\n" t_pp t' ;
+  Fmt.pr "t': %a\n" PP.t_pp t' ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -89,7 +89,7 @@ let%expect_test "request vote from higher" =
   let rv = RequestVote {term= 10; leader_commit= -1} in
   (* from follower *)
   let t', actions = Impl.advance t (Recv (rv, 2)) in
-  Fmt.pr "t': %a\n" t_pp t' ;
+  Fmt.pr "t': %a\n" PP.t_pp t' ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -103,7 +103,7 @@ let%expect_test "request vote from higher" =
   (* from candidate *)
   let t', _ = Imp.run_side_effects Impl.transit_candidate t in
   let t', actions = Impl.advance t' (Recv (rv, 2)) in
-  Fmt.pr "t': %a\n" t_pp t' ;
+  Fmt.pr "t': %a\n" PP.t_pp t' ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -119,7 +119,7 @@ let%expect_test "request vote from higher" =
   let t', _ = Imp.run_side_effects Impl.transit_candidate t in
   let t', _ = Imp.run_side_effects Impl.transit_leader t' in
   let t', actions = Impl.advance t' (Recv (rv, 2)) in
-  Fmt.pr "t': %a\n" t_pp t' ;
+  Fmt.pr "t': %a\n" PP.t_pp t' ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -134,7 +134,7 @@ let%expect_test "request vote from higher" =
      []})] |}]
 
 let pp_res t actions =
-  Fmt.pr "t: %a\n" t_pp t ;
+  Fmt.pr "t: %a\n" PP.t_pp t ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions
@@ -149,12 +149,12 @@ let%expect_test "Loop" =
   let t, _ = Impl.advance t Tick in
   let t, _ = Impl.advance t Tick in
   let t, _ = Impl.advance t Tick in
-  Fmt.pr "node_state: %a\n" node_state_pp (A.get node_state t) ;
+  Fmt.pr "node_state: %a\n" PP.node_state_pp (A.get node_state t) ;
   [%expect {|
     +Follower for term 10
     node_state: Follower(4) |}] ;
   let t, actions = Impl.advance t Tick in
-  Fmt.pr "node_state: %a\n" t_pp t ;
+  Fmt.pr "node_state: %a\n" PP.t_pp t ;
   [%expect
     {|
     +Candidate for term 12
@@ -201,7 +201,7 @@ let%expect_test "Loop" =
   let t', actions =
     Imp.run_side_effects (fun () -> Impl.resolve_event (Recv (rvr [], 2))) t
   in
-  Fmt.pr "t: %a\n" t_pp t' ;
+  Fmt.pr "t: %a\n" PP.t_pp t' ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -211,7 +211,7 @@ let%expect_test "Loop" =
     [{1, -1}, {2, -1}]; rep_sent:[{1, -1}, {2, -1}]}
     actions: [] |}] ;
   let t, actions = Impl.advance t (Recv (rvr [], 2)) in
-  Fmt.pr "t: %a\n" t_pp t ;
+  Fmt.pr "t: %a\n" PP.t_pp t ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -223,7 +223,7 @@ let%expect_test "Loop" =
   (* ------------ Add m1 ----------------- *)
   let m1 = C.Types.(make_command (Read "m1")) in
   let t, actions = Impl.advance t (Commands (m1 |> Iter.singleton)) in
-  Fmt.pr "t: %a\n" t_pp t ;
+  Fmt.pr "t: %a\n" PP.t_pp t ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -244,7 +244,7 @@ let%expect_test "Loop" =
       ; entries= (C.Types.{command= m1; term= 12} |> Iter.singleton, 1) }
   in
   let t1, a1 = Impl.advance t1 (Recv (aem1, 0)) in
-  Fmt.pr "t1: %a\n" t_pp t1 ;
+  Fmt.pr "t1: %a\n" PP.t_pp t1 ;
   Fmt.pr "a1: %a\n" Fmt.(brackets @@ list ~sep:(const string "\n") action_pp) a1 ;
   [%expect
     {|
@@ -252,7 +252,7 @@ let%expect_test "Loop" =
     a1:
     [Send(0, AppendEntriesResponse {term: 12; success: Ok: 0})] |}] ;
   let t2, a2 = Impl.advance t2 (Recv (aem1, 0)) in
-  Fmt.pr "t2: %a\n" t_pp t2 ;
+  Fmt.pr "t2: %a\n" PP.t_pp t2 ;
   Fmt.pr "a2: %a\n" Fmt.(brackets @@ list ~sep:(const string "\n") action_pp) a2 ;
   [%expect
     {|
@@ -262,7 +262,7 @@ let%expect_test "Loop" =
   let aer = AppendEntriesResponse {term= 12; success= Ok 0; trace= -1.} in
   let t, _ = Impl.advance t (Recv (aer, 1)) in
   let t, actions = Impl.advance t (Recv (aer, 2)) in
-  Fmt.pr "t: %a\n" t_pp t ;
+  Fmt.pr "t: %a\n" PP.t_pp t ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -274,7 +274,7 @@ let%expect_test "Loop" =
   (* ------------ Add m2 ----------------- *)
   let m2 = C.Types.(make_command (Read "m2")) in
   let t, actions = Impl.advance t (Commands (m2 |> Iter.singleton)) in
-  Fmt.pr "t: %a\n" t_pp t ;
+  Fmt.pr "t: %a\n" PP.t_pp t ;
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
@@ -366,7 +366,7 @@ let%expect_test "Loop" =
   let m5 = C.Types.(make_command (Read "m5")) in
   let m6 = C.Types.(make_command (Read "m6")) in
   let t1, _ = Impl.advance t1 (Commands (Iter.of_list [m5; m6])) in
-  Fmt.pr "t: %a\n" t_pp t1 ;
+  Fmt.pr "t: %a\n" PP.t_pp t1 ;
   [%expect
     {|
     t: {log: [{command: Command(Read m1, 1); term : 13},{command: Command(Read m4, 3); term : 13},{command: Command(Read m5, 4); term : 13},{command: Command(Read m6, 5); term : 13}]; commit_index:1; current_term: 13; node_state:Leader{heartbeat:0; rep_ackd:
@@ -417,7 +417,7 @@ let%expect_test "Loop" =
   (* ------------ Add m7 ----------------- *)
   let m7 = C.Types.(make_command (Read "m7")) in
   let t2, _ = Impl.advance t2 (Commands (Iter.singleton m7)) in
-  Fmt.pr "t: %a\n" t_pp t2 ;
+  Fmt.pr "t: %a\n" PP.t_pp t2 ;
   [%expect
     {|
     t: {log: [{command: Command(Read m1, 1); term : 14},{command: Command(Read m4, 3); term : 14},{command: Command(Read m7, 6); term : 14}]; commit_index:-1; current_term: 14; node_state:Leader{heartbeat:0; rep_ackd:
@@ -426,15 +426,15 @@ let%expect_test "Loop" =
   let t, _ =
     Impl.advance t (Recv (RequestVote {term= 100; leader_commit= -1}, 1))
   in
-  Fmt.pr "t0:\n%a\n\n" t_pp t ;
+  Fmt.pr "t0:\n%a\n\n" PP.t_pp t ;
   let t1, _ =
     Impl.advance t1 (Recv (RequestVote {term= 100; leader_commit= -1}, 2))
   in
-  Fmt.pr "t1:\n%a\n\n" t_pp t1 ;
+  Fmt.pr "t1:\n%a\n\n" PP.t_pp t1 ;
   let t2, _ =
     Impl.advance t2 (Recv (RequestVote {term= 100; leader_commit= -1}, 2))
   in
-  Fmt.pr "t2:\n%a\n" t_pp t2 ;
+  Fmt.pr "t2:\n%a\n" PP.t_pp t2 ;
   [%expect
     {|
     +Follower for term 100

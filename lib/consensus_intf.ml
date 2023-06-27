@@ -41,8 +41,6 @@ module type S = sig
   (** Incomming and outgoing messages should be symmetrical *)
   type message
 
-  val message_pp : message Fmt.t
-
   val parse : Eio.Buf_read.t -> message
   (** Reads the message from the buf_read*)
 
@@ -51,11 +49,7 @@ module type S = sig
 
   type config
 
-  val config_pp : config Fmt.t
-
   type t
-
-  val t_pp : t Fmt.t
 
   val create_node : node_id -> config -> t
   (** [create_node config] returns the initialised state machine. *)
@@ -68,4 +62,12 @@ module type S = sig
   (* The number of entries which can be added *)
 
   val should_ack_clients : t -> bool
+
+  module PP : sig
+    val t_pp : t Fmt.t
+
+    val message_pp : message Fmt.t
+
+    val config_pp : config Fmt.t
+  end
 end

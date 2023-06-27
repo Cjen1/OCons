@@ -19,19 +19,18 @@ end
 module type CTypes = sig
   type t
 
-  val t_pp : t Fmt.t
-
   type message
 
-  val message_pp : message Fmt.t
-
-  val log :
-    ( 'a -> log_entry Utils.SegmentLog.t -> log_entry Utils.SegmentLog.t
-    , 'a -> t -> t
-    , [< A.field] )
-    A.General.t
+  val command_from_index : log_index ->
+    ( 'a -> command -> command, 'a -> t -> t, [< A.getter]) A.General.t
 
   val commit_index : ('a -> term -> term, 'a -> t -> t, [< A.field]) A.General.t
+
+  module PP : sig
+    val message_pp : message Fmt.t
+
+    val t_pp : t Fmt.t
+  end
 end
 
 module type ActionFunc = functor (C : CTypes) ->
@@ -74,8 +73,8 @@ module ImperativeActions (C : CTypes) :
     in
     let make_command_iter upto =
       (* make an iter from lowest un-committed command upwards *)
-      Log.iter (!s |> Option.get).t.@(log) ~lo:(init_commit_index + 1) ~hi:upto
-      |> Iter.map (fun l -> l.command)
+      Iter.int_range ~start:(init_commit_index + 1) ~stop:upto
+      |> Iter.map ( fun idx -> (!s |> Option.get).t.@(command_from_index idx))
     in
     append_l
       [ of_list (!s |> Option.get).action_acc

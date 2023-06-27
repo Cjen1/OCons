@@ -48,32 +48,39 @@ module Types = struct
     ; current_leader: node_id option }
   [@@deriving accessors]
 
-  let node_state_pp : node_state Fmt.t =
-   fun ppf v ->
-    let open Fmt in
-    match v with
-    | Follower {timeout} ->
-        pf ppf "Follower{timeout:%d}" timeout
-    | Candidate {quorum; timeout} ->
-        pf ppf "Candidate{quorum:%a, timeout:%d}" Quorum.pp quorum timeout
-    | Leader {rep_ackd; rep_sent; heartbeat} ->
-        let format_rep_map : int IntMap.t Fmt.t =
-         fun ppf v ->
-          let open Fmt in
-          let elts = v |> IntMap.bindings in
-          pf ppf "%a"
-            (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
-            elts
-        in
-        pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
-          format_rep_map rep_ackd format_rep_map rep_sent
+  let command_from_index idx =
+    log @> [%accessor A.getter (function s -> Log.get s idx)] @> command
 
-  let t_pp : t Fmt.t =
-   fun ppf t ->
-    Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
-      Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
-      (t.log |> Log.iter |> Iter.to_list)
-      t.commit_index t.current_term node_state_pp t.node_state
+  module PP = struct
+    include PP
+
+    let node_state_pp : node_state Fmt.t =
+     fun ppf v ->
+      let open Fmt in
+      match v with
+      | Follower {timeout} ->
+          pf ppf "Follower{timeout:%d}" timeout
+      | Candidate {quorum; timeout} ->
+          pf ppf "Candidate{quorum:%a, timeout:%d}" Quorum.pp quorum timeout
+      | Leader {rep_ackd; rep_sent; heartbeat} ->
+          let format_rep_map : int IntMap.t Fmt.t =
+           fun ppf v ->
+            let open Fmt in
+            let elts = v |> IntMap.bindings in
+            pf ppf "%a"
+              (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
+              elts
+          in
+          pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
+            format_rep_map rep_ackd format_rep_map rep_sent
+
+    let t_pp : t Fmt.t =
+     fun ppf t ->
+      Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
+        Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
+        (t.log |> Log.iter |> Iter.to_list)
+        t.commit_index t.current_term node_state_pp t.node_state
+  end
 end
 
 module Make
@@ -246,7 +253,7 @@ struct
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        Utils.dtraceln "Failed to match\n%a" t_pp ex.@(t)
+        Utils.dtraceln "Failed to match\n%a" PP.t_pp ex.@(t)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _
       when request_vote_valid (RequestVote m) ->
@@ -278,7 +285,7 @@ struct
                %a"
               rooted_at_start
               (matching_index_and_term ())
-              t_pp ct ;
+              PP.t_pp ct ;
             send lid
             @@ AppendEntriesResponse
                  { term= ct.current_term

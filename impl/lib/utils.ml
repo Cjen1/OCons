@@ -187,6 +187,9 @@ module SegmentLog = struct
 
   let create ?(segmentsize = 4096) init =
     {segmentsize; segments= []; allocated= -1; vhi= -1; init}
+
+  let map t i f =
+    set t i (f (get t i))
 end
 
 module CIDHashtbl = Hashtbl.Make (struct
@@ -221,3 +224,10 @@ module Quorum = struct
       Fmt.(brackets @@ list ~sep:(const string ", ") int)
       (t.elts |> IntMap.bindings |> List.map fst)
 end
+
+type comp = GT | EQ | LT
+
+let comp cmp a b =
+  let r = cmp a b in
+  if r < 0 then LT else if r > 0 then GT else EQ
+
