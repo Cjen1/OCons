@@ -108,20 +108,18 @@ module SegmentLog = struct
     ; init: 'a }
 
   let allocate t i =
-    let already_allocd = i < (t.allocated + 1) * t.segmentsize in
-    let within_one_alloc = i < (t.allocated + 2) * t.segmentsize in
-    match () with
-    | () when already_allocd ->
-        ()
-    | () when within_one_alloc ->
-        t.segments <- Array.make t.segmentsize t.init :: t.segments ;
-        t.allocated <- t.allocated + 1
-    | _ ->
-        raise
-          (Invalid_argument
-             (Fmt.str
-                "Could not allocate new segment for %d, already allocated %d" i
-                t.allocated ) )
+    let rec ensure_allocated i =
+      let already_allocd () = i < (t.allocated + 1) * t.segmentsize in
+      match () with
+      | () when already_allocd () ->
+          ()
+      | () ->
+          t.segments <- Array.make t.segmentsize (t.init) :: t.segments ;
+          t.allocated <- t.allocated + 1;
+          ensure_allocated i
+    in 
+    ensure_allocated i;
+    if t.vhi < i then t.vhi <- i
 
   let check t i =
     match () with
@@ -177,7 +175,7 @@ module SegmentLog = struct
 
   let add t v = set t (t.vhi + 1) v
 
-  let mem t i = i <= t.vhi
+  let mem t i = 0 <= i && i <= t.vhi
 
   let highest t = t.vhi
 
@@ -188,8 +186,7 @@ module SegmentLog = struct
   let create ?(segmentsize = 4096) init =
     {segmentsize; segments= []; allocated= -1; vhi= -1; init}
 
-  let map t i f =
-    set t i (f (get t i))
+  let map t i f = set t i (f (get t i))
 end
 
 module CIDHashtbl = Hashtbl.Make (struct
@@ -231,3 +228,4 @@ let comp cmp a b =
   let r = cmp a b in
   if r < 0 then LT else if r > 0 then GT else EQ
 
+let singleton_iter = [%accessor Accessor.getter (fun s -> Iter.singleton s)]

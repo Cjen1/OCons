@@ -62,7 +62,7 @@ module Types = struct
   [@@deriving accessors]
 
   let command_from_index idx =
-    log @> [%accessor A.getter (function s -> Log.get s idx)] @> command
+    log @> [%accessor A.getter (function s -> Log.get s idx)] @> command @> singleton_iter
 
   module PP = struct
     let message_pp ppf v =
@@ -183,7 +183,7 @@ struct
     broadcast @@ RequestVote {term; lastIndex; lastTerm; prevote= is_prevote}
 
   let transit_follower ?voted_for term =
-    Utils.traceln "Follower for term %d" term ;
+    traceln "Follower for term %d" term ;
     ex.@(t @> node_state) <-
       Follower
         { timeout= ex.@(t @> config @> election_timeout)
@@ -198,7 +198,7 @@ struct
     in
     let new_term = ex.@(t @> current_term) + 1 in
     let num_nodes = ex.@(t @> config @> num_nodes) in
-    Utils.traceln "Candidate for term %d" new_term ;
+    traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     let threshold = (num_nodes / 2) + 1 - 1 in
     ex.@(t @> node_state) <-
@@ -210,7 +210,7 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     | Candidate _ ->
-        Utils.traceln "Leader for term %d" ct.current_term ;
+        traceln "Leader for term %d" ct.current_term ;
         let rep_ackd =
           ct.config.other_nodes |> List.to_seq
           |> Seq.map (fun i -> (i, -1))
@@ -316,7 +316,7 @@ struct
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        Utils.dtraceln "Failed to match\n%a" PP.t_pp ex.@(t)
+        dtraceln "Failed to match\n%a" PP.t_pp ex.@(t)
     (* All nodes must be able to receive prevote *)
     | Recv ((RequestVote {prevote= true; term; _} as m), cid), _
       when term > ex.@(t @> current_term) && request_vote_valid m ->
@@ -350,7 +350,7 @@ struct
         | false ->
             (* Reply with the highest index known not to be replicated *)
             (* This will be the prev_log_index of the next msg *)
-            Utils.dtraceln
+            dtraceln
               "Failed to match\n\
                rooted_at_start(%b), matching_index_and_term(%b):\n\
                %a"

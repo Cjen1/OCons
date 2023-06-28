@@ -14,6 +14,14 @@ module Types = struct
   type config = {node_id: node_id; replica_ids: node_id list; quorum_size: int}
   [@@deriving accessors]
 
+  let make_config ~node_id ~replica_ids : config =
+    let floor f = f |> Float.floor |> Float.to_int in
+    assert (List.mem node_id replica_ids) ;
+    let cluster_size = List.length replica_ids |> Float.of_int in
+    let quorum_size = floor (2. *. cluster_size /. 3.) + 1 in
+    assert (3 * quorum_size > 2 * Float.to_int cluster_size) ;
+    {node_id; replica_ids; quorum_size}
+
   type sync_state = {idx: log_index; value: value; term: term}
   [@@deriving accessors, compare]
 
@@ -23,8 +31,7 @@ module Types = struct
   type message = Sync of sync_state | SyncResp of sync_resp_state
   [@@deriving accessors, compare]
 
-  type rep_log_entry =
-    {mutable term: term; mutable vvalue: value; mutable vterm: term}
+  type rep_log_entry = {term: term; vvalue: value; vterm: term}
   [@@deriving accessors]
 
   type prop_sm =
@@ -36,16 +43,21 @@ module Types = struct
   type t =
     { rep_log: rep_log_entry SegmentLog.t
     ; prop_log: prop_sm SegmentLog.t
+    ; commit_index: log_index
     ; config: config }
   [@@deriving accessors]
 
   let command_from_index idx =
-    prop_log @> [%accessor A.getter (function s -> Log.get s idx)] @> [%accessor A.getter (function Committed {value} | Undecided {value; _} -> value)]
+    prop_log
+    @> [%accessor A.getter (function s -> Log.get s idx)]
+    @> [%accessor
+         A.getter (function Committed {value} | Undecided {value; _} ->
+             Iter.of_list value )]
 
   module PP = struct
     open Fmt
 
-    let value_pp : value Fmt.t = list ~sep:comma Command.pp
+    let value_pp : value Fmt.t = brackets @@ list ~sep:comma Command.pp
 
     let config_pp : config Fmt.t =
       record
@@ -53,7 +65,7 @@ module Types = struct
         ; field "quorum_side" (fun c -> c.quorum_size) int
         ; field "replica_ids"
             (fun c -> c.replica_ids)
-            (braces @@ list ~sep:comma int) ]
+            (brackets @@ list ~sep:comma int) ]
 
     let sync_resp_state_pp =
       record
@@ -61,6 +73,18 @@ module Types = struct
         ; field "term" (fun (m : sync_resp_state) -> m.term) int
         ; field "vterm" (fun (m : sync_resp_state) -> m.vterm) int
         ; field "vvalue" (fun (m : sync_resp_state) -> m.vvalue) value_pp ]
+
+    let option ?none:(pp_none = nop) pp_v ppf = function
+      | None ->
+          pp_none ppf ()
+      | Some v ->
+          pp_v ppf v
+
+    let result ~ok ~error ppf = function
+      | Ok v ->
+          ok ppf v
+      | Error e ->
+          error ppf e
 
     let message_pp : message Fmt.t =
      fun ppf v ->
@@ -73,13 +97,14 @@ module Types = struct
                ; field "value" (fun (m : sync_state) -> m.value) value_pp ] )
             m
       | SyncResp m ->
-          pf ppf "Sync(%a)" sync_resp_state_pp m
+          pf ppf "SyncResp(%a)" sync_resp_state_pp m
 
     let rep_log_entry_pp =
-      record
-        [ field "term" (fun (le : rep_log_entry) -> le.term) int
-        ; field "vterm" (fun (le : rep_log_entry) -> le.vterm) int
-        ; field "vvalue" (fun (le : rep_log_entry) -> le.vvalue) value_pp ]
+      braces
+      @@ record
+           [ field "term" (fun (le : rep_log_entry) -> le.term) int
+           ; field "vterm" (fun (le : rep_log_entry) -> le.vterm) int
+           ; field "vvalue" (fun (le : rep_log_entry) -> le.vvalue) value_pp ]
 
     let prop_sm_pp ppf v =
       match v with
@@ -95,18 +120,20 @@ module Types = struct
                ; field "value" (fun _ -> value) value_pp
                ; field "votes"
                    (fun _ -> IdMap.bindings votes)
-                   (list ~sep:semi @@ parens @@ pair int sync_resp_state_pp) ] )
+                   ( brackets @@ list ~sep:semi @@ parens
+                   @@ pair ~sep:(Fmt.any ":@ ") int sync_resp_state_pp ) ] )
             ()
 
     let t_pp =
       record
         [ field "config" (fun t -> t.config) config_pp
+        ; field "commit_index" (fun t -> t.commit_index) int
         ; field "rep_log"
             (fun t -> Log.iter t.rep_log |> Iter.to_list)
-            (list rep_log_entry_pp)
+            (brackets @@ list rep_log_entry_pp)
         ; field "prop_log"
             (fun t -> Log.iter t.prop_log |> Iter.to_list)
-            (list prop_sm_pp) ]
+            (brackets @@ list prop_sm_pp) ]
   end
 end
 
@@ -125,36 +152,38 @@ struct
 
   let get_msg_idx = function Sync {idx; _} | SyncResp {idx; _} -> idx
 
-  let send_sync_resp dst idx =
+  let send_sync_resp dst idx conflict =
     let le = ex.@(t @> rep_log @> log_idx idx) in
-    send dst @@ SyncResp {idx; term= le.term; vvalue= le.vvalue; vterm= le.vterm}
+    let msg =
+      SyncResp {idx; term= le.term; vvalue= le.vvalue; vterm= le.vterm}
+    in
+    if conflict then broadcast msg else send dst msg
 
   let recv_sync_msg src msg =
     let idx = get_msg_idx msg in
+    let log = ex.@(t @> rep_log) in
+    if not @@ Log.mem log idx then Log.allocate log idx ;
     let le = ex.@(t @> rep_log @> log_idx idx) in
     match (msg, comp Int.compare (get_msg_term msg) le.term) with
     (* New ballot *)
     | Sync {idx; term; value}, GT ->
-        le.term <- term ;
-        le.vvalue <- value ;
-        le.vterm <- term ;
-        send_sync_resp src idx
+        Log.set log idx {term; vvalue= value; vterm= term} ;
+        send_sync_resp src idx false
     (* New ballot after conflict *)
     | Sync {term; value; _}, EQ when le.vterm < term ->
-        le.vvalue <- value ;
-        le.vterm <- term ;
-        send_sync_resp src idx
+        Log.set log idx {term= le.term; vvalue= value; vterm= term} ;
+        send_sync_resp src idx false
     (* Revote for existing ballot *)
     | Sync {term; value; _}, EQ
       when le.vterm = term && [%compare.equal: value] value le.vvalue ->
-        send_sync_resp src idx
+        send_sync_resp src idx false
     (* Conflict for existing ballot (given above) *)
     | Sync _, EQ ->
-        le.term <- le.term + 1 ;
-        send_sync_resp src idx
+        Log.set log idx {le with term= le.term + 1} ;
+        send_sync_resp src idx true
     (* Nack for old ballot *)
     | Sync _, LT ->
-        send_sync_resp src idx
+        send_sync_resp src idx false
     | SyncResp _, _ ->
         assert false
 
@@ -281,12 +310,21 @@ struct
         sm
     | Undecided s ->
         broadcast @@ Sync {idx; term= s.term; value= s.value} ;
-        sm
+        Undecided {s with sent= true}
 
-  let advance_prop_sm idx src msg sm =
-    sm |> handle_msg src msg |> check_commit |> check_conflict |> check_send idx
+  let update_commit_index () =
+    let is_commit = function Committed _ -> true | _ -> false in
+    let rec lowest_non_commit i =
+      if
+        Log.mem ex.@(t @> prop_log) i
+        && Log.get ex.@(t @> prop_log) i |> is_commit
+      then lowest_non_commit (i + 1)
+      else i
+    in
+    let highest_commit = lowest_non_commit (ex.@(t @> commit_index) + 1) - 1 in
+    ex.@(t @> commit_index) <- highest_commit
 
-  let advance_raw (event : message event) =
+  let handle_event (event : message event) =
     match event with
     | Tick ->
         ()
@@ -294,10 +332,9 @@ struct
         recv_sync_msg src m
     | Recv ((SyncResp _ as m), src) ->
         let idx = get_msg_idx m in
-        Log.map
-          ex.@(t @> prop_log)
-          idx
-          (fun sm ->
+        let log = ex.@(t @> prop_log) in
+        Log.allocate log idx ;
+        Log.map log idx (fun sm ->
             sm |> handle_msg src m |> check_commit |> check_conflict
             |> check_send idx )
     | Commands ci ->
@@ -314,37 +351,54 @@ struct
            Log.map
              ex.@(t @> prop_log)
              idx
-             (fun sm -> sm |> check_commit |> check_conflict |> check_send idx)
+             (fun sm -> sm |> check_commit |> check_send idx)
 
-  let rec do_until_const t e acc_acts =
-    let t, acts = run_side_effects (fun () -> advance_raw e) t in
-    let acts_iter = Iter.of_list acts in
-    let local_msgs =
-      acts_iter
-      |> Iter.filter_map (function
-           | Broadcast m ->
-               Some m
-           | Send (dst, m) when dst = t.config.node_id ->
-               Some m
-           | _ ->
-               None )
-      |> Iter.map (fun m -> Recv (m, t.config.node_id))
+  let advance_raw (event : message event) =
+    handle_event event ; update_commit_index ()
+
+  let do_until_const t e =
+    let run t e =
+      let t, acts = run_side_effects (fun () -> advance_raw e) t in
+      let acts_iter = Iter.of_list acts in
+      let local_msgs =
+        acts_iter
+        |> Iter.filter_map (function
+             | Broadcast m ->
+                 Some m
+             | Send (dst, m) when dst = t.config.node_id ->
+                 Some m
+             | _ ->
+                 None )
+        |> Iter.map (fun m -> Recv (m, t.config.node_id))
+      in
+      let non_local_msgs =
+        acts_iter
+        |> Iter.filter (function
+             | Send (dst, _) when dst = t.config.node_id ->
+                 false
+             | _ ->
+                 true )
+      in
+      (t, local_msgs, non_local_msgs)
     in
-    match () with
-    | () when Iter.is_empty local_msgs ->
-        (t, Iter.append acc_acts acts_iter)
-    | _ ->
-        let other_acts =
-          acts_iter
-          |> Iter.filter (function
-               | Send (dst, _) when dst = t.config.node_id ->
-                   false
-               | _ ->
-                   true )
-        in
-        IterLabels.fold local_msgs
-          ~init:(t, Iter.append other_acts acc_acts)
-          ~f:(fun (t, acc) e -> do_until_const t e acc)
+    let rec aux t eq acts =
+      match Core.Fqueue.dequeue eq with
+      | None ->
+          (t, acts)
+      | Some (e, eq) ->
+          let t, l, nl = run t e in
+          let eq = Iter.fold Core.Fqueue.enqueue eq l in
+          aux t eq (Iter.append acts nl)
+    in
+    aux t (Core.Fqueue.singleton e) Iter.empty
 
-  let advance t e = do_until_const t e Iter.empty
+  let advance t e = do_until_const t e
+
+  let create config =
+    { config
+    ; commit_index= -1
+    ; rep_log= SegmentLog.create {term= 0; vvalue= []; vterm= -1}
+    ; prop_log=
+        SegmentLog.create
+          (Undecided {term= 0; value= []; votes= IdMap.empty; sent= false}) }
 end

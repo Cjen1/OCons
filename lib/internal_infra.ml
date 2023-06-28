@@ -48,10 +48,10 @@ module Make (C : Consensus_intf.S) = struct
     let f : C.message action -> unit = function
       | Send (dst, msg) ->
           CMgr.send_blit t.cmgr dst (C.serialise msg) ;
-          dtraceln "Sent to %d: %a" dst C.message_pp msg
+          dtraceln "Sent to %d: %a" dst C.PP.message_pp msg
       | Broadcast msg ->
           CMgr.broadcast_blit t.cmgr (C.serialise msg) ;
-          dtraceln "Broadcast %a" C.message_pp msg
+          dtraceln "Broadcast %a" C.PP.message_pp msg
       | CommitCommands citer ->
           citer (fun cmd ->
               let res = apply t cmd in
@@ -69,7 +69,7 @@ module Make (C : Consensus_intf.S) = struct
   (** If any msgs to internal port exist then read and apply them *)
   let internal_msgs t =
     let iter_msg src msg =
-      dtraceln "Receiving msg from %d: %a" src C.message_pp msg ;
+      dtraceln "Receiving msg from %d: %a" src C.PP.message_pp msg ;
       let tcons, actions = C.advance t.cons (Recv (msg, src)) in
       t.cons <- tcons ;
       handle_actions t actions
@@ -265,8 +265,6 @@ module Test = struct
 
     let should_ack_clients _ = true
 
-    let message_pp = Fmt.string
-
     let parse buf =
       let r = Eio.Buf_read.line buf in
       dtraceln "read %s" r ; r
@@ -277,11 +275,15 @@ module Test = struct
 
     type config = Core.Unit.t [@@deriving sexp_of]
 
-    let config_pp : config Fmt.t = Fmt.any "config"
-
     type t = {arr: command option Array.t; mutable len: int}
 
-    let t_pp ppf _ = Fmt.pf ppf "T"
+    module PP = struct
+      let message_pp = Fmt.string
+
+      let config_pp : config Fmt.t = Fmt.any "config"
+
+      let t_pp ppf _ = Fmt.pf ppf "T"
+    end
 
     let create_node _ () = {arr= Array.make 10 None; len= 0}
 
