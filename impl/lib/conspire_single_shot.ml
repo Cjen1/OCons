@@ -11,16 +11,20 @@ module Types = struct
 
   let compare_value = List.compare Command.compare
 
-  type config = {node_id: node_id; replica_ids: node_id list; quorum_size: int}
+  type config =
+    { node_id: node_id
+    ; replica_ids: node_id list
+    ; quorum_size: int
+    ; fd_timeout: int }
   [@@deriving accessors]
 
-  let make_config ~node_id ~replica_ids : config =
+  let make_config ~node_id ~replica_ids ~fd_timeout : config =
     let floor f = f |> Float.floor |> Float.to_int in
     assert (List.mem node_id replica_ids) ;
     let cluster_size = List.length replica_ids |> Float.of_int in
     let quorum_size = floor (2. *. cluster_size /. 3.) + 1 in
     assert (3 * quorum_size > 2 * Float.to_int cluster_size) ;
-    {node_id; replica_ids; quorum_size}
+    {node_id; replica_ids; quorum_size; fd_timeout}
 
   type sync_state = {idx: log_index; value: value; term: term}
   [@@deriving accessors, compare]
@@ -28,7 +32,7 @@ module Types = struct
   type sync_resp_state = {idx: log_index; vvalue: value; vterm: term; term: term}
   [@@deriving accessors, compare]
 
-  type message = Sync of sync_state | SyncResp of sync_resp_state
+  type message = Sync of sync_state | SyncResp of sync_resp_state | Heartbeat
   [@@deriving accessors, compare]
 
   type rep_log_entry = {term: term; vvalue: value; vterm: term}
@@ -40,11 +44,14 @@ module Types = struct
     | Committed of {value: value}
   [@@deriving accessors]
 
+  type fd_sm = {state: int IdMap.t} [@@deriving accessors]
+
   type t =
     { rep_log: rep_log_entry SegmentLog.t
     ; prop_log: prop_sm SegmentLog.t
     ; commit_index: log_index
-    ; config: config }
+    ; config: config
+    ; failure_detector: fd_sm }
   [@@deriving accessors]
 
   let command_from_index idx =
@@ -63,6 +70,7 @@ module Types = struct
       record
         [ field "node_id" (fun c -> c.node_id) int
         ; field "quorum_side" (fun c -> c.quorum_size) int
+        ; field "fd_timeout" (fun c -> c.fd_timeout) int
         ; field "replica_ids"
             (fun c -> c.replica_ids)
             (brackets @@ list ~sep:comma int) ]
@@ -73,18 +81,6 @@ module Types = struct
         ; field "term" (fun (m : sync_resp_state) -> m.term) int
         ; field "vterm" (fun (m : sync_resp_state) -> m.vterm) int
         ; field "vvalue" (fun (m : sync_resp_state) -> m.vvalue) value_pp ]
-
-    let option ?none:(pp_none = nop) pp_v ppf = function
-      | None ->
-          pp_none ppf ()
-      | Some v ->
-          pp_v ppf v
-
-    let result ~ok ~error ppf = function
-      | Ok v ->
-          ok ppf v
-      | Error e ->
-          error ppf e
 
     let message_pp : message Fmt.t =
      fun ppf v ->
@@ -98,6 +94,8 @@ module Types = struct
             m
       | SyncResp m ->
           pf ppf "SyncResp(%a)" sync_resp_state_pp m
+      | Heartbeat ->
+          pf ppf "Heartbeat"
 
     let rep_log_entry_pp =
       braces
@@ -124,6 +122,13 @@ module Types = struct
                    @@ pair ~sep:(Fmt.any ":@ ") int sync_resp_state_pp ) ] )
             ()
 
+    let fd_sm_pp =
+      record
+        [ field "state"
+            (fun v -> IdMap.bindings v.state)
+            ( brackets @@ list ~sep:semi @@ parens
+            @@ pair ~sep:(Fmt.any ":@ ") int int ) ]
+
     let t_pp =
       record
         [ field "config" (fun t -> t.config) config_pp
@@ -133,7 +138,8 @@ module Types = struct
             (brackets @@ list rep_log_entry_pp)
         ; field "prop_log"
             (fun t -> Log.iter t.prop_log |> Iter.to_list)
-            (brackets @@ list prop_sm_pp) ]
+            (brackets @@ list prop_sm_pp)
+        ; field "fd" (fun t -> t.failure_detector) fd_sm_pp ]
   end
 end
 
@@ -148,9 +154,17 @@ struct
 
   let log_idx idx = [%accessor Accessor.getter (fun at -> Log.get at idx)]
 
-  let get_msg_term = function Sync {term; _} | SyncResp {term; _} -> term
+  let get_msg_term = function
+    | Sync {term; _} | SyncResp {term; _} ->
+        term
+    | Heartbeat ->
+        assert false
 
-  let get_msg_idx = function Sync {idx; _} | SyncResp {idx; _} -> idx
+  let get_msg_idx = function
+    | Sync {idx; _} | SyncResp {idx; _} ->
+        idx
+    | Heartbeat ->
+        assert false
 
   let send_sync_resp dst idx conflict =
     let le = ex.@(t @> rep_log @> log_idx idx) in
@@ -184,10 +198,21 @@ struct
     (* Nack for old ballot *)
     | Sync _, LT ->
         send_sync_resp src idx false
-    | SyncResp _, _ ->
+    | SyncResp _, _ | Heartbeat, _ ->
         assert false
 
   let handle_msg src msg sm =
+    let add_vote (votes : sync_resp_state IdMap.t) (vote : sync_resp_state) =
+      IdMap.update src
+        (function
+          | None ->
+              Some vote
+          | Some m' when m'.term > vote.term ->
+              Some m'
+          | Some _ ->
+              Some vote )
+        votes
+    in
     match sm with
     | Committed _ ->
         sm
@@ -195,8 +220,8 @@ struct
       match (msg, comp Int.compare (get_msg_term msg) s.term) with
       (* Vote for current value *)
       | SyncResp msg, EQ ->
-          let votes' = IdMap.add src msg s.votes in
-          Undecided {s with votes= votes'}
+          let votes = add_vote s.votes msg in
+          Undecided {s with votes}
       (* Conflict vote for next term*)
       | SyncResp msg, GT ->
           let vote =
@@ -204,13 +229,13 @@ struct
             |> Option.fold ~none:msg ~some:(fun (old_msg : sync_resp_state) ->
                    if old_msg.term < msg.term then msg else old_msg )
           in
-          let votes' = IdMap.add src vote s.votes in
-          Undecided {s with votes= votes'}
+          let votes = add_vote s.votes vote in
+          Undecided {s with votes}
       (* Conflict for for much higher term => missing msgs *)
       (* Old msg => just ignore *)
       | SyncResp _, LT ->
           sm
-      | Sync _, _ ->
+      | Sync _, _ | Heartbeat, _ ->
           assert false )
 
   (* TODO use failure detectors to ensure majority *)
@@ -239,7 +264,7 @@ struct
 
   let get_value (votes : (node_id * sync_resp_state) Iter.t) =
     let total_nodes = List.length ex.@(t @> config @> replica_ids) in
-    let missing_votes = total_nodes - ex.@(t @> config @> quorum_size) in
+    let missing_votes = total_nodes - Iter.length votes in
     let max_vterm =
       votes
       |> IterLabels.fold ~init:(-1) ~f:(fun a (_, (b : sync_resp_state)) ->
@@ -299,7 +324,24 @@ struct
           |> Iter.filter (fun ((_, v) : node_id * sync_resp_state) ->
                  v.term = max_term )
         in
-        if valid_quorum (Iter.map fst votes) then
+        let all_live_nodes_vote =
+          let ( => ) a b = (not a) || b in
+          ex.@(t @> config @> replica_ids)
+          |> Iter.of_list
+          |> Iter.for_all (fun src ->
+                 let is_live =
+                   IdMap.find src ex.@(t @> failure_detector @> state) > 0
+                 in
+                 let is_vote =
+                   match IdMap.find_opt src s.votes with
+                   | Some v ->
+                       v.term = max_term
+                   | None ->
+                       false
+                 in
+                 is_live => is_vote )
+        in
+        if all_live_nodes_vote && valid_quorum (Iter.map fst votes) then
           let value = get_value votes in
           Undecided {term= max_term; value; votes= IdMap.empty; sent= false}
         else sm
@@ -324,9 +366,32 @@ struct
     let highest_commit = lowest_non_commit (ex.@(t @> commit_index) + 1) - 1 in
     ex.@(t @> commit_index) <- highest_commit
 
+  let failure_detector_update (event : message event) =
+    match event with
+    | Recv (_, src) ->
+        ex.@(t @> failure_detector @> state) <-
+          IdMap.add src
+            ex.@(t @> config @> fd_timeout)
+            ex.@(t @> failure_detector @> state)
+    | _ ->
+        ()
+
   let handle_event (event : message event) =
+    failure_detector_update event ;
     match event with
     | Tick ->
+        ex.@(t @> failure_detector @> state) <-
+          IdMap.map (fun v -> v - 1) ex.@(t @> failure_detector @> state) ;
+        Iter.int_range
+          ~start:(ex.@(t @> commit_index) + 1)
+          ~stop:(Log.highest ex.@(t @> prop_log))
+        |> Iter.iter (fun idx ->
+               Log.map
+                 ex.@(t @> prop_log)
+                 idx
+                 (fun sm -> sm |> check_conflict |> check_send idx) ) ;
+        broadcast Heartbeat
+    | Recv (Heartbeat, _) ->
         ()
     | Recv ((Sync _ as m), src) ->
         recv_sync_msg src m
@@ -400,5 +465,10 @@ struct
     ; rep_log= SegmentLog.create {term= 0; vvalue= []; vterm= -1}
     ; prop_log=
         SegmentLog.create
-          (Undecided {term= 0; value= []; votes= IdMap.empty; sent= false}) }
+          (Undecided {term= 0; value= []; votes= IdMap.empty; sent= false})
+    ; failure_detector=
+        { state=
+            IdMap.of_list
+              ( config.replica_ids
+              |> List.map (fun id -> (id, config.fd_timeout)) ) } }
 end
