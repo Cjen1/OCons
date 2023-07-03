@@ -2,6 +2,7 @@ open! Ocons_core
 open! Types
 
 module Gen = struct
+  open Ocons_core.Types
   open Crowbar
 
   let op =
@@ -16,8 +17,7 @@ module Gen = struct
     map [op; int; float] (fun op id trace_start ->
         Ocons_core.Types.Command.{op; id; trace_start} )
 
-  let log_entry =
-    map [command; int] (fun command term -> Ocons_core.Types.{command; term})
+  let log_entry = map [command; int] (fun command term -> {command; term})
 
   let entries =
     map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
