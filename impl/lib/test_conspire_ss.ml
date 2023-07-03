@@ -383,8 +383,9 @@ let%expect_test "e2e conflict" =
     Impl.advance t1
       (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c1]}, 3))
   in
-  print t1 actions;
-  [%expect {|
+  print t1 actions ;
+  [%expect
+    {|
     t: config: node_id: 1
                quorum_side: 3
                fd_timeout: 2
@@ -407,7 +408,7 @@ let%expect_test "e2e conflict" =
                          vterm: 0
                          vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 2)]
-    actions: [] |}];
+    actions: [] |}] ;
   let t1, actions =
     Impl.advance t1
       (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c2]}, 2))

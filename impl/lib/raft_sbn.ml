@@ -49,7 +49,9 @@ module Types = struct
   [@@deriving accessors]
 
   let command_from_index idx =
-    log @> [%accessor A.getter (function s -> Log.get s idx)] @> command @> singleton_iter
+    log
+    @> [%accessor A.getter (function s -> Log.get s idx)]
+    @> command @> singleton_iter
 
   module PP = struct
     include PP

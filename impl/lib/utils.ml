@@ -114,11 +114,11 @@ module SegmentLog = struct
       | () when already_allocd () ->
           ()
       | () ->
-          t.segments <- Array.make t.segmentsize (t.init) :: t.segments ;
-          t.allocated <- t.allocated + 1;
+          t.segments <- Array.make t.segmentsize t.init :: t.segments ;
+          t.allocated <- t.allocated + 1 ;
           ensure_allocated i
-    in 
-    ensure_allocated i;
+    in
+    ensure_allocated i ;
     if t.vhi < i then t.vhi <- i
 
   let check t i =

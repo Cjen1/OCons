@@ -15,11 +15,12 @@ module Types = struct
     { node_id: node_id
     ; replica_ids: node_id list
     ; quorum_size: int
-    ; fd_timeout: int 
-    ; max_outstanding : log_index}
+    ; fd_timeout: int
+    ; max_outstanding: log_index }
   [@@deriving accessors]
 
-  let make_config ~node_id ~replica_ids ~fd_timeout ?(max_outstanding = 8192) () : config =
+  let make_config ~node_id ~replica_ids ~fd_timeout ?(max_outstanding = 8192) ()
+      : config =
     let floor f = f |> Float.floor |> Float.to_int in
     assert (List.mem node_id replica_ids) ;
     let cluster_size = List.length replica_ids |> Float.of_int in

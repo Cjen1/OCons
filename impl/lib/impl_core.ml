@@ -8,7 +8,11 @@ module Paxos = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -33,7 +37,11 @@ module Raft = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -58,7 +66,11 @@ module RaftSBN = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -83,7 +95,11 @@ module PrevoteRaft = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -108,7 +124,11 @@ module PrevoteRaftSBN = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 

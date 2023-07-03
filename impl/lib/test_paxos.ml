@@ -17,7 +17,7 @@ let c3 node_id =
   make_config ~node_id ~node_list:[0; 1; 2] ~election_timeout:5 ()
 
 let%expect_test "transit_follower" =
-  Imp.set_is_test true;
+  Imp.set_is_test true ;
   reset_make_command_state () ;
   let t = create c1 in
   let t', actions =
@@ -36,7 +36,7 @@ let%expect_test "transit_follower" =
     actions: [] |}]
 
 let%expect_test "transit_candidate" =
-  Imp.set_is_test true;
+  Imp.set_is_test true ;
   reset_make_command_state () ;
   let t = create (c3 0) in
   Fmt.pr "t0: %a\n" PP.t_pp t ;
@@ -66,7 +66,7 @@ let%expect_test "transit_candidate" =
     actions: [Broadcast(RequestVote {term:6; leader_commit:-1})] |}]
 
 let%expect_test "transit_leader" =
-  Imp.set_is_test true;
+  Imp.set_is_test true ;
   reset_make_command_state () ;
   let t = create (c3 0) in
   let t', _ = Imp.run_side_effects Impl.transit_candidate t in
@@ -87,7 +87,7 @@ let%expect_test "transit_leader" =
                                                                         []})] |}]
 
 let%expect_test "request vote from higher" =
-  Imp.set_is_test true;
+  Imp.set_is_test true ;
   reset_make_command_state () ;
   let t = create (c3 0) in
   let rv = RequestVote {term= 10; leader_commit= -1} in
@@ -144,7 +144,7 @@ let pp_res t actions =
     actions
 
 let%expect_test "Loop" =
-  Imp.set_is_test true;
+  Imp.set_is_test true ;
   reset_make_command_state () ;
   let t = create (c3 0) in
   let rv = RequestVote {term= 10; leader_commit= -1} in
@@ -574,7 +574,7 @@ let%expect_test "Loop" =
   ()
 
 let%expect_test "Missing elements" =
-  Imp.set_is_test true;
+  Imp.set_is_test true ;
   reset_make_command_state () ;
   (* --------- elect t and add 2 commands to log then send out later one --------- *)
   let t = create (c3 0) in
