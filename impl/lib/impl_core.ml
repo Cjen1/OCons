@@ -126,3 +126,21 @@ module PrevoteRaftSBN = struct
 
   let serialise = Line_prot.PrevoteRaft.serialise
 end
+
+module ConspireSS = struct
+  include Conspire_single_shot.Types
+  include Conspire_single_shot.Impl
+
+  let create_node _ = create
+
+  let available_space_for_commands t =
+    let outstanding = Utils.SegmentLog.highest t.prop_log - t.commit_index in
+    assert (outstanding >= 0) ;
+    max (t.config.max_outstanding - outstanding) 0
+
+  let should_ack_clients _ = true
+
+  let parse = Line_prot.ConspireSS.parse
+
+  let serialise = Line_prot.ConspireSS.serialise
+end

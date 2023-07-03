@@ -9,9 +9,9 @@ open Ocons_core.Consensus_intf
 
 let action_pp = action_pp ~pp_msg:PP.message_pp
 
-let c1 = make_config ~node_id:0 ~replica_ids:[0] ~fd_timeout:2
+let c1 = make_config ~node_id:0 ~replica_ids:[0] ~fd_timeout:2 ()
 
-let c4 node_id = make_config ~node_id ~replica_ids:[0; 1; 2; 3] ~fd_timeout:2
+let c4 node_id = make_config ~node_id ~replica_ids:[0; 1; 2; 3] ~fd_timeout:2 ()
 
 let print t acts =
   Fmt.pr "t: @[<v>%a@]@." PP.t_pp t ;

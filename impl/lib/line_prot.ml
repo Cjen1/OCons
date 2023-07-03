@@ -320,3 +320,55 @@ module PrevoteRaft = struct
         @@ Invalid_argument
              (Fmt.str "Received %d which is not a valid msg_code" msg_code)
 end
+
+module ConspireSS = struct
+  open Conspire_single_shot.Types
+
+  let enum_msg = function Sync _ -> 0 | SyncResp _ -> 1 | Heartbeat -> 2
+
+  type 'a ser = 'a -> W.t -> unit
+
+  let serialise_value value w =
+    let i = Iter.of_list value in
+    let l = Iter.length i in
+    SerPrim.iter SerPrim.command (i, l) w
+
+  let parse_value = DeserPrim.iter DeserPrim.command
+
+  let serialise m w =
+    W.uint8 w (enum_msg m) ;
+    let open Int64 in
+    match m with
+    | Sync {idx; value; term} ->
+        W.BE.uint64 w (idx |> of_int) ;
+        W.BE.uint64 w (term |> of_int) ;
+        serialise_value value w
+    | SyncResp {idx; term; vterm; vvalue} ->
+        W.BE.uint64 w (idx |> of_int) ;
+        W.BE.uint64 w (term |> of_int) ;
+        W.BE.uint64 w (vterm |> of_int) ;
+        serialise_value vvalue w
+    | Heartbeat ->
+        ()
+
+  let parse =
+    let uint64 = R.map Int64.to_int R.BE.uint64 in
+    let open R.Syntax in
+    let* msg_code = R.map Char.code R.any_char in
+    match msg_code with
+    | 0 (* Sync*) ->
+        let* idx = uint64
+        and* term = uint64
+        and* value = parse_value |> R.map (fun (ci, _) -> Iter.to_list ci) in
+        R.return @@ Sync {idx; term; value}
+    | 1 (* SyncResp *) ->
+        let* idx = uint64
+        and* term = uint64
+        and* vterm = uint64
+        and* vvalue = parse_value |> R.map (fun (ci, _) -> Iter.to_list ci) in
+        R.return @@ SyncResp {idx; term; vterm; vvalue}
+    | 2 (* Heartbeat *) ->
+        R.return Heartbeat
+    | _ ->
+        Fmt.invalid_arg "Received %d which is not a valid msg_code" msg_code
+end

@@ -4,6 +4,7 @@ let entries_equal (ea, la) (eb, lb) =
   la = lb && List.equal ( = ) (Iter.to_list ea) (Iter.to_list eb)
 
 module Gen = struct
+  open Ocons_core.Types
   open Crowbar
 
   let op =
@@ -19,11 +20,12 @@ module Gen = struct
     map [op; int] (fun op id ->
         Ocons_core.Types.Command.{op; id; trace_start= -1.} )
 
-  let log_entry =
-    map [command; int] (fun command term -> Ocons_core.Types.{command; term})
+  let log_entry = map [command; int] (fun command term -> {command; term})
 
   let entries =
     map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
+
+  let conspire_value : Impl_core.ConspireSS.value gen = list command
 end
 
 module LP = Impl_core.Line_prot
@@ -140,7 +142,7 @@ module Paxos = struct
     @@ fun bw ->
     serialise msg bw ;
     let msg' = parse br in
-    check_eq ~pp:message_pp ~eq:msg_equal msg msg'
+    check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg'
 
   let test_msg_series_equality msgs =
     let open Crowbar in
@@ -156,7 +158,7 @@ module Paxos = struct
       | msg :: ms ->
           serialise msg bw ;
           let msg' = parse br in
-          check_eq ~pp:message_pp ~eq:msg_equal msg msg' ;
+          check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg' ;
           aux ms
     in
     aux msgs
@@ -209,7 +211,7 @@ module Raft = struct
     @@ fun bw ->
     serialise msg bw ;
     let msg' = parse br in
-    check_eq ~pp:message_pp ~eq:msg_equal msg msg'
+    check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg'
 
   let test_msg_series_equality msgs =
     let open Crowbar in
@@ -225,7 +227,55 @@ module Raft = struct
       | msg :: ms ->
           serialise msg bw ;
           let msg' = parse br in
-          check_eq ~pp:message_pp ~eq:msg_equal msg msg' ;
+          check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg' ;
+          aux ms
+    in
+    aux msgs
+end
+
+module ConspireSS = struct
+  open Impl_core.ConspireSS
+  open LP.ConspireSS
+
+  let msg_gen =
+    let open Gen in
+    let open Crowbar in
+    choose
+      [ const Heartbeat
+      ; map [int; conspire_value; int] (fun idx value term ->
+            Sync {idx; value; term} )
+      ; map [int; conspire_value; int; int] (fun idx vvalue vterm term ->
+            SyncResp {idx; vvalue; vterm; term} ) ]
+
+  let msg_equal = [%compare.equal: message]
+
+  let test_msg_equality msg =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    serialise msg bw ;
+    let msg' = parse br in
+    check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg'
+
+  let test_msg_series_equality msgs =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    let rec aux = function
+      | [] ->
+          ()
+      | msg :: ms ->
+          serialise msg bw ;
+          let msg' = parse br in
+          check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg' ;
           aux ms
     in
     aux msgs
@@ -254,4 +304,10 @@ let () =
   add_test ~name:"raft_msg_passing" [Raft.msg_gen] Raft.test_msg_equality ;
   add_test ~name:"raft_msg_series_passing"
     [list Raft.msg_gen]
-    Raft.test_msg_series_equality
+    Raft.test_msg_series_equality ;
+  (* Conspire *)
+  add_test ~name:"conspire_ss_msg_passing" [ConspireSS.msg_gen]
+    ConspireSS.test_msg_equality ;
+  add_test ~name:"conspire_ss_msg_series_passing"
+    [list ConspireSS.msg_gen]
+    ConspireSS.test_msg_series_equality
