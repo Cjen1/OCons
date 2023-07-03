@@ -135,6 +135,7 @@ let run sockaddrs id n rate outfile debug =
     let complete = pitcher ~sw env#mono_clock n rate cmgr dispatch in
     Promise.await complete ;
     Eio.Time.sleep env#clock 1. ;
+    traceln "Test complete";
     (* End of test *)
     let request_response_pairs =
       let open Iter.Infix in

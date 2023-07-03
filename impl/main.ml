@@ -7,8 +7,9 @@ module RMain = Infra.Make (Impl_core.Raft)
 module RMain_sbn = Infra.Make (Impl_core.RaftSBN)
 module PRMain = Infra.Make (Impl_core.PrevoteRaft)
 module PRMain_sbn = Infra.Make (Impl_core.PrevoteRaftSBN)
+module ConspireSSMain = Infra.Make (Impl_core.ConspireSS)
 
-type kind = Paxos | Raft | PRaft | Raft_sbn | PRaft_sbn
+type kind = Paxos | Raft | PRaft | Raft_sbn | PRaft_sbn | ConspireSS
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length stat_report
@@ -70,6 +71,16 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Staring Prevote-Raft with static-ballot-numbers" ;
       Eio.traceln "config = %a" Impl_core.Types.config_pp shared_config ;
       PRMain_sbn.run env cfg
+  | ConspireSS ->
+      let replica_ids = List.map (fun (i, _) -> i) node_addresses in
+      let conspire_cfg =
+        Impl_core.ConspireSS.make_config ~node_id ~replica_ids ~fd_timeout:2
+          ~max_outstanding ()
+      in
+      let cfg = config conspire_cfg in
+      Eio.traceln "Starting Conspire with single-shot instances per log entry" ;
+      Eio.traceln "config = %a" Impl_core.ConspireSS.PP.config_pp conspire_cfg ;
+      ConspireSSMain.run env cfg
 
 open Cmdliner
 
@@ -201,7 +212,8 @@ let cmd =
         ; ("raft", Raft)
         ; ("raft+sbn", Raft_sbn)
         ; ("prevote-raft", PRaft)
-        ; ("prevote-raft+sbn", PRaft_sbn) ]
+        ; ("prevote-raft+sbn", PRaft_sbn)
+        ; ("conspire", ConspireSS) ]
     in
     Arg.(
       required
