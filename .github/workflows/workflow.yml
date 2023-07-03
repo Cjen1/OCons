@@ -8,41 +8,26 @@ on:
 
 jobs:
    build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-        ocaml-version:
-          - 4.10.1
-
-    runs-on: ${{ matrix.os }}
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-        
-      - name: Use OCaml ${{ matrix.ocaml-version }}
-        uses: avsm/setup-ocaml@v1
-        with:
-          ocaml-version: ${{ matrix.ocaml-version }}
-
-      - name: Opam setup
-        run: |
-          opam pin add ocons-core.dev . --no-action
-          opam depext ocons-core --yes --with-doc --with-test
-          opam pin add ocons-variants.dev . --no-action
-          opam depext ocons-variants --yes --with-doc --with-test
-          opam install . --deps-only --with-doc --with-test
-
-      - name: Dune build
-        run: opam exec -- dune build
-
-      - name: Run tests
-        run: make test
-        
-      - name: Format
-        run: |
-          opam install ocamlformat --yes --with-doc --with-test
-          opam exec -- dune build @fmt
+     name: Check build
+     runs-on: ubuntu-22.04
+     steps:
+      - uses: actions/checkout@v3
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix develop -c dune build
+   format:
+     name: Check formatting
+     runs-on: ubuntu-22.04
+     steps:
+      - uses: actions/checkout@v3
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix develop -c dune build @fmt
+   runtest:
+     name: Run tests
+     runs-on: ubuntu-22.04
+     steps:
+      - uses: actions/checkout@v3
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix develop -c dune runtest
