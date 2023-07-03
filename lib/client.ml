@@ -28,8 +28,8 @@ let create_cmgr ~sw ?use_domain ?kind resolvers id =
   in
   Cmgr.create ~sw ?use_domain ?kind resolvers parse_resp
 
-let submit_request cmgr req = 
-  dtraceln "Submitting req";
+let submit_request cmgr req =
+  dtraceln "Submitting req" ;
   Cmgr.broadcast_blit cmgr (ser_req req)
 
 let recv_resp ?(force = true) cmgr = Cmgr.recv_any ~force cmgr |> Iter.map snd
