@@ -132,9 +132,10 @@ let run sockaddrs id n rate outfile debug =
         ~sw con_ress id
         (fun () -> Eio.Time.sleep env#clock 1.)
     in
+    Eio.Time.sleep env#clock 2. ;
     let complete = pitcher ~sw env#mono_clock n rate cmgr dispatch in
     Promise.await complete ;
-    Eio.Time.sleep env#clock 1. ;
+    Eio.Time.sleep env#clock 2. ;
     traceln "Test complete" ;
     (* End of test *)
     let request_response_pairs =
