@@ -172,7 +172,7 @@ struct
         assert false
 
   let send_sync_resp dst idx conflict =
-    let le = ex.@(t @> rep_log @> log_idx idx) in
+    let le = Log.get (get_t ()).rep_log idx in
     let msg =
       SyncResp {idx; term= le.term; vvalue= le.vvalue; vterm= le.vterm}
     in
@@ -180,9 +180,10 @@ struct
 
   let recv_sync_msg src msg =
     let idx = get_msg_idx msg in
-    let log = ex.@(t @> rep_log) in
+    let ct = get_t () in
+    let log = ct.rep_log in
     if not @@ Log.mem log idx then Log.allocate log idx ;
-    let le = ex.@(t @> rep_log @> log_idx idx) in
+    let le = Log.get log idx in
     match (msg, comp Int.compare (get_msg_term msg) le.term) with
     (* New ballot *)
     | Sync {idx; term; value}, GT ->
@@ -246,7 +247,7 @@ struct
 
   (* TODO use failure detectors to ensure majority *)
   let valid_quorum votes : bool =
-    Iter.length votes >= ex.@(t @> config @> quorum_size)
+    Iter.length votes >= (get_t ()).config.quorum_size
 
   module CommandMap = Iter.Map.Make (struct
     type t = Command.t
@@ -269,7 +270,8 @@ struct
   end)
 
   let get_value (votes : (node_id * sync_resp_state) Iter.t) =
-    let total_nodes = List.length ex.@(t @> config @> replica_ids) in
+    let config = (get_t ()).config in
+    let total_nodes = List.length config.replica_ids in
     let missing_votes = total_nodes - Iter.length votes in
     let max_vterm =
       votes
@@ -293,8 +295,7 @@ struct
              match s with
              | Some v ->
                  Some v
-             | None when c + missing_votes >= ex.@(t @> config @> quorum_size)
-               ->
+             | None when c + missing_votes >= config.quorum_size ->
                  Some v
              | None ->
                  None )
@@ -315,6 +316,7 @@ struct
         if valid_quorum voting_replicas then Committed {value= s.value} else sm
 
   let check_conflict sm =
+    let ct = get_t () in
     match sm with
     | Committed _ ->
         sm
@@ -332,11 +334,10 @@ struct
         in
         let all_live_nodes_vote =
           let ( => ) a b = (not a) || b in
-          ex.@(t @> config @> replica_ids)
-          |> Iter.of_list
+          ct.config.replica_ids |> Iter.of_list
           |> Iter.for_all (fun src ->
                  let is_live =
-                   Hashtbl.find_exn ex.@(t).failure_detector.state src > 0
+                   Hashtbl.find_exn ct.failure_detector.state src > 0
                  in
                  let is_vote =
                    match IdMap.find_opt src s.votes with
@@ -373,7 +374,7 @@ struct
   let failure_detector_update (event : message event) =
     match event with
     | Recv (_, src) ->
-        let ct = ex.@(t) in
+        let ct = get_t () in
         Hashtbl.set ct.failure_detector.state ~key:src
           ~data:ct.config.fd_timeout
     | _ ->
@@ -381,7 +382,7 @@ struct
 
   let handle_event (event : message event) =
     failure_detector_update event ;
-    let ct = ex.@(t) in
+    let ct = get_t () in
     match event with
     | Tick ->
         Hashtbl.map_inplace ct.failure_detector.state ~f:(fun v -> v - 1) ;
@@ -397,26 +398,24 @@ struct
         recv_sync_msg src m
     | Recv ((SyncResp _ as m), src) ->
         let idx = get_msg_idx m in
-        let log = ex.@(t @> prop_log) in
+        let log = ct.prop_log in
         Log.allocate log idx ;
         Log.map log idx (fun sm ->
             sm |> handle_msg src m |> check_commit |> check_conflict
             |> check_send idx )
     | Commands ci ->
-        let start = Log.highest ex.@(t @> prop_log) + 1 in
+        let start = Log.highest ct.prop_log + 1 in
         ci
         |> Iter.iter (fun c ->
-               Log.add ex.@(t @> prop_log)
+               Log.add ct.prop_log
                @@ Undecided
                     {term= 0; value= [c]; votes= IdMap.empty; sent= false} ) ;
-        let stop = Log.highest ex.@(t @> prop_log) in
+        let stop = Log.highest ct.prop_log in
         Iter.int_range ~start ~stop
         |> Iter.iter
            @@ fun idx ->
-           Log.map
-             ex.@(t @> prop_log)
-             idx
-             (fun sm -> sm |> check_commit |> check_send idx)
+           Log.map ct.prop_log idx (fun sm ->
+               sm |> check_commit |> check_send idx )
 
   let advance_raw (event : message event) =
     handle_event event ; update_commit_index ()
