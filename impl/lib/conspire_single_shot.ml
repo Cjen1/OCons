@@ -1,3 +1,4 @@
+open Core
 open Types
 open Utils
 open C.Types
@@ -7,9 +8,9 @@ open Ocons_core.Consensus_intf
 module IdMap = Iter.Map.Make (Int)
 
 module Types = struct
-  type value = command list
+  type value = command list [@@deriving bin_io]
 
-  let compare_value = List.compare Command.compare
+  let compare_value = List.compare Types.Command.compare
 
   type config =
     { node_id: node_id
@@ -21,21 +22,21 @@ module Types = struct
 
   let make_config ~node_id ~replica_ids ~fd_timeout ?(max_outstanding = 8192) ()
       : config =
-    let floor f = f |> Float.floor |> Float.to_int in
-    assert (List.mem node_id replica_ids) ;
+    let floor f = f |> Int.of_float in
+    assert (List.mem replica_ids node_id ~equal:Int.equal) ;
     let cluster_size = List.length replica_ids |> Float.of_int in
     let quorum_size = floor (2. *. cluster_size /. 3.) + 1 in
     assert (3 * quorum_size > 2 * Float.to_int cluster_size) ;
     {node_id; replica_ids; quorum_size; fd_timeout; max_outstanding}
 
   type sync_state = {idx: log_index; value: value; term: term}
-  [@@deriving accessors, compare]
+  [@@deriving accessors, compare, bin_io]
 
   type sync_resp_state = {idx: log_index; vvalue: value; vterm: term; term: term}
-  [@@deriving accessors, compare]
+  [@@deriving accessors, compare, bin_io]
 
   type message = Sync of sync_state | SyncResp of sync_resp_state | Heartbeat
-  [@@deriving accessors, compare]
+  [@@deriving accessors, compare, bin_io]
 
   type rep_log_entry = {term: term; vvalue: value; vterm: term}
   [@@deriving accessors]
@@ -228,7 +229,8 @@ struct
       | SyncResp msg, GT ->
           let vote =
             IdMap.find_opt src s.votes
-            |> Option.fold ~none:msg ~some:(fun (old_msg : sync_resp_state) ->
+            |> Option.value_map ~default:msg
+                 ~f:(fun (old_msg : sync_resp_state) ->
                    if old_msg.term < msg.term then msg else old_msg )
           in
           let votes = add_vote s.votes vote in
@@ -305,7 +307,7 @@ struct
         let voting_replicas =
           IdMap.to_iter s.votes
           |> Iter.filter (fun ((_, v) : node_id * sync_resp_state) ->
-                 v.vvalue = s.value && v.vterm = s.term )
+                 [%compare.equal: value] v.vvalue s.value && v.vterm = s.term )
           |> Iter.map fst
         in
         if valid_quorum voting_replicas then Committed {value= s.value} else sm
@@ -472,7 +474,7 @@ struct
         { state=
             IdMap.of_list
               ( config.replica_ids
-              |> List.map (fun id -> (id, config.fd_timeout)) ) } }
+              |> List.map ~f:(fun id -> (id, config.fd_timeout)) ) } }
 end
 
 module Impl = Make (ImperativeActions (Types))

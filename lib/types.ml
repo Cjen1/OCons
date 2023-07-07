@@ -40,7 +40,7 @@ let sm_op_pp ppf v =
 
 module Command = struct
   type t = {op: sm_op; id: command_id; mutable trace_start: float}
-  [@@deriving compare]
+  [@@deriving compare, bin_io]
 
   let pp_mach ppf v =
     Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
@@ -50,7 +50,7 @@ module Command = struct
   let equal a b = a.id = b.id
 end
 
-type command = Command.t [@@deriving compare]
+type command = Command.t [@@deriving compare, bin_io]
 
 let update_command_time c = c.Command.trace_start <- Core_unix.gettimeofday ()
 
@@ -111,7 +111,7 @@ let update_state_machine : state_machine -> command -> op_result =
 
 let create_state_machine () = Hashtbl.create (module String)
 
-type log_index = int [@@deriving bin_io, compare]
+type log_index = int [@@deriving bin_io, compare, bin_io]
 
 type term = int [@@deriving compare, compare, bin_io]
 
