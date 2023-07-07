@@ -13,6 +13,10 @@ module type ActionSig = sig
 
   val t : ('i -> t -> t, 'i -> unit -> unit, [< A.field]) A.General.t
 
+  val get_t : unit -> t
+
+  val set_t : t -> unit
+
   val run_side_effects : (unit -> unit) -> t -> t * message action list
 
   val dtraceln : ('a, Format.formatter, unit, unit, unit, unit) format6 -> 'a
@@ -74,6 +78,10 @@ module ImperativeActions (C : CTypes) :
       A.field
         ~get:(fun () -> (!s |> Option.get).t)
         ~set:(fun () t' -> (!s |> Option.get).t <- t')]
+
+  let get_t () = (!s |> Option.get).t
+
+  let set_t t = (!s |> Option.get).t <- t
 
   let get_actions init_commit_index =
     let open Iter in

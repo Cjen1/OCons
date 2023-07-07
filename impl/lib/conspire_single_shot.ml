@@ -47,7 +47,7 @@ module Types = struct
     | Committed of {value: value}
   [@@deriving accessors]
 
-  type fd_sm = {state: int IdMap.t} [@@deriving accessors]
+  type fd_sm = {state: (node_id, int) Hashtbl.t} [@@deriving accessors]
 
   type t =
     { rep_log: rep_log_entry SegmentLog.t
@@ -128,7 +128,9 @@ module Types = struct
     let fd_sm_pp =
       record
         [ field "state"
-            (fun v -> IdMap.bindings v.state)
+            (fun v ->
+              Hashtbl.to_alist v.state
+              |> List.sort ~compare:(fun (a, _) (b, _) -> Int.compare a b) )
             ( brackets @@ list ~sep:semi @@ parens
             @@ pair ~sep:(Fmt.any ":@ ") int int ) ]
 
@@ -334,7 +336,7 @@ struct
           |> Iter.of_list
           |> Iter.for_all (fun src ->
                  let is_live =
-                   IdMap.find src ex.@(t @> failure_detector @> state) > 0
+                   Hashtbl.find_exn ex.@(t).failure_detector.state src > 0
                  in
                  let is_vote =
                    match IdMap.find_opt src s.votes with
@@ -359,41 +361,35 @@ struct
         Undecided {s with sent= true}
 
   let update_commit_index () =
+    let ct = get_t () in
     let is_commit = function Committed _ -> true | _ -> false in
-    let rec lowest_non_commit i =
-      if
-        Log.mem ex.@(t @> prop_log) i
-        && Log.get ex.@(t @> prop_log) i |> is_commit
-      then lowest_non_commit (i + 1)
-      else i
+    let rec highest_commit ct idx =
+      if Log.mem ct.prop_log idx && Log.get ct.prop_log idx |> is_commit then
+        highest_commit ct (idx + 1)
+      else idx - 1
     in
-    let highest_commit = lowest_non_commit (ex.@(t @> commit_index) + 1) - 1 in
-    ex.@(t @> commit_index) <- highest_commit
+    set_t {ct with commit_index= highest_commit ct (ct.commit_index + 1)}
 
   let failure_detector_update (event : message event) =
     match event with
     | Recv (_, src) ->
-        ex.@(t @> failure_detector @> state) <-
-          IdMap.add src
-            ex.@(t @> config @> fd_timeout)
-            ex.@(t @> failure_detector @> state)
+        let ct = ex.@(t) in
+        Hashtbl.set ct.failure_detector.state ~key:src
+          ~data:ct.config.fd_timeout
     | _ ->
         ()
 
   let handle_event (event : message event) =
     failure_detector_update event ;
+    let ct = ex.@(t) in
     match event with
     | Tick ->
-        ex.@(t @> failure_detector @> state) <-
-          IdMap.map (fun v -> v - 1) ex.@(t @> failure_detector @> state) ;
-        Iter.int_range
-          ~start:(ex.@(t @> commit_index) + 1)
-          ~stop:(Log.highest ex.@(t @> prop_log))
+        Hashtbl.map_inplace ct.failure_detector.state ~f:(fun v -> v - 1) ;
+        Iter.int_range ~start:(ct.commit_index + 1)
+          ~stop:(Log.highest ct.prop_log)
         |> Iter.iter (fun idx ->
-               Log.map
-                 ex.@(t @> prop_log)
-                 idx
-                 (fun sm -> sm |> check_conflict |> check_send idx) ) ;
+               Log.map ct.prop_log idx (fun sm ->
+                   sm |> check_conflict |> check_send idx ) ) ;
         broadcast Heartbeat
     | Recv (Heartbeat, _) ->
         ()
@@ -472,7 +468,8 @@ struct
           (Undecided {term= 0; value= []; votes= IdMap.empty; sent= false})
     ; failure_detector=
         { state=
-            IdMap.of_list
+            Hashtbl.of_alist_exn
+              (module Int)
               ( config.replica_ids
               |> List.map ~f:(fun id -> (id, config.fd_timeout)) ) } }
 end
