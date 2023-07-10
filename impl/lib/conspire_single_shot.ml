@@ -7,8 +7,12 @@ open A.O
 open Ocons_core.Consensus_intf
 module IdMap = Iter.Map.Make (Int)
 
+module Value = struct
+  type t = command list [@@deriving sexp, hash, compare, bin_io]
+end
+
 module Types = struct
-  type value = command list [@@deriving bin_io]
+  type value = Value.t [@@deriving bin_io]
 
   let compare_value = List.compare Types.Command.compare
 
@@ -29,28 +33,27 @@ module Types = struct
     assert (3 * quorum_size > 2 * Float.to_int cluster_size) ;
     {node_id; replica_ids; quorum_size; fd_timeout; max_outstanding}
 
-  type sync_state = {idx: log_index; value: value; term: term}
+  type sync_state = {value: value; term: term}
   [@@deriving accessors, compare, bin_io]
 
-  type sync_resp_state = {idx: log_index; vvalue: value; vterm: term; term: term}
+  type vote = {vvalue: value; vterm: term; term: term}
   [@@deriving accessors, compare, bin_io]
 
-  type message = Sync of sync_state | SyncResp of sync_resp_state | Heartbeat
+  type message =
+    | Sync of log_index * sync_state
+    | SyncResp of log_index * vote
+    | Heartbeat
   [@@deriving accessors, compare, bin_io]
-
-  type rep_log_entry = {term: term; vvalue: value; vterm: term}
-  [@@deriving accessors]
 
   type prop_sm =
-    | Undecided of
-        {term: term; value: value; votes: sync_resp_state IdMap.t; sent: bool}
+    | Undecided of {term: term; value: value; votes: vote IdMap.t; sent: bool}
     | Committed of {value: value}
   [@@deriving accessors]
 
   type fd_sm = {state: (node_id, int) Hashtbl.t} [@@deriving accessors]
 
   type t =
-    { rep_log: rep_log_entry SegmentLog.t
+    { rep_log: vote SegmentLog.t
     ; prop_log: prop_sm SegmentLog.t
     ; commit_index: log_index
     ; config: config
@@ -78,34 +81,33 @@ module Types = struct
             (fun c -> c.replica_ids)
             (brackets @@ list ~sep:comma int) ]
 
-    let sync_resp_state_pp =
+    let vote_pp =
       record
-        [ field "idx" (fun (m : sync_resp_state) -> m.idx) int
-        ; field "term" (fun (m : sync_resp_state) -> m.term) int
-        ; field "vterm" (fun (m : sync_resp_state) -> m.vterm) int
-        ; field "vvalue" (fun (m : sync_resp_state) -> m.vvalue) value_pp ]
+        [ field "term" (fun (m : vote) -> m.term) int
+        ; field "vterm" (fun (m : vote) -> m.vterm) int
+        ; field "vvalue" (fun (m : vote) -> m.vvalue) value_pp ]
 
     let message_pp : message Fmt.t =
      fun ppf v ->
       match v with
-      | Sync m ->
+      | Sync (idx, m) ->
           pf ppf "Sync(%a)"
             (record
-               [ field "idx" (fun (m : sync_state) -> m.idx) int
+               [ field "idx" (fun _ -> idx) int
                ; field "term" (fun (m : sync_state) -> m.term) int
                ; field "value" (fun (m : sync_state) -> m.value) value_pp ] )
             m
-      | SyncResp m ->
-          pf ppf "SyncResp(%a)" sync_resp_state_pp m
+      | SyncResp (idx, m) ->
+          pf ppf "SyncResp(%d,%a)" idx vote_pp m
       | Heartbeat ->
           pf ppf "Heartbeat"
 
     let rep_log_entry_pp =
       braces
       @@ record
-           [ field "term" (fun (le : rep_log_entry) -> le.term) int
-           ; field "vterm" (fun (le : rep_log_entry) -> le.vterm) int
-           ; field "vvalue" (fun (le : rep_log_entry) -> le.vvalue) value_pp ]
+           [ field "term" (fun (le : vote) -> le.term) int
+           ; field "vterm" (fun (le : vote) -> le.vterm) int
+           ; field "vvalue" (fun (le : vote) -> le.vvalue) value_pp ]
 
     let prop_sm_pp ppf v =
       match v with
@@ -122,7 +124,7 @@ module Types = struct
                ; field "votes"
                    (fun _ -> IdMap.bindings votes)
                    ( brackets @@ list ~sep:semi @@ parens
-                   @@ pair ~sep:(Fmt.any ":@ ") int sync_resp_state_pp ) ] )
+                   @@ pair ~sep:(Fmt.any ":@ ") int vote_pp ) ] )
             ()
 
     let fd_sm_pp =
@@ -160,13 +162,13 @@ struct
   let log_idx idx = [%accessor Accessor.getter (fun at -> Log.get at idx)]
 
   let get_msg_term = function
-    | Sync {term; _} | SyncResp {term; _} ->
+    | Sync (_, {term; _}) | SyncResp (_, {term; _}) ->
         term
     | Heartbeat ->
         assert false
 
   let get_msg_idx = function
-    | Sync {idx; _} | SyncResp {idx; _} ->
+    | Sync (idx, _) | SyncResp (idx, _) ->
         idx
     | Heartbeat ->
         assert false
@@ -174,7 +176,7 @@ struct
   let send_sync_resp dst idx conflict =
     let le = Log.get (get_t ()).rep_log idx in
     let msg =
-      SyncResp {idx; term= le.term; vvalue= le.vvalue; vterm= le.vterm}
+      SyncResp (idx, {term= le.term; vvalue= le.vvalue; vterm= le.vterm})
     in
     if conflict then broadcast msg else send dst msg
 
@@ -186,15 +188,15 @@ struct
     let le = Log.get log idx in
     match (msg, comp Int.compare (get_msg_term msg) le.term) with
     (* New ballot *)
-    | Sync {idx; term; value}, GT ->
+    | Sync (_, {term; value}), GT ->
         Log.set log idx {term; vvalue= value; vterm= term} ;
         send_sync_resp src idx false
     (* New ballot after conflict *)
-    | Sync {term; value; _}, EQ when le.vterm < term ->
+    | Sync (_, {term; value; _}), EQ when le.vterm < term ->
         Log.set log idx {term= le.term; vvalue= value; vterm= term} ;
         send_sync_resp src idx false
     (* Revote for existing ballot *)
-    | Sync {term; value; _}, EQ
+    | Sync (_, {term; value; _}), EQ
       when le.vterm = term && [%compare.equal: value] value le.vvalue ->
         send_sync_resp src idx false
     (* Conflict for existing ballot (given above) *)
@@ -207,8 +209,8 @@ struct
     | SyncResp _, _ | Heartbeat, _ ->
         assert false
 
-  let handle_msg src msg sm =
-    let add_vote (votes : sync_resp_state IdMap.t) (vote : sync_resp_state) =
+  let handle_msg src (msg : vote) sm =
+    let add_vote (votes : vote IdMap.t) (vote : vote) =
       IdMap.update src
         (function
           | None ->
@@ -223,31 +225,26 @@ struct
     | Committed _ ->
         sm
     | Undecided s -> (
-      match (msg, comp Int.compare (get_msg_term msg) s.term) with
+      match comp Int.compare msg.term s.term with
       (* Vote for current value *)
-      | SyncResp msg, EQ ->
+      | EQ ->
           let votes = add_vote s.votes msg in
           Undecided {s with votes}
       (* Conflict vote for next term*)
-      | SyncResp msg, GT ->
+      | GT ->
           let vote =
             IdMap.find_opt src s.votes
-            |> Option.value_map ~default:msg
-                 ~f:(fun (old_msg : sync_resp_state) ->
+            |> Option.value_map ~default:msg ~f:(fun (old_msg : vote) ->
                    if old_msg.term < msg.term then msg else old_msg )
           in
           let votes = add_vote s.votes vote in
           Undecided {s with votes}
       (* Conflict for for much higher term => missing msgs *)
       (* Old msg => just ignore *)
-      | SyncResp _, LT ->
-          sm
-      | Sync _, _ | Heartbeat, _ ->
-          assert false )
+      | LT ->
+          sm )
 
-  (* TODO use failure detectors to ensure majority *)
-  let valid_quorum votes : bool =
-    Iter.length votes >= (get_t ()).config.quorum_size
+  let valid_quorum votes : bool = votes >= (get_t ()).config.quorum_size
 
   module CommandMap = Iter.Map.Make (struct
     type t = Command.t
@@ -255,13 +252,15 @@ struct
     let compare = Command.compare
   end)
 
-  let merge (votes : (node_id * sync_resp_state) Iter.t) : value =
+  (*
+  let merge (votes : (node_id * vote) Iter.t) : value =
     votes
     |> IterLabels.fold ~init:CommandMap.empty
-         ~f:(fun a (_, (b : sync_resp_state)) ->
+         ~f:(fun a (_, (b : vote)) ->
            b.vvalue |> Iter.of_list
            |> IterLabels.fold ~init:a ~f:(fun a c -> CommandMap.add c () a) )
     |> CommandMap.keys |> Iter.to_list
+    *)
 
   module ValueMap = Iter.Map.Make (struct
     type t = value
@@ -269,38 +268,37 @@ struct
     let compare = compare_value
   end)
 
-  let get_value (votes : (node_id * sync_resp_state) Iter.t) =
-    let config = (get_t ()).config in
-    let total_nodes = List.length config.replica_ids in
+  let get_value (votes : vote Iter.t) =
+    let ct = get_t () in
+    let total_nodes = List.length ct.config.replica_ids in
     let missing_votes = total_nodes - Iter.length votes in
     let max_vterm =
-      votes
-      |> IterLabels.fold ~init:(-1) ~f:(fun a (_, (b : sync_resp_state)) ->
-             max a b.vterm )
+      votes |> IterLabels.fold ~init:(-1) ~f:(fun a (b : vote) -> max a b.vterm)
     in
     let votes_max_vterm =
-      Iter.filter (fun (_, (b : sync_resp_state)) -> b.vterm = max_vterm) votes
+      Iter.filter (fun (b : vote) -> b.vterm = max_vterm) votes
     in
     let vote_counts =
+      let res = Hashtbl.create (module Value) in
       votes_max_vterm
-      |> IterLabels.fold ~init:ValueMap.empty
-           ~f:(fun a (_, (vote : sync_resp_state)) ->
-             ValueMap.update vote.vvalue
-               (function None -> Some 1 | Some v -> Some (v + 1))
-               a )
+      |> Iter.iter (fun vote ->
+             if Hashtbl.mem res vote.vvalue then
+               Hashtbl.set res ~key:vote.vvalue
+                 ~data:(Hashtbl.find_exn res vote.vvalue + 1)
+             else Hashtbl.set res ~key:vote.vvalue ~data:1 ) ;
+      res
     in
-    let o4_value =
-      ValueMap.to_iter vote_counts
-      |> IterLabels.fold ~init:None ~f:(fun s (v, c) ->
-             match s with
-             | Some v ->
-                 Some v
-             | None when c + missing_votes >= config.quorum_size ->
-                 Some v
-             | None ->
-                 None )
+    let merge vcs : Value.t =
+      let res = Hash_set.create (module Command) in
+      Hashtbl.iter_keys vcs ~f:(List.iter ~f:(fun c -> Hash_set.add res c)) ;
+      res |> Hash_set.to_list |> List.sort ~compare:Command.compare
     in
-    match o4_value with Some v -> v | None -> merge votes
+    let res = ref None in
+    Hashtbl.iteri vote_counts ~f:(fun ~key:v ~data:c ->
+        if valid_quorum (c + missing_votes) then (
+          assert (Option.is_none !res) ;
+          res := Some v ) ) ;
+    match !res with Some v -> v | None -> merge vote_counts
 
   let check_commit sm =
     match sm with
@@ -309,11 +307,13 @@ struct
     | Undecided s ->
         let voting_replicas =
           IdMap.to_iter s.votes
-          |> Iter.filter (fun ((_, v) : node_id * sync_resp_state) ->
+          |> Iter.filter (fun ((_, v) : node_id * vote) ->
                  [%compare.equal: value] v.vvalue s.value && v.vterm = s.term )
           |> Iter.map fst
         in
-        if valid_quorum voting_replicas then Committed {value= s.value} else sm
+        if valid_quorum (Iter.length voting_replicas) then
+          Committed {value= s.value}
+        else sm
 
   let check_conflict sm =
     let ct = get_t () in
@@ -323,14 +323,12 @@ struct
     | Undecided s ->
         let max_term =
           IdMap.to_iter s.votes
-          |> IterLabels.fold ~init:(-1)
-               ~f:(fun acc ((_, s) : node_id * sync_resp_state) ->
+          |> IterLabels.fold ~init:(-1) ~f:(fun acc ((_, s) : node_id * vote) ->
                  max acc s.term )
         in
         let votes =
           IdMap.to_iter s.votes
-          |> Iter.filter (fun ((_, v) : node_id * sync_resp_state) ->
-                 v.term = max_term )
+          |> Iter.filter (fun ((_, v) : node_id * vote) -> v.term = max_term)
         in
         let all_live_nodes_vote =
           let ( => ) a b = (not a) || b in
@@ -348,8 +346,8 @@ struct
                  in
                  is_live => is_vote )
         in
-        if all_live_nodes_vote && valid_quorum (Iter.map fst votes) then
-          let value = get_value votes in
+        if all_live_nodes_vote && valid_quorum (Iter.length votes) then
+          let value = votes |> Iter.map snd |> get_value in
           Undecided {term= max_term; value; votes= IdMap.empty; sent= false}
         else sm
 
@@ -358,7 +356,7 @@ struct
     | Committed _ | Undecided {sent= true; _} ->
         sm
     | Undecided s ->
-        broadcast @@ Sync {idx; term= s.term; value= s.value} ;
+        broadcast @@ Sync (idx, {term= s.term; value= s.value}) ;
         Undecided {s with sent= true}
 
   let update_commit_index () =
@@ -396,8 +394,7 @@ struct
         ()
     | Recv ((Sync _ as m), src) ->
         recv_sync_msg src m
-    | Recv ((SyncResp _ as m), src) ->
-        let idx = get_msg_idx m in
+    | Recv ((SyncResp (idx,m)), src) ->
         let log = ct.prop_log in
         Log.allocate log idx ;
         Log.map log idx (fun sm ->

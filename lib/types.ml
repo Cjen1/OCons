@@ -6,7 +6,7 @@ type time = float
 
 type node_addr = string
 
-type command_id = int [@@deriving bin_io, compare, sexp]
+type command_id = int [@@deriving bin_io, compare, sexp, hash]
 
 type client_id = int [@@deriving bin_io]
 
@@ -40,7 +40,11 @@ let sm_op_pp ppf v =
 
 module Command = struct
   type t = {op: sm_op; id: command_id; mutable trace_start: float}
-  [@@deriving compare, bin_io]
+  [@@deriving sexp, compare, bin_io]
+
+  let hash t = hash_command_id t.id
+
+  let hash_fold_t s t = hash_fold_command_id s t.id
 
   let pp_mach ppf v =
     Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
@@ -50,7 +54,7 @@ module Command = struct
   let equal a b = a.id = b.id
 end
 
-type command = Command.t [@@deriving compare, bin_io]
+type command = Command.t [@@deriving hash, sexp, compare, bin_io]
 
 let update_command_time c = c.Command.trace_start <- Core_unix.gettimeofday ()
 

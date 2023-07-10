@@ -97,16 +97,14 @@ let%expect_test "e2e commit recovery" =
         [Undecided(term: 0
                    sent: true
                    value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: idx: 0
-                         term: 0
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+                   votes: [(1: term: 0
+                               vterm: 0
+                               vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
                              value: [Command(Read c1, 1)]))] |}] ;
-  let recv_c1 = Recv (Sync {idx= 0; term= 0; value= [c1]}, 1) in
+  let recv_c1 = Recv (Sync (0, {term= 0; value= [c1]}), 1) in
   let t2, actions = Impl.advance t2 recv_c1 in
   print t2 actions ;
   [%expect
@@ -121,10 +119,9 @@ let%expect_test "e2e commit recovery" =
                   vvalue: [Command(Read c1, 1)]}]
        prop_log: []
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
-    actions: [Send(1,SyncResp(idx: 0
-                              term: 0
-                              vterm: 0
-                              vvalue: [Command(Read c1, 1)]))] |}] ;
+    actions: [Send(1,SyncResp(0,term: 0
+                                vterm: 0
+                                vvalue: [Command(Read c1, 1)]))] |}] ;
   let t3, actions = Impl.advance t3 recv_c1 in
   print t3 actions ;
   [%expect
@@ -139,11 +136,10 @@ let%expect_test "e2e commit recovery" =
                   vvalue: [Command(Read c1, 1)]}]
        prop_log: []
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
-    actions: [Send(1,SyncResp(idx: 0
-                              term: 0
-                              vterm: 0
-                              vvalue: [Command(Read c1, 1)]))] |}] ;
-  let recv i = Recv (SyncResp {idx= 0; term= 0; vterm= 0; vvalue= [c1]}, i) in
+    actions: [Send(1,SyncResp(0,term: 0
+                                vterm: 0
+                                vvalue: [Command(Read c1, 1)]))] |}] ;
+  let recv i = Recv (SyncResp (0,{ term= 0; vterm= 0; vvalue= [c1]}), i) in
   let t1, actions = Impl.advance t1 (recv 2) in
   print t1 actions ;
   [%expect
@@ -161,12 +157,10 @@ let%expect_test "e2e commit recovery" =
                    sent: true
                    value: [Command(Read c1, 1)]
                    votes:
-                    [(1: idx: 0
-                         term: 0
+                    [(1: term: 0
                          vterm: 0
                          vvalue: [Command(Read c1, 1)]);
-                     (2: idx: 0
-                         term: 0
+                     (2: term: 0
                          vterm: 0
                          vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
@@ -210,11 +204,9 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 0
                    sent: true
                    value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: idx: 0
-                         term: 0
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+                   votes: [(1: term: 0
+                               vterm: 0
+                               vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
@@ -236,11 +228,9 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 0
                    sent: true
                    value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: idx: 0
-                         term: 0
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+                   votes: [(1: term: 0
+                               vterm: 0
+                               vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 0); (1: 2); (2: 0); (3: 0)]
     actions: [Broadcast(Heartbeat)] |}] ;
   let c2 = make_command (Read "c2") in
@@ -260,17 +250,15 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 0
                    sent: true
                    value: [Command(Read c2, 2)]
-                   votes:
-                    [(2: idx: 0
-                         term: 0
-                         vterm: 0
-                         vvalue: [Command(Read c2, 2)])])]
+                   votes: [(2: term: 0
+                               vterm: 0
+                               vvalue: [Command(Read c2, 2)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
                              value: [Command(Read c2, 2)]))] |}] ;
   let t3, actions =
-    Impl.advance t3 (Recv (Sync {idx= 0; term= 0; value= [c1]}, 1))
+    Impl.advance t3 (Recv (Sync ( 0,{ term= 0; value= [c1]}), 1))
   in
   print t3 actions ;
   [%expect
@@ -285,13 +273,12 @@ let%expect_test "e2e conflict" =
                   vvalue: [Command(Read c1, 1)]}]
        prop_log: []
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
-    actions: [Send(1,SyncResp(idx: 0
-                              term: 0
-                              vterm: 0
-                              vvalue: [Command(Read c1, 1)]))] |}] ;
+    actions: [Send(1,SyncResp(0,term: 0
+                                vterm: 0
+                                vvalue: [Command(Read c1, 1)]))] |}] ;
   (* Conflict from t1 *)
   let t2, actions =
-    Impl.advance t2 (Recv (Sync {idx= 0; term= 0; value= [c1]}, 1))
+    Impl.advance t2 (Recv (Sync ( 0,{ term= 0; value= [c1]}), 1))
   in
   print t2 actions ;
   [%expect
@@ -308,19 +295,16 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 0
                    sent: true
                    value: [Command(Read c2, 2)]
-                   votes:
-                    [(2: idx: 0
-                         term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c2, 2)])])]
+                   votes: [(2: term: 1
+                               vterm: 0
+                               vvalue: [Command(Read c2, 2)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
-    actions: [Broadcast(SyncResp(idx: 0
-                                 term: 1
-                                 vterm: 0
-                                 vvalue: [Command(Read c2, 2)]))] |}] ;
+    actions: [Broadcast(SyncResp(0,term: 1
+                                   vterm: 0
+                                   vvalue: [Command(Read c2, 2)]))] |}] ;
   (* Conflict from t2 *)
   let t1, actions =
-    Impl.advance t1 (Recv (Sync {idx= 0; term= 0; value= [c2]}, 2))
+    Impl.advance t1 (Recv (Sync ( 0,{ term= 0; value= [c2]}), 2))
   in
   print t1 actions ;
   [%expect
@@ -337,18 +321,15 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 0
                    sent: true
                    value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: idx: 0
-                         term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+                   votes: [(1: term: 1
+                               vterm: 0
+                               vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 0)]
-    actions: [Broadcast(SyncResp(idx: 0
-                                 term: 1
-                                 vterm: 0
-                                 vvalue: [Command(Read c1, 1)]))] |}] ;
+    actions: [Broadcast(SyncResp(0,term: 1
+                                   vterm: 0
+                                   vvalue: [Command(Read c1, 1)]))] |}] ;
   let t3, actions =
-    Impl.advance t3 (Recv (Sync {idx= 0; term= 0; value= [c2]}, 2))
+    Impl.advance t3 (Recv (Sync ( 0,{ term= 0; value= [c2]}), 2))
   in
   print t3 actions ;
   [%expect
@@ -365,23 +346,20 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 0
                    sent: true
                    value: []
-                   votes:
-                    [(3: idx: 0
-                         term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+                   votes: [(3: term: 1
+                               vterm: 0
+                               vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
-    actions: [Broadcast(SyncResp(idx: 0
-                                 term: 1
-                                 vterm: 0
-                                 vvalue: [Command(Read c1, 1)])),
+    actions: [Broadcast(SyncResp(0,term: 1
+                                   vterm: 0
+                                   vvalue: [Command(Read c1, 1)])),
               Broadcast(Sync(idx: 0
                              term: 0
                              value: []))] |}] ;
   (* Conflict result *)
   let t1, actions =
     Impl.advance t1
-      (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c1]}, 3))
+      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c1]}), 3))
   in
   print t1 actions ;
   [%expect
@@ -399,19 +377,17 @@ let%expect_test "e2e conflict" =
                    sent: true
                    value: [Command(Read c1, 1)]
                    votes:
-                    [(1: idx: 0
-                         term: 1
+                    [(1: term: 1
                          vterm: 0
                          vvalue: [Command(Read c1, 1)]);
-                     (3: idx: 0
-                         term: 1
+                     (3: term: 1
                          vterm: 0
                          vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 2)]
     actions: [] |}] ;
   let t1, actions =
     Impl.advance t1
-      (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c2]}, 2))
+      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c2]}), 2))
   in
   print t1 actions ;
   [%expect
@@ -428,11 +404,9 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 1
                    sent: true
                    value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: idx: 0
-                         term: 1
-                         vterm: 1
-                         vvalue: [Command(Read c1, 1)])])]
+                   votes: [(1: term: 1
+                               vterm: 1
+                               vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 1
@@ -461,26 +435,24 @@ let%expect_test "e2e conflict" =
         [Undecided(term: 0
                    sent: true
                    value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: idx: 0
-                         term: 0
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+                   votes: [(1: term: 0
+                               vterm: 0
+                               vvalue: [Command(Read c1, 1)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
                              value: [Command(Read c1, 1)]))] |}] ;
   let t1, _ =
     Impl.advance t1
-      (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c1]}, 0))
+      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c1]}), 0))
   in
   let t1, _ =
     Impl.advance t1
-      (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c1]}, 1))
+      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c1]}), 1))
   in
   let t1, actions =
     Impl.advance t1
-      (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c2]}, 2))
+      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c2]}), 2))
   in
   print t1 actions ;
   [%expect
@@ -498,23 +470,20 @@ let%expect_test "e2e conflict" =
                    sent: true
                    value: [Command(Read c1, 1)]
                    votes:
-                    [(0: idx: 0
-                         term: 1
+                    [(0: term: 1
                          vterm: 0
                          vvalue: [Command(Read c1, 1)]);
-                     (1: idx: 0
-                         term: 1
+                     (1: term: 1
                          vterm: 0
                          vvalue: [Command(Read c1, 1)]);
-                     (2: idx: 0
-                         term: 1
+                     (2: term: 1
                          vterm: 0
                          vvalue: [Command(Read c2, 2)])])]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [] |}] ;
   let t1, actions =
     Impl.advance t1
-      (Recv (SyncResp {idx= 0; term= 1; vterm= 0; vvalue= [c2]}, 3))
+      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c2]}), 3))
   in
   print t1 actions ;
   [%expect
@@ -534,7 +503,6 @@ let%expect_test "e2e conflict" =
                    value: [Command(Read c1, 1), Command(Read c2, 2)]
                    votes:
                     [(1:
-                      idx: 0
                       term: 1
                       vterm: 1
                       vvalue: [Command(Read c1, 1), Command(Read c2, 2)])])]
