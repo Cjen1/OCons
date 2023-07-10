@@ -31,12 +31,7 @@ module type CTypes = sig
 
   type message
 
-  val command_from_index :
-       log_index
-    -> ( 'a -> command Iter.t -> command Iter.t
-       , 'a -> t -> t
-       , [< A.getter] )
-       A.General.t
+  val get_command : log_index -> t -> command Iter.t
 
   val commit_index : ('a -> term -> term, 'a -> t -> t, [< A.field]) A.General.t
 
@@ -94,7 +89,7 @@ module ImperativeActions (C : CTypes) :
     let make_command_iter upto =
       (* make an iter from lowest un-committed command upwards *)
       Iter.int_range ~start:(init_commit_index + 1) ~stop:upto
-      |> Iter.map (fun idx -> (!s |> Option.get).t.@(command_from_index idx))
+      |> Iter.map (fun idx -> get_command idx (!s |> Option.get).t)
       |> Iter.concat
     in
     append_l

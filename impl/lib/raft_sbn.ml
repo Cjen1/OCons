@@ -48,10 +48,7 @@ module Types = struct
     ; current_leader: node_id option }
   [@@deriving accessors]
 
-  let command_from_index idx =
-    log
-    @> [%accessor A.getter (function s -> Log.get s idx)]
-    @> command @> singleton_iter
+  let get_command idx t = (Log.get t.log idx).command |> Iter.singleton
 
   module PP = struct
     include PP

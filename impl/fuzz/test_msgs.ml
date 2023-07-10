@@ -243,9 +243,9 @@ module ConspireSS = struct
     choose
       [ const Heartbeat
       ; map [int; conspire_value; int] (fun idx value term ->
-            Sync {idx; value; term} )
+            Sync (idx, {value; term}) )
       ; map [int; conspire_value; int; int] (fun idx vvalue vterm term ->
-            SyncResp {idx; vvalue; vterm; term} ) ]
+            SyncResp (idx, {vvalue; vterm; term}) ) ]
 
   let msg_equal = [%compare.equal: message]
 

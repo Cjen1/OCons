@@ -124,6 +124,9 @@ module SegmentLog = struct
     ensure_allocated i ;
     if t.vhi < i then t.vhi <- i
 
+  let allocate_next t =
+    allocate t (t.vhi + 1)
+
   let check t i =
     match () with
     | () when i < (t.allocated + 1) * t.segmentsize ->

@@ -15,7 +15,7 @@ let c4 node_id = make_config ~node_id ~replica_ids:[0; 1; 2; 3] ~fd_timeout:2 ()
 
 let print t acts =
   Fmt.pr "t: @[<v>%a@]@." PP.t_pp t ;
-  Fmt.pr "actions: @[%a@]@." Fmt.(brackets @@ Iter.pp_seq action_pp) acts
+  Fmt.pr "actions: @[%a@]@." Fmt.(brackets @@ list action_pp) acts
 
 let%expect_test "local_commit" =
   Imp.set_is_test true ;
@@ -34,12 +34,21 @@ let%expect_test "local_commit" =
        rep_log: [{term: 0
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
-       prop_log: [Committed(value: [Command(Read c1, 1)])]
+       prop_log:
+        [state: COMMITTED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes: [(0: term: 0
+                     vterm: 0
+                     vvalue: [Command(Read c1, 1)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2)]
-    actions: [Broadcast(Sync(idx: 0
+    actions: [CommitCommands(Command(Read c1, 1))
+              Broadcast(Sync(idx: 0
                              term: 0
-                             value: [Command(Read c1, 1)])),
-              CommitCommands(Command(Read c1, 1))] |}] ;
+                             value: [Command(Read c1, 1)]))] |}] ;
   let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
   print t actions ;
@@ -61,20 +70,44 @@ let%expect_test "local_commit" =
           vterm: 0
           vvalue: [Command(Read c3, 2)]}]
        prop_log:
-        [Committed(value: [Command(Read c1, 1)])
-         Committed(value: [Command(Read c2, 3)])
-         Committed(value: [Command(Read c3, 2)])]
+        [state: COMMITTED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes: [(0: term: 0
+                     vterm: 0
+                     vvalue: [Command(Read c1, 1)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct
+         state: COMMITTED
+         term: 0
+         value: [Command(Read c2, 3)]
+         votes: [(0: term: 0
+                     vterm: 0
+                     vvalue: [Command(Read c2, 3)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct
+         state: COMMITTED
+         term: 0
+         value: [Command(Read c3, 2)]
+         votes: [(0: term: 0
+                     vterm: 0
+                     vvalue: [Command(Read c3, 2)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2)]
-    actions: [Broadcast(Sync(idx: 1
-                             term: 0
-                             value: [Command(Read c2, 3)])),
+    actions: [CommitCommands(Command(Read c3, 2))
+              CommitCommands(Command(Read c2, 3))
               Broadcast(Sync(idx: 2
                              term: 0
-                             value: [Command(Read c3, 2)])),
-              CommitCommands(Command(Read c2, 3)),
-              CommitCommands(Command(Read c3, 2))] |}]
+                             value: [Command(Read c3, 2)]))
+              Broadcast(Sync(idx: 1
+                             term: 0
+                             value: [Command(Read c2, 3)]))] |}]
 
-let%expect_test "e2e commit recovery" =
+let%expect_test "e2e commit" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t1 = create (c4 1) in
@@ -94,12 +127,25 @@ let%expect_test "e2e commit recovery" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes: [(1: term: 0
-                               vterm: 0
-                               vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: -1
+               vterm: -1
+               vvalue: []);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
@@ -153,16 +199,25 @@ let%expect_test "e2e commit recovery" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: term: 0
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)]);
-                     (2: term: 0
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [] |}] ;
   let t1, actions = Impl.advance t1 (recv 3) in
@@ -177,11 +232,30 @@ let%expect_test "e2e commit recovery" =
        rep_log: [{term: 0
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
-       prop_log: [Committed(value: [Command(Read c1, 1)])]
+       prop_log:
+        [state: COMMITTED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (3: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [CommitCommands(Command(Read c1, 1))] |}]
 
-let%expect_test "e2e conflict" =
+let%expect_test "e2e conflict re-propose" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t1 = create (c4 1) in
@@ -201,12 +275,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes: [(1: term: 0
-                               vterm: 0
-                               vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: -1
+               vterm: -1
+               vvalue: []);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
@@ -225,12 +312,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes: [(1: term: 0
-                               vterm: 0
-                               vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: -1
+               vterm: -1
+               vvalue: []);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 0); (1: 2); (2: 0); (3: 0)]
     actions: [Broadcast(Heartbeat)] |}] ;
   let c2 = make_command (Read "c2") in
@@ -247,12 +347,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c2, 2)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c2, 2)]
-                   votes: [(2: term: 0
-                               vterm: 0
-                               vvalue: [Command(Read c2, 2)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c2, 2)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: -1
+               vterm: -1
+               vvalue: []);
+           (2: term: 0
+               vterm: 0
+               vvalue: [Command(Read c2, 2)]);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
@@ -292,12 +405,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c2, 2)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c2, 2)]
-                   votes: [(2: term: 1
-                               vterm: 0
-                               vvalue: [Command(Read c2, 2)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c2, 2)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: -1
+               vterm: -1
+               vvalue: []);
+           (2: term: 1
+               vterm: 0
+               vvalue: [Command(Read c2, 2)]);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(SyncResp(0,term: 1
                                    vterm: 0
@@ -318,12 +444,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes: [(1: term: 1
-                               vterm: 0
-                               vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: -1
+               vterm: -1
+               vvalue: []);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 0)]
     actions: [Broadcast(SyncResp(0,term: 1
                                    vterm: 0
@@ -343,19 +482,29 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: []
-                   votes: [(3: term: 1
-                               vterm: 0
-                               vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: []
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: -1
+               vterm: -1
+               vvalue: []);
+           (2: term: -1
+               vterm: -1
+               vvalue: []);
+           (3: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(SyncResp(0,term: 1
                                    vterm: 0
-                                   vvalue: [Command(Read c1, 1)])),
-              Broadcast(Sync(idx: 0
-                             term: 0
-                             value: []))] |}] ;
+                                   vvalue: [Command(Read c1, 1)]))] |}] ;
   (* Conflict result *)
   let t1, actions =
     Impl.advance t1
@@ -373,16 +522,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes:
-                    [(1: term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)]);
-                     (3: term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: -1
+               vterm: -1
+               vvalue: []);
+           (3: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 2)]
     actions: [] |}] ;
   let t1, actions =
@@ -401,19 +559,32 @@ let%expect_test "e2e conflict" =
                   vterm: 1
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 1
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes: [(1: term: 1
-                               vterm: 1
-                               vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 1
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 1
+               vterm: 1
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: 1
+               vterm: 0
+               vvalue: [Command(Read c2, 2)]);
+           (3: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 1
                              value: [Command(Read c1, 1)]))] |}] ;
   ignore (t2, t3)
 
-let%expect_test "e2e conflict" =
+let%expect_test "e2e conflict merge" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t1 = create (c4 1) in
@@ -432,12 +603,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes: [(1: term: 0
-                               vterm: 0
-                               vvalue: [Command(Read c1, 1)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: -1
+               vterm: -1
+               vvalue: []);
+           (1: term: 0
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: -1
+               vterm: -1
+               vvalue: []);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
@@ -466,19 +650,25 @@ let%expect_test "e2e conflict" =
                   vterm: 0
                   vvalue: [Command(Read c1, 1)]}]
        prop_log:
-        [Undecided(term: 0
-                   sent: true
-                   value: [Command(Read c1, 1)]
-                   votes:
-                    [(0: term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)]);
-                     (1: term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c1, 1)]);
-                     (2: term: 1
-                         vterm: 0
-                         vvalue: [Command(Read c2, 2)])])]
+        [state: UNDECIDED
+         term: 0
+         value: [Command(Read c1, 1)]
+         votes:
+          [(0: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (1: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (2: term: 1
+               vterm: 0
+               vvalue: [Command(Read c2, 2)]);
+           (3: term: -1
+               vterm: -1
+               vvalue: [])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [] |}] ;
   let t1, actions =
@@ -498,14 +688,25 @@ let%expect_test "e2e conflict" =
           vterm: 1
           vvalue: [Command(Read c1, 1), Command(Read c2, 2)]}]
        prop_log:
-        [Undecided(term: 1
-                   sent: true
-                   value: [Command(Read c1, 1), Command(Read c2, 2)]
-                   votes:
-                    [(1:
-                      term: 1
-                      vterm: 1
-                      vvalue: [Command(Read c1, 1), Command(Read c2, 2)])])]
+        [state: UNDECIDED
+         term: 1
+         value: [Command(Read c1, 1), Command(Read c2, 2)]
+         votes:
+          [(0: term: 1
+               vterm: 0
+               vvalue: [Command(Read c1, 1)]);
+           (1: term: 1
+               vterm: 1
+               vvalue: [Command(Read c1, 1), Command(Read c2, 2)]);
+           (2: term: 1
+               vterm: 0
+               vvalue: [Command(Read c2, 2)]);
+           (3: term: 1
+               vterm: 0
+               vvalue: [Command(Read c2, 2)])]
+         max_term: correct
+         max_term_count: correct
+         match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 1

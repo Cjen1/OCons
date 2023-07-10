@@ -163,8 +163,4 @@ module ConspireSS = struct
   let parse = Line_prot.ConspireSS.parse
 
   let serialise = Line_prot.ConspireSS.serialise
-
-  let advance t e =
-    let t, a = advance t e in
-    (t, Iter.to_list a)
 end
