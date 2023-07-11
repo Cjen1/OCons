@@ -49,6 +49,7 @@ module Types = struct
   [@@deriving accessors]
 
   let get_command idx t = (Log.get t.log idx).command |> Iter.singleton
+  let get_commit_index t = t.commit_index
 
   module PP = struct
     include Prevote.Types.PP

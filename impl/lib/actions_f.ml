@@ -1,5 +1,4 @@
 open Types
-open Accessor.O
 open Ocons_core.Consensus_intf
 
 module type ActionSig = sig
@@ -33,7 +32,7 @@ module type CTypes = sig
 
   val get_command : log_index -> t -> command Iter.t
 
-  val commit_index : ('a -> term -> term, 'a -> t -> t, [< A.field]) A.General.t
+  val get_commit_index : t -> log_index
 
   module PP : sig
     val message_pp : message Fmt.t
@@ -58,7 +57,7 @@ module ImperativeActions (C : CTypes) :
 
   let s = ref None
 
-  let s_init t = {action_acc= []; starting_cid= t.@(commit_index); t}
+  let s_init t = {action_acc= []; starting_cid= get_commit_index t; t}
 
   let send d m =
     (!s |> Option.get).action_acc <-
@@ -82,8 +81,9 @@ module ImperativeActions (C : CTypes) :
     let open Iter in
     let commit_upto =
       let ct = (!s |> Option.get).t in
-      if ct.@(commit_index) > (!s |> Option.get).starting_cid then
-        Some ct.@(commit_index)
+      let ci = get_commit_index ct in
+      if ci > (!s |> Option.get).starting_cid then
+        Some (ci)
       else None
     in
     let make_command_iter upto =
@@ -100,7 +100,7 @@ module ImperativeActions (C : CTypes) :
 
   let run_side_effects f t =
     s := Some (s_init t) ;
-    let init_commit_index = t.@(commit_index) in
+    let init_commit_index = get_commit_index t  in
     f () ;
     ((!s |> Option.get).t, get_actions init_commit_index)
 

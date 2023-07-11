@@ -98,6 +98,8 @@ module Types = struct
 
   let get_command idx t = (Log.get t.prop_log idx).value |> Iter.of_list
 
+  let get_commit_index t = t.commit_index
+
   module PP = struct
     open Fmt
 
@@ -228,8 +230,6 @@ struct
   open Act
 
   let ex = ()
-
-  let log_idx idx = [%accessor Accessor.getter (fun at -> Log.get at idx)]
 
   let get_msg_term = function
     | Sync (_, {term; _}) | SyncResp (_, {term; _}) ->
