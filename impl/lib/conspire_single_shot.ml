@@ -313,7 +313,10 @@ struct
     match !res with Some v -> v | None -> merge vote_counts
 
   let check_conflict idx le ct =
-    if (not le.committed) && le.max_term > le.term && ct.valid_quorum le.max_term_count then
+    if
+      (not le.committed) && le.max_term > le.term
+      && ct.valid_quorum le.max_term_count
+    then
       let votes =
         htbl_iter le.votes
         |> Iter.filter (fun (v : vote) -> v.term = le.max_term)
@@ -413,14 +416,8 @@ struct
     | Commands ci ->
         let start = Log.highest ct.prop_log + 1 in
         IterLabels.iter ci ~f:(fun c ->
-            Log.add ct.prop_log
-              { committed= false
-              ; term= 0
-              ; value= [c]
-              ; votes= init_votes ct.config
-              ; max_term= -1
-              ; max_term_count= 0
-              ; match_vote_count= 0 } ) ;
+            let le = Log.allocate_add ct.prop_log in
+            le.value <- [c] ) ;
         let stop = Log.highest ct.prop_log in
         Log.iteri ct.prop_log ~lo:start ~hi:stop (fun (idx, le) ->
             broadcast @@ Sync (idx, {value= le.value; term= le.term}) )

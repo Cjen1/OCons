@@ -182,6 +182,9 @@ module SegmentLog = struct
     ((fun f -> iter (fun (_, x) -> f x)), len)
 
   let add t v = set t (t.vhi + 1) v
+  let allocate_add t = 
+    allocate t (t.vhi + 1);
+    get t t.vhi
 
   let mem t i = 0 <= i && i <= t.vhi
 
