@@ -124,12 +124,13 @@ module SegmentLog = struct
     ensure_allocated i ;
     if t.vhi < i then t.vhi <- i
 
-  let allocate_next t =
-    allocate t (t.vhi + 1)
+  let allocate_next t = allocate t (t.vhi + 1)
+
+  let is_alloc t i = i < (t.allocated + 1) * t.segmentsize
 
   let check t i =
     match () with
-    | () when i < (t.allocated + 1) * t.segmentsize ->
+    | () when is_alloc t i ->
         ()
     | _ ->
         raise
@@ -145,6 +146,8 @@ module SegmentLog = struct
     check t i ;
     Array.get (IHTbl.find_exn t.segments (id_to_seg t i)) (i mod t.segmentsize)
 
+  let find t i = if i <= t.vhi then Some (get t i) else None
+
   let set t i v =
     allocate t i ;
     Array.set
@@ -154,11 +157,13 @@ module SegmentLog = struct
 
   let to_seq t ?(lo = 0) ?(hi = t.vhi) : 'a Seq.t =
     let lo = max 0 lo in
-    Seq.unfold (fun i -> if i = hi then Some (get t i, i + 1) else None) lo
+    Seq.unfold (fun i -> if i <= hi then Some (get t i, i + 1) else None) lo
 
   let to_seqi t ?(lo = 0) ?(hi = t.vhi) : 'a Seq.t =
     let lo = max 0 lo in
-    Seq.unfold (fun i -> if i = hi then Some ((i, get t i), i + 1) else None) lo
+    Seq.unfold
+      (fun i -> if i <= hi then Some ((i, get t i), i + 1) else None)
+      lo
 
   let iteri t ?(lo = 0) ?(hi = t.vhi) : (int * 'a) Iter.t =
     let lo = max 0 lo in
@@ -182,8 +187,9 @@ module SegmentLog = struct
     ((fun f -> iter (fun (_, x) -> f x)), len)
 
   let add t v = set t (t.vhi + 1) v
-  let allocate_add t = 
-    allocate t (t.vhi + 1);
+
+  let allocate_add t =
+    allocate t (t.vhi + 1) ;
     get t t.vhi
 
   let mem t i = 0 <= i && i <= t.vhi
@@ -252,3 +258,15 @@ let comp cmp a b =
   if r < 0 then LT else if r > 0 then GT else EQ
 
 let singleton_iter = [%accessor Accessor.getter (fun s -> Iter.singleton s)]
+
+let htbl_iter htbl f = Core.Hashtbl.iter htbl ~f
+
+let htbl_iteri htbl f =
+  Core.Hashtbl.iteri htbl ~f:(fun ~key ~data -> f key data)
+
+let rec seq_zip seq_iter () =
+  let open Core in
+  if Iter.is_empty seq_iter then Seq.Nil
+  else
+    let vs = seq_iter |> Iter.filter_map Seq.uncons in
+    Seq.Cons (Iter.map fst vs, seq_zip (Iter.map snd vs))

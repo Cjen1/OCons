@@ -28,4 +28,5 @@
     eio_main
     eio_linux
     tdigest
+    core_bench
     ))
