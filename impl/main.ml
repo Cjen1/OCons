@@ -7,9 +7,17 @@ module RMain = Infra.Make (Impl_core.Raft)
 module RMain_sbn = Infra.Make (Impl_core.RaftSBN)
 module PRMain = Infra.Make (Impl_core.PrevoteRaft)
 module PRMain_sbn = Infra.Make (Impl_core.PrevoteRaftSBN)
+module ConspireMain = Infra.Make (Impl_core.Conspire)
 module ConspireSSMain = Infra.Make (Impl_core.ConspireSS)
 
-type kind = Paxos | Raft | PRaft | Raft_sbn | PRaft_sbn | ConspireSS
+type kind =
+  | Paxos
+  | Raft
+  | PRaft
+  | Raft_sbn
+  | PRaft_sbn
+  | Conspire
+  | ConspireSS
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length stat_report
@@ -72,7 +80,20 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "config = %a" Impl_core.Types.config_pp shared_config ;
       PRMain_sbn.run env cfg
   | ConspireSS ->
-      let replica_ids = List.map (fun (i, _) -> i) node_addresses in
+      let replica_ids =
+        List.map (fun (i, _) -> i) node_addresses
+        |> Core.List.sort ~compare:Int.compare
+      in
+      let replica_ids_norm =
+        Iter.of_list replica_ids
+        |> Iter.mapi (fun i v -> (v, i))
+        |> Iter.to_list
+      in
+      Eio.traceln "%a" Fmt.(list ~sep:comma @@ pair int int) replica_ids_norm ;
+      let replica_ids = List.map snd replica_ids_norm in
+      let node_id =
+        Core.List.Assoc.find_exn replica_ids_norm ~equal:Int.equal node_id
+      in
       let conspire_cfg =
         Impl_core.ConspireSS.make_config ~node_id ~replica_ids ~fd_timeout:2
           ~max_outstanding ()
@@ -81,6 +102,19 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Starting Conspire with single-shot instances per log entry" ;
       Eio.traceln "config = %a" Impl_core.ConspireSS.PP.config_pp conspire_cfg ;
       ConspireSSMain.run env cfg
+  | Conspire ->
+      let replica_ids =
+        List.map (fun (i, _) -> i) node_addresses
+        |> Core.List.sort ~compare:Int.compare
+      in
+      let conspire_cfg =
+        Impl_core.Conspire.make_config ~node_id ~replica_ids ~fd_timeout:2
+          ~max_outstanding ()
+      in
+      let cfg = config conspire_cfg in
+      Eio.traceln "Starting Conspire" ;
+      Eio.traceln "config = %a" Impl_core.Conspire.PP.config_pp conspire_cfg ;
+      ConspireMain.run env cfg
 
 open Cmdliner
 
@@ -213,7 +247,8 @@ let cmd =
         ; ("raft+sbn", Raft_sbn)
         ; ("prevote-raft", PRaft)
         ; ("prevote-raft+sbn", PRaft_sbn)
-        ; ("conspire", ConspireSS) ]
+        ; ("conspire-ss", ConspireSS)
+        ; ("conspire", Conspire) ]
     in
     Arg.(
       required

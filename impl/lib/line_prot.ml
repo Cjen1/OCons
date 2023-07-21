@@ -331,3 +331,14 @@ module ConspireSS = struct
   let serialise m w = BW.write w bin_write_message bin_size_message m
   let parse r = BR.read bin_read_message r
 end
+
+module Conspire = struct
+  open! Core
+  open Conspire.Types
+
+  module BR = Eio.Buf_read.Bin_io(Bin_prot.Utils)
+  module BW = Eio.Buf_write.Bin_io(Bin_prot.Utils)
+
+  let serialise m w = BW.write w bin_write_message bin_size_message m
+  let parse r = BR.read bin_read_message r
+end

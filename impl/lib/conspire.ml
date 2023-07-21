@@ -31,9 +31,10 @@ module Types = struct
     ; other_replica_ids: node_id list
     ; replica_count: int
     ; quorum_size: int
-    ; fd_timeout: int }
+    ; fd_timeout: int 
+    ; max_outstanding: int}
 
-  let make_config ~node_id ~replica_ids ~fd_timeout () : config =
+  let make_config ~node_id ~replica_ids ~fd_timeout ?(max_outstanding = 8192) () : config =
     let floor f = f |> Int.of_float in
     let replica_count = List.length replica_ids in
     let quorum_size = floor (2. *. Float.of_int replica_count /. 3.) + 1 in
@@ -43,16 +44,19 @@ module Types = struct
     ; other_replica_ids= List.filter replica_ids ~f:(fun i -> not (i = node_id))
     ; replica_count
     ; quorum_size
-    ; fd_timeout }
+    ; fd_timeout 
+    ; max_outstanding}
 
   type fd_sm = {state: (node_id, int) Hashtbl.t}
 
   type log_entry = Value.t [@@deriving compare, bin_io]
 
   type log_update = {segment_entries: log_entry list; segment_start: log_index}
+  [@@deriving bin_io]
 
   type message =
     {term: term; vval: log_update; vterm: term; commit_index: log_index}
+  [@@deriving bin_io]
 
   type state = {vval: log_entry Log.t; mutable vterm: term; mutable term: term}
 
@@ -434,3 +438,5 @@ struct
               |> List.map ~f:(fun id -> (id, config.fd_timeout)) ) }
     ; command_queue= Queue.create () }
 end
+
+module Impl = Make (ImperativeActions (Types))
