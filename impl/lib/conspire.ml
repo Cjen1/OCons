@@ -1,6 +1,6 @@
-open Core
-open Types
-open Utils
+open! Core
+open! Types
+open! Utils
 open C.Types
 open Actions_f
 open Ocons_core.Consensus_intf
@@ -77,9 +77,9 @@ module Types = struct
     let invrs_pp ppf invrs =
       match
         List.filter_map invrs ~f:(function
-          | _, false ->
+          | _, true ->
               None
-          | s, true ->
+          | s, false ->
               Some s )
       with
       | ls when List.is_empty ls ->
@@ -90,7 +90,7 @@ module Types = struct
     let config_pp : config Fmt.t =
       let get_invrs cfg =
         [ ( "node_id not in other_replicas"
-          , Stdlib.List.mem cfg.node_id cfg.other_replica_ids )
+          , not @@ Stdlib.List.mem cfg.node_id cfg.other_replica_ids )
         ; ( "replica_count correct"
           , List.length cfg.replica_ids = cfg.replica_count ) ]
       in
@@ -150,7 +150,10 @@ module Types = struct
         ; field "state_cache"
             (fun t -> t.state_cache |> Map.to_alist)
             ( brackets @@ list @@ parens
-            @@ pair ~sep:(Fmt.any ":@ ") int state_pp ) ]
+            @@ pair ~sep:(Fmt.any ":@ ") int state_pp )
+        ; field "command_queue"
+            (fun t -> Queue.to_list t.command_queue)
+            (brackets @@ list @@ Command.pp) ]
   end
 end
 
@@ -160,14 +163,19 @@ struct
   include Types
   open Act
 
+  let is_live t nid =
+    nid = t.config.node_id || Hashtbl.find_exn t.failure_detector.state nid > 0
+
   type update_tracker =
     {mutable diverge_from: log_index option; mutable force: bool}
 
   let new_update_tracker () = {diverge_from= None; force= false}
 
   let update_diverge track idx =
-    Option.iter track.diverge_from ~f:(fun d ->
-        track.diverge_from <- Some (min d idx) )
+    let r =
+      match track.diverge_from with None -> idx | Some prev -> min prev idx
+    in
+    track.diverge_from <- Some r
 
   let tracked_set track log idx v =
     let exists = Log.mem log idx in
@@ -175,17 +183,14 @@ struct
       update_diverge track idx ; Log.set log idx v )
 
   let replicate_state t tracker =
-    Fmt.pr "diverge: %a@."
-      Fmt.(option ~none:(Fmt.any "None") int)
-      tracker.diverge_from ;
     let rep ?diverge_from t dst =
+      let sent_upto = Map.find_exn t.sent_cache dst in
       let segment_start =
-        let sent_upto = !(Map.find_exn t.sent_cache dst) in
         match diverge_from with
         | None ->
-            sent_upto
+            !sent_upto + 1
         | Some idx ->
-            min idx sent_upto
+            min idx (!sent_upto + 1)
       in
       send dst
         { term= t.local_state.term
@@ -194,7 +199,8 @@ struct
             { segment_start
             ; segment_entries=
                 Log.iter t.local_state.vval ~lo:segment_start |> Iter.to_list }
-        ; commit_index= t.commit_index }
+        ; commit_index= t.commit_index } ;
+      sent_upto := Log.highest t.local_state.vval
     in
     match tracker with
     | {diverge_from= Some _; _} | {force= true; _} ->
@@ -291,6 +297,7 @@ struct
       tracker.force <- true ;
       check_commit t tracker )
 
+  (* All live nodes vote *)
   let check_conflict_recovery t tracker =
     let votes =
       t.config.replica_ids |> Iter.of_list
@@ -301,57 +308,75 @@ struct
                Map.find_exn t.state_cache nid )
     in
     let max_term = votes |> Iter.fold (fun acc s -> max acc s.term) (-1) in
-    let num_max_term_votes =
-      votes |> Iter.filter_count (fun s -> s.term = max_term)
-    in
-    if num_max_term_votes >= t.config.quorum_size then
-      let votes = votes |> Iter.filter (fun s -> s.term = max_term) in
-      let missing_votes = t.config.replica_count - Iter.length votes in
-      let max_vterm = votes |> Iter.fold (fun acc s -> max acc s.vterm) (-1) in
-      let vterm_votes = votes |> Iter.filter (fun s -> s.vterm = max_vterm) in
-      let o4 num_value_votes =
-        num_value_votes + missing_votes >= t.config.quorum_size
+    if max_term > t.local_state.vterm then
+      let num_max_term_votes =
+        votes |> Iter.filter_count (fun s -> s.term = max_term)
       in
-      let unfolder s idx =
-        if Log.mem s.vval idx then Some (Log.get s.vval idx, idx + 1) else None
+      let all_live_nodes_vote =
+        t.config.replica_ids
+        |> List.for_all ~f:(fun nid ->
+               let ( => ) a b = (not a) || b in
+               is_live t nid
+               =>
+               let s =
+                 if nid = t.config.node_id then t.local_state
+                 else Map.find_exn t.state_cache nid
+               in
+               s.term = max_term )
       in
-      let seqs =
-        vterm_votes
-        |> Iter.map (fun s -> Seq.unfold (unfolder s) (t.commit_index + 1))
-        |> seq_zip
-        |> Seq.mapi (fun i s -> (i + t.commit_index + 1, s))
-      in
-      let merge_votes (counts : (log_entry, int) Hashtbl.t) idx =
-        let v =
-          counts |> Hashtbl.keys |> List.concat
-          |> List.sort ~compare:Command.compare
+      if num_max_term_votes >= t.config.quorum_size && all_live_nodes_vote then (
+        let votes = votes |> Iter.filter (fun s -> s.term = max_term) in
+        let missing_votes = t.config.replica_count - Iter.length votes in
+        let max_vterm =
+          votes |> Iter.fold (fun acc s -> max acc s.vterm) (-1)
         in
-        tracked_set tracker t.local_state.vval idx v
-      in
-      let found_non_o4 = ref false in
-      let check_o4_value counts idx =
-        let o4_value =
-          Hashtbl.fold counts ~init:None ~f:(fun ~key ~data:count prev ->
-              match prev with
-              | Some v ->
-                  Some v
-              | None ->
-                  if o4 count then Some key else None )
+        let vterm_votes = votes |> Iter.filter (fun s -> s.vterm = max_vterm) in
+        let o4 num_value_votes =
+          num_value_votes + missing_votes >= t.config.quorum_size
         in
-        match o4_value with
-        | Some v ->
-            tracked_set tracker t.local_state.vval idx v
-        | None ->
-            found_non_o4 := true ;
-            merge_votes counts idx
-      in
-      seqs
-      |> Seq.iter (fun (idx, votes_for_idx) ->
-             let counts = Hashtbl.create (module Value) in
-             votes_for_idx |> Iter.iter (fun v -> Hashtbl.incr counts v) ;
-             if not !found_non_o4 then check_o4_value counts idx
-             else merge_votes counts idx )
-  (* TODO add commands from q *)
+        let max_idx =
+          vterm_votes
+          |> Iter.fold (fun prev v -> max prev @@ Log.highest v.vval) (-1)
+        in
+        let merge values =
+          let s = Set.empty (module Command) in
+          IterLabels.fold values ~init:s ~f:(fun s vs ->
+              List.fold vs ~init:s ~f:Set.add )
+          |> Set.to_list
+        in
+        let state = ref `O4 in
+        Iter.int_range ~start:(t.commit_index + 1) ~stop:max_idx (fun idx ->
+            let values =
+              vterm_votes |> Iter.filter_map (fun v -> Log.find v.vval idx)
+            in
+            match !state with
+            | `O4 -> (
+                let value_counts =
+                  Iter.count ~hash:Value.hash ~eq:[%compare.equal: Value.t]
+                    values
+                in
+                let o4_value = ref None in
+                value_counts (fun (v, c) ->
+                    if o4 c then (
+                      assert (Option.is_none !o4_value) ;
+                      o4_value := Some v ) ) ;
+                match !o4_value with
+                | None ->
+                    tracked_set tracker t.local_state.vval idx (merge values) ;
+                    state := `NonO4
+                | Some v ->
+                    tracked_set tracker t.local_state.vval idx v ;
+                    state := `O4 )
+            | `NonO4 ->
+                tracked_set tracker t.local_state.vval idx (merge values) ;
+                state := `NonO4 ) ;
+        t.local_state.vterm <- max_term ;
+        t.local_state.term <- max_term ;
+        (* TODO avoid block when conflict *)
+        let start = Log.highest t.local_state.vval + 1 in
+        Queue.iteri t.command_queue ~f:(fun i c ->
+            tracked_set tracker t.local_state.vval (i + start) [c] ) ;
+        Queue.clear t.command_queue )
 
   let failure_detector_update t (event : message event) =
     match event with

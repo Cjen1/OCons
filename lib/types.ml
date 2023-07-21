@@ -39,19 +39,24 @@ let sm_op_pp ppf v =
       Fmt.pf ppf "NoOp"
 
 module Command = struct
-  type t = {op: sm_op; id: command_id; mutable trace_start: float}
-  [@@deriving sexp, compare, bin_io]
+  module T = struct
+    type t = {op: sm_op; id: command_id; mutable trace_start: float}
+    [@@deriving sexp, compare, bin_io]
 
-  let hash t = hash_command_id t.id
+    let hash t = hash_command_id t.id
 
-  let hash_fold_t s t = hash_fold_command_id s t.id
+    let hash_fold_t s t = hash_fold_command_id s t.id
 
-  let pp_mach ppf v =
-    Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
+    let pp_mach ppf v =
+      Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
 
-  let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
+    let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 
-  let equal a b = a.id = b.id
+    let equal a b = a.id = b.id
+  end
+
+  include T
+  include Comparable.Make (T)
 end
 
 type command = Command.t [@@deriving hash, sexp, compare, bin_io]
