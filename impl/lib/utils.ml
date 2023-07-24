@@ -146,8 +146,6 @@ module SegmentLog = struct
     check t i ;
     Array.get (IHTbl.find_exn t.segments (id_to_seg t i)) (i mod t.segmentsize)
 
-  let find t i = if i <= t.vhi then Some (get t i) else None
-
   let set t i v =
     allocate t i ;
     Array.set
@@ -194,6 +192,8 @@ module SegmentLog = struct
 
   let mem t i = 0 <= i && i <= t.vhi
 
+  let find t i = if mem t i then Some (get t i) else None
+
   let highest t = t.vhi
 
   let copy t =
@@ -203,7 +203,7 @@ module SegmentLog = struct
     ; vhi= t.vhi
     ; init= t.init }
 
-  let cut_after t idx = t.vhi <- idx
+  let cut_after t idx = t.vhi <- min t.vhi idx
 
   let create ?(segmentsize = 4096) init =
     { segmentsize

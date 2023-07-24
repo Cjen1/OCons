@@ -41,7 +41,7 @@ let sm_op_pp ppf v =
 module Command = struct
   module T = struct
     type t = {op: sm_op; id: command_id; mutable trace_start: float}
-    [@@deriving sexp, compare, bin_io]
+    [@@deriving sexp, bin_io]
 
     let hash t = hash_command_id t.id
 
@@ -51,6 +51,8 @@ module Command = struct
       Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
 
     let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
+
+    let compare a b = Int.compare a.id b.id
 
     let equal a b = a.id = b.id
   end

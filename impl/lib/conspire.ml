@@ -22,8 +22,6 @@ module LogEntry = struct
   include Core.Comparable.Make (T)
 end
 
-module LogEntryOptionalImmediate = struct end
-
 module Types = struct
   type config =
     { node_id: node_id
@@ -31,10 +29,11 @@ module Types = struct
     ; other_replica_ids: node_id list
     ; replica_count: int
     ; quorum_size: int
-    ; fd_timeout: int 
-    ; max_outstanding: int}
+    ; fd_timeout: int
+    ; max_outstanding: int }
 
-  let make_config ~node_id ~replica_ids ~fd_timeout ?(max_outstanding = 8192) () : config =
+  let make_config ~node_id ~replica_ids ~fd_timeout ?(max_outstanding = 8192) ()
+      : config =
     let floor f = f |> Int.of_float in
     let replica_count = List.length replica_ids in
     let quorum_size = floor (2. *. Float.of_int replica_count /. 3.) + 1 in
@@ -44,8 +43,8 @@ module Types = struct
     ; other_replica_ids= List.filter replica_ids ~f:(fun i -> not (i = node_id))
     ; replica_count
     ; quorum_size
-    ; fd_timeout 
-    ; max_outstanding}
+    ; fd_timeout
+    ; max_outstanding }
 
   type fd_sm = {state: (node_id, int) Hashtbl.t}
 
@@ -60,6 +59,8 @@ module Types = struct
 
   type state = {vval: log_entry Log.t; mutable vterm: term; mutable term: term}
 
+  type stall_checker = {mutable ticks_since_commit: int}
+
   type t =
     { local_state: state
     ; state_cache: (node_id, state, Int.comparator_witness) Map.t
@@ -67,7 +68,8 @@ module Types = struct
     ; mutable commit_index: log_index
     ; failure_detector: fd_sm
     ; config: config
-    ; command_queue: Command.t Queue.t }
+    ; command_queue: Command.t Queue.t
+    ; stall_checker: stall_checker }
 
   let get_command idx t = Log.get t.local_state.vval idx |> Iter.of_list
 
@@ -169,6 +171,52 @@ struct
 
   let is_live t nid =
     nid = t.config.node_id || Hashtbl.find_exn t.failure_detector.state nid > 0
+
+  let reset_stall_checker t = t.stall_checker.ticks_since_commit <- 10
+
+  let stall_check t =
+    let is_stalled = t.stall_checker.ticks_since_commit <= 0 in
+    let should_make_progress =
+      Log.highest t.local_state.vval > t.commit_index
+    in
+    if should_make_progress && is_stalled then (
+      let problem_idx = t.commit_index + 1 in
+      traceln "========== Stalled ==========" ;
+      traceln "%d stalled on %d" t.config.node_id problem_idx ;
+      (* Print the index for each replica
+         Print the sent_cache for each*)
+      let states =
+        t.config.replica_ids |> Iter.of_list
+        |> Iter.map (function
+             | nid when nid = t.config.node_id ->
+                 (nid, t.local_state)
+             | nid ->
+                 (nid, Map.find_exn t.state_cache nid) )
+      in
+      let s_pp : (node_id * state) Fmt.t =
+        Fmt.(
+          record
+            [ field "nid" (fun (id, _) -> id) int
+            ; field "term" (fun (_, (s : state)) -> s.term) int
+            ; field "vterm" (fun (_, (s : state)) -> s.vterm) int
+            ; field "vval"
+                (fun (_, (s : state)) ->
+                  let lo = problem_idx - 5 in
+                  let lo = max 0 lo in
+                  let hi = problem_idx + 5 in
+                  let hi = min hi (Log.highest s.vval) in
+                  { segment_start= lo
+                  ; segment_entries= Log.iter ~lo ~hi s.vval |> Iter.to_list }
+                  )
+                PP.log_update_pp ] )
+      in
+      traceln "%a@." Fmt.(list ~sep:cut s_pp) (states |> Iter.to_list) ;
+      traceln "Sent cache" ;
+      traceln "%a@."
+        Fmt.(list @@ parens @@ pair ~sep:(Fmt.any ":@ ") int int)
+        (t.sent_cache |> Map.to_alist |> List.map ~f:(fun (a, b) -> (a, !b))) ;
+      traceln "========== Stalled ==========" ) ;
+    if is_stalled then reset_stall_checker t
 
   type update_tracker =
     {mutable diverge_from: log_index option; mutable force: bool}
@@ -298,6 +346,7 @@ struct
     if count >= t.config.quorum_size then (
       Log.set t.local_state.vval checked_index r ;
       t.commit_index <- checked_index ;
+      reset_stall_checker t ;
       tracker.force <- true ;
       check_commit t tracker )
 
@@ -389,6 +438,10 @@ struct
     | _ ->
         ()
 
+  let trace_local_state change t =
+    if Ocons_core.Utils.debug_flag && false then
+      dtraceln "%s: %a" change (Fmt.braces PP.state_pp) t.local_state
+
   let handle_event t (event : message event) =
     failure_detector_update t event ;
     match event with
@@ -401,10 +454,15 @@ struct
     | Recv (m, src) ->
         let update_tracker = new_update_tracker () in
         update_cache t src m ;
+        trace_local_state "init" t ;
         update_commit_index_from_msg t src m update_tracker ;
+        trace_local_state "commit_index update" t ;
         acceptor_update t src m update_tracker ;
+        trace_local_state "acceptor_resp" t ;
         check_commit t update_tracker ;
+        trace_local_state "try_commit" t ;
         check_conflict_recovery t update_tracker ;
+        trace_local_state "conflict_recovery" t ;
         replicate_state t update_tracker
     | Commands ci when not (t.local_state.term = t.local_state.vterm) ->
         ci |> Iter.iter (Queue.enqueue t.command_queue)
@@ -428,7 +486,7 @@ struct
     { config
     ; local_state= init_state ()
     ; state_cache= Map.of_key_set other_nodes_set ~f:(fun _ -> init_state ())
-    ; sent_cache= Map.of_key_set other_nodes_set ~f:(fun _ -> ref 0)
+    ; sent_cache= Map.of_key_set other_nodes_set ~f:(fun _ -> ref (-1))
     ; commit_index= -1
     ; failure_detector=
         { state=
@@ -436,7 +494,8 @@ struct
               (module Int)
               ( config.other_replica_ids
               |> List.map ~f:(fun id -> (id, config.fd_timeout)) ) }
-    ; command_queue= Queue.create () }
+    ; command_queue= Queue.create ()
+    ; stall_checker= {ticks_since_commit= 10} }
 end
 
 module Impl = Make (ImperativeActions (Types))

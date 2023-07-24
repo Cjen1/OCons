@@ -1511,3 +1511,165 @@ let%expect_test "conflict o4&merge" =
                       start: 1
                       entries: [[Command(Read c2, 2)]; [Command(Read c3, 3)]]
                      vterm: 1)] |}]
+  (* TODO finish this test *)
+
+let%expect_test "4th vote bug" =
+  Imp.set_is_test true ;
+  reset_make_command_state () ;
+  let t0 = create (c4 0) in
+  let c1 = make_command (Read "c1") in
+  let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
+  print t0 actions ; [%expect{|
+    t: config:
+        node_id: 0
+        quorum_size: 3
+        fd_timeout: 2
+        invrs: Ok
+        replica_ids: [0, 1, 2, 3]
+       commit_index: -1
+       failure_detector: state: [(1: 2); (2: 2); (3: 2)]
+       local_state: term: 0
+                    vterm: 0
+                    vval: [[Command(Read c1, 1)]]
+       sent_cache: (1: 0)(2: 0)(3: 0)
+       state_cache:
+        [(1: term: 0
+             vterm: 0
+             vval: [])
+         (2: term: 0
+             vterm: 0
+             vval: [])
+         (3: term: 0
+             vterm: 0
+             vval: [])]
+       command_queue: []
+    actions: [Send(1,term: 0
+                     commit_index: -1
+                     vval: start: 0
+                           entries: [[Command(Read c1, 1)]]
+                     vterm: 0)
+              Send(2,term: 0
+                     commit_index: -1
+                     vval: start: 0
+                           entries: [[Command(Read c1, 1)]]
+                     vterm: 0)
+              Send(3,term: 0
+                     commit_index: -1
+                     vval: start: 0
+                           entries: [[Command(Read c1, 1)]]
+                     vterm: 0)] |}];
+  let t0, actions =
+    Impl.advance t0
+      (Recv
+         ( { commit_index= -1
+           ; term= 0
+           ; vterm= 0
+           ; vval= {segment_start= 0; segment_entries= [[c1]]} }
+         , 1 ) )
+  in print t0 actions ; [%expect{|
+    t: config:
+        node_id: 0
+        quorum_size: 3
+        fd_timeout: 2
+        invrs: Ok
+        replica_ids: [0, 1, 2, 3]
+       commit_index: -1
+       failure_detector: state: [(1: 2); (2: 2); (3: 2)]
+       local_state: term: 0
+                    vterm: 0
+                    vval: [[Command(Read c1, 1)]]
+       sent_cache: (1: 0)(2: 0)(3: 0)
+       state_cache:
+        [(1: term: 0
+             vterm: 0
+             vval: [[Command(Read c1, 1)]])
+         (2: term: 0
+             vterm: 0
+             vval: [])
+         (3: term: 0
+             vterm: 0
+             vval: [])]
+       command_queue: []
+    actions: [] |}];
+  let t0, actions =
+    Impl.advance t0
+      (Recv
+         ( { commit_index= -1
+           ; term= 0
+           ; vterm= 0
+           ; vval= {segment_start= 0; segment_entries= [[c1]]} }
+         , 2 ) )
+  in print t0 actions ; [%expect{|
+    t: config:
+        node_id: 0
+        quorum_size: 3
+        fd_timeout: 2
+        invrs: Ok
+        replica_ids: [0, 1, 2, 3]
+       commit_index: 0
+       failure_detector: state: [(1: 2); (2: 2); (3: 2)]
+       local_state: term: 0
+                    vterm: 0
+                    vval: [[Command(Read c1, 1)]]
+       sent_cache: (1: 0)(2: 0)(3: 0)
+       state_cache:
+        [(1: term: 0
+             vterm: 0
+             vval: [[Command(Read c1, 1)]])
+         (2: term: 0
+             vterm: 0
+             vval: [[Command(Read c1, 1)]])
+         (3: term: 0
+             vterm: 0
+             vval: [])]
+       command_queue: []
+    actions: [CommitCommands(Command(Read c1, 1))
+              Send(1,term: 0
+                     commit_index: 0
+                     vval: start: 1
+                           entries: []
+                     vterm: 0)
+              Send(2,term: 0
+                     commit_index: 0
+                     vval: start: 1
+                           entries: []
+                     vterm: 0)
+              Send(3,term: 0
+                     commit_index: 0
+                     vval: start: 1
+                           entries: []
+                     vterm: 0)] |}];
+  let t0, actions =
+    Impl.advance t0
+      (Recv
+         ( { commit_index= -1
+           ; term= 0
+           ; vterm= 0
+           ; vval= {segment_start= 0; segment_entries= [[c1]]} }
+         , 3 ) )
+  in print t0 actions ; [%expect{|
+    t: config:
+        node_id: 0
+        quorum_size: 3
+        fd_timeout: 2
+        invrs: Ok
+        replica_ids: [0, 1, 2, 3]
+       commit_index: 0
+       failure_detector: state: [(1: 2); (2: 2); (3: 2)]
+       local_state: term: 0
+                    vterm: 0
+                    vval: [[Command(Read c1, 1)]]
+       sent_cache: (1: 0)(2: 0)(3: 0)
+       state_cache:
+        [(1: term: 0
+             vterm: 0
+             vval: [[Command(Read c1, 1)]])
+         (2: term: 0
+             vterm: 0
+             vval: [[Command(Read c1, 1)]])
+         (3: term: 0
+             vterm: 0
+             vval: [[Command(Read c1, 1)]])]
+       command_queue: []
+    actions: [] |}];
+
