@@ -115,6 +115,7 @@ module Make (C : Consensus_intf.S) = struct
             |> take_at_least_one (min num_to_take 8192)
                (* Limit total intake size *)
             |> Iter.map (fun c ->
+                   TRACE.ex_in c;
                    t.debug.request_reporter () ;
                    c )
           in
@@ -166,15 +167,19 @@ module Make (C : Consensus_intf.S) = struct
     let cons = C.create_node node_id config in
     let state_machine = Core.Hashtbl.create (module Core.String) in
     let ticker = Ticker.create (clock :> Eio.Time.clock) period in
+    let run (rep, should_run) =
+      should_run := true;
+      rep
+    in
     let debug =
       { command_length_reporter=
-          InternalReporter.avg_reporter Int.to_float "cmd_len"
-      ; no_commands_reporter= InternalReporter.rate_reporter 0 "no-commands"
-      ; request_reporter= InternalReporter.rate_reporter 0 "request"
-      ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space"
-      ; commit_reporter= InternalReporter.rate_reporter 0 "commit"
+          InternalReporter.avg_reporter Int.to_float "cmd_len" |> run
+      ; no_commands_reporter= InternalReporter.rate_reporter 0 "no-commands" |> run
+      ; request_reporter= InternalReporter.rate_reporter 0 "request" |> run
+      ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space" |> run
+      ; commit_reporter= InternalReporter.rate_reporter 0 "commit" |> run
       ; main_loop_length_reporter=
-          InternalReporter.avg_reporter Fun.id "main_loop_delay"
+          InternalReporter.avg_reporter Fun.id "main_loop_delay" |> run
       ; clock= (clock :> Eio.Time.clock) }
     in
     let t =
@@ -232,6 +237,8 @@ module Make (C : Consensus_intf.S) = struct
 
   let run ~sw (env : _ env) node_id config period resolvers client_msgs
       client_resps port =
+    TRACE.run_commit := true;
+    TRACE.run_ex_in := true;
     let internal_streams = Hashtbl.create (List.length resolvers) in
     Fiber.fork ~sw (fun () ->
         Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) (fun () ->

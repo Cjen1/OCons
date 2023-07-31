@@ -56,7 +56,6 @@ module Types = struct
     ; config: config
     ; node_state: node_state
     ; current_term: term
-    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter
     ; current_leader: node_id option }
   [@@deriving accessors]
 
@@ -286,9 +285,8 @@ struct
           (t @> node_state @> Candidate.quorum)
           ~f:(Quorum.add src q_entries) ()
     (* Leader *)
-    | ( Recv (AppendEntriesResponse ({success= Ok idx; trace; _} as m), src)
+    | ( Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src)
       , Leader _ ) ->
-        Ocons_core.Utils.TRACE.rep_reply trace ;
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_ackd) () ~f:(IntMap.add src idx)
     | Recv (AppendEntriesResponse ({success= Error idx; _} as m), src), Leader _
@@ -339,7 +337,6 @@ struct
                      Error (min (prev_log_index - 1) (Log.highest ct.log))
                  ; trace= Unix.gettimeofday () }
         | true ->
-            ct.append_entries_length (snd entries) ;
             let index_iter =
               fst entries |> Iter.zip_i
               |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
@@ -425,8 +422,6 @@ struct
     ; config
     ; node_state= Follower {timeout= 0}
     ; current_term= 0
-    ; append_entries_length=
-        Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
     ; current_leader= None }
 
   let get_leader t = t.current_leader

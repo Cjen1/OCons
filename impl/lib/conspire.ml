@@ -321,8 +321,12 @@ struct
       in
       aux m.vval.segment_start
 
+  let commit_rate_reporter, should_run_cr_reporter =
+    Ocons_core.Utils.InternalReporter.rate_reporter 0 "commit rate"
+
   let rec check_commit t tracker =
     let checked_index = t.commit_index + 1 in
+    should_run_cr_reporter := true ;
     let votes =
       t.config.replica_ids |> Iter.of_list
       |> Iter.map (function
@@ -348,10 +352,28 @@ struct
       t.commit_index <- checked_index ;
       reset_stall_checker t ;
       tracker.force <- true ;
+      commit_rate_reporter () ;
       check_commit t tracker )
+
+  let conflict_recovery_rate, should_run_cra_reporter =
+    Ocons_core.Utils.InternalReporter.rate_reporter 0 "conflict rate"
+
+  let conflict_recovery_success_rate, should_run_cras_reporter =
+    Ocons_core.Utils.InternalReporter.rate_reporter 0 "conflict success rate"
+
+  let max_term_report, should_run_mt_reporter =
+    Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "max_term"
+
+  let max_term_delta, should_run_mtd_reporter =
+    Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float
+      "max_term - vterm"
 
   (* All live nodes vote *)
   let check_conflict_recovery t tracker =
+    should_run_cra_reporter := true ;
+    should_run_cras_reporter := true ;
+    should_run_mt_reporter := true ;
+    should_run_mtd_reporter := true ;
     let votes =
       t.config.replica_ids |> Iter.of_list
       |> Iter.map (function
@@ -361,7 +383,10 @@ struct
                Map.find_exn t.state_cache nid )
     in
     let max_term = votes |> Iter.fold (fun acc s -> max acc s.term) (-1) in
-    if max_term > t.local_state.vterm then
+    max_term_report max_term ;
+    if max_term > t.local_state.vterm then (
+      conflict_recovery_rate () ;
+      max_term_delta (max_term - t.local_state.vterm) ;
       let num_max_term_votes =
         votes |> Iter.filter_count (fun s -> s.term = max_term)
       in
@@ -378,6 +403,7 @@ struct
                s.term = max_term )
       in
       if num_max_term_votes >= t.config.quorum_size && all_live_nodes_vote then (
+        conflict_recovery_success_rate () ;
         let votes = votes |> Iter.filter (fun s -> s.term = max_term) in
         let missing_votes = t.config.replica_count - Iter.length votes in
         let max_vterm =
@@ -429,7 +455,7 @@ struct
         let start = Log.highest t.local_state.vval + 1 in
         Queue.iteri t.command_queue ~f:(fun i c ->
             tracked_set tracker t.local_state.vval (i + start) [c] ) ;
-        Queue.clear t.command_queue )
+        Queue.clear t.command_queue ) )
 
   let failure_detector_update t (event : message event) =
     match event with
@@ -442,7 +468,11 @@ struct
     if Ocons_core.Utils.debug_flag && false then
       dtraceln "%s: %a" change (Fmt.braces PP.state_pp) t.local_state
 
+  let command_added_reporter, should_run_ca_reporter =
+    Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands added"
+
   let handle_event t (event : message event) =
+    should_run_ca_reporter := true ;
     failure_detector_update t event ;
     match event with
     | Tick ->
@@ -471,11 +501,21 @@ struct
         let start = Log.highest t.local_state.vval + 1 in
         ci
         |> Iter.iteri (fun i c ->
-               tracked_set update_tracker t.local_state.vval (i + start) [c] ) ;
+               tracked_set update_tracker t.local_state.vval (i + start) [c] ;
+               command_added_reporter () ) ;
         check_commit t update_tracker ;
         replicate_state t update_tracker
 
-  let advance t e = run_side_effects (fun () -> handle_event t e) t
+  let advance t e =
+    run_side_effects
+      (fun () ->
+        try handle_event t e
+        with ex ->
+          traceln "FAILED while handling %a" (event_pp ~pp_msg:PP.message_pp) e ;
+          Stdlib.(
+            Printexc.raise_with_backtrace ex @@ Printexc.get_raw_backtrace () )
+        )
+      t
 
   let init_state () = {term= 0; vterm= 0; vval= Log.create []}
 

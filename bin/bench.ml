@@ -12,7 +12,10 @@ let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
     Mtime.Span.to_float_ns Mtime.Span.s /. rate
     |> Mtime.Span.of_float_ns |> Option.get
   in
-  let req_reporter = O.Utils.InternalReporter.rate_reporter 0 "req_dispatch" in
+  let req_reporter, should_run =
+    O.Utils.InternalReporter.rate_reporter 0 "req_dispatch"
+  in
+  should_run := true ;
   let rec aux = function
     | i, _ when i >= n ->
         ()
@@ -51,15 +54,19 @@ let to_float_s =
     let s = Mtime.span min s in
     Mtime.Span.to_float_ns s /. Mtime.Span.to_float_ns Mtime.Span.s
 
-let latency_reporter = O.Utils.InternalReporter.avg_reporter Fun.id "lat"
-
-let catcher_iter mclock requests responses (_, (cid, _, _)) =
-  if Array.get responses cid |> Option.is_none then (
-    let t = Eio.Time.Mono.now mclock in
-    let latency = Mtime.span t (Array.get requests cid) |> to_float_ms in
-    if latency > 500. then Magic_trace.take_snapshot () ;
-    Array.set responses cid (Some t) ;
-    latency_reporter latency )
+let catcher_iter mclock requests responses =
+  let reporter, should_run =
+    O.Utils.InternalReporter.avg_reporter Fun.id "lat"
+  in
+  should_run := true ;
+  fun (_, (cid, _, tr)) ->
+    if Array.get responses cid |> Option.is_none then (
+      Ocons_core.Utils.TRACE.ex_cli tr ;
+      let t = Eio.Time.Mono.now mclock in
+      let latency = Mtime.span t (Array.get requests cid) |> to_float_ms in
+      if latency > 500. then Magic_trace.take_snapshot () ;
+      Array.set responses cid (Some t) ;
+      reporter latency )
 
 let pp_stats ppf s =
   let s =
@@ -107,6 +114,7 @@ let pp_stats ppf s =
   Fmt.pf ppf "%a" pp_stats s
 
 let run sockaddrs id n rate outfile debug =
+  Ocons_core.Utils.TRACE.run_ex_cli := true ;
   let dispatch = Array.init n (fun _ -> Mtime.of_uint64_ns Int64.zero) in
   let response = Array.init n (fun _ -> None) in
   let ( / ) = Eio.Path.( / ) in

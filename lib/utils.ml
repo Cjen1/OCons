@@ -64,14 +64,10 @@ module InternalReporter = struct
       pps |> List.map (fun pp -> (pp, reset, running)) |> List.append !reporters
 
   let run_report period =
-    let pp_reporters = !reporters |> List.map (fun (v, _, _) -> v) in
+    let pp_reporters = !reporters |> List.filter (fun (_,_,running) -> !running) |> List.map (fun (v, _, _) -> v) in
     Eio.traceln "---- Report ----" ;
     Eio.traceln "%a" (Fmt.record pp_reporters) period ;
-    List.iter
-      (fun (_, r, f) ->
-        f := true ;
-        r () )
-      !reporters
+    List.iter (fun (_, r, running) -> if !running then r ()) !reporters
 
   let run ~sw clock period =
     if period > 0. then
@@ -89,7 +85,7 @@ module InternalReporter = struct
 
   type 'a reporter = 'a -> unit
 
-  let rate_reporter init name : unit reporter =
+  let rate_reporter init name : unit reporter * bool ref =
     let state = {v= init; v'= init} in
     let reset () = state.v <- state.v' in
     let open Fmt in
@@ -101,9 +97,9 @@ module InternalReporter = struct
     let running = ref false in
     let update () = if !running then state.v' <- state.v' + 1 in
     register_reporter pp reset running ;
-    update
+    (update, running)
 
-  let fold_reporter ~name ~f ~init ~pp : 'a reporter =
+  let fold_reporter ~name ~f ~init ~pp : 'a reporter * bool ref =
     let state = ref [] in
     let reset () = state := [] in
     let open Fmt in
@@ -111,7 +107,7 @@ module InternalReporter = struct
     let running = ref false in
     let update x = if !running then state := x :: !state in
     register_reporter pp reset running ;
-    update
+    (update, running)
 
   type avg_reporter_state =
     { mutable max: float
@@ -119,7 +115,7 @@ module InternalReporter = struct
     ; mutable sum: float
     ; mutable count: int }
 
-  let avg_reporter : 'a. ('a -> float) -> string -> 'a reporter =
+  let avg_reporter : 'a. ('a -> float) -> string -> 'a reporter * bool ref =
    fun conv name ->
     let state = {max= -1.; tdigest= Tdigest.create (); sum= 0.; count= 0} in
     let reset () =
@@ -156,34 +152,31 @@ module InternalReporter = struct
         state.sum <- state.sum +. dp )
     in
     register_reporter pp reset running ;
-    update
+    (update, running)
 
-  let trace_reporter : string -> time reporter =
+  let trace_reporter : string -> time reporter * bool ref =
    fun name ->
     let conv t = (Unix.gettimeofday () -. t) *. 1000. in
     avg_reporter conv name
 
-  let command_trace_reporter : string -> Command.t reporter =
+  let command_trace_reporter : string -> Command.t reporter * bool ref =
    fun name ->
-    let reporter = trace_reporter name in
-    fun c ->
-      let st = c.Command.trace_start in
-      update_command_time c ; reporter st
+    let reporter, runner = trace_reporter name in
+    ( (fun c ->
+        let st = c.Command.trace_start in
+        update_command_time c ; reporter st )
+    , runner )
 end
 
 module TRACE = struct
   (* External_infra.accept_handler *)
-  let cli_ex = InternalReporter.command_trace_reporter "TRACE:cli->ex"
+  let cli_ex, run_cli_ex = InternalReporter.command_trace_reporter "TRACE:cli->ex"
 
-  let ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
+  let ex_in, run_ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
 
-  let rep = InternalReporter.command_trace_reporter "TRACE:replicate"
+  let commit, run_commit= InternalReporter.command_trace_reporter "TRACE:commit "
 
-  let rep_reply = InternalReporter.trace_reporter "TRACE:replicate_reply"
+  let in_ex, run_in_ex = InternalReporter.trace_reporter "TRACE:in->ex "
 
-  let commit = InternalReporter.command_trace_reporter "TRACE:commit "
-
-  let in_ex = InternalReporter.trace_reporter "TRACE:in->ex "
-
-  let ex_cli = InternalReporter.trace_reporter "TRACE:ex->cli"
+  let ex_cli, run_ex_cli = InternalReporter.trace_reporter "TRACE:ex->cli"
 end

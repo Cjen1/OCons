@@ -43,7 +43,6 @@ module Types = struct
     ; config: config
     ; node_state: node_state
     ; current_term: term
-    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter
     ; random: Random.State.t
     ; current_leader: node_id option }
   [@@deriving accessors]
@@ -292,7 +291,6 @@ struct
                  ; success=
                      Error (min (prev_log_index - 1) (Log.highest ct.log)) }
         | true ->
-            ct.append_entries_length (snd entries) ;
             let index_iter =
               fst entries |> Iter.zip_i
               |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
@@ -376,8 +374,6 @@ struct
     ; config
     ; node_state= Follower {timeout= 0}
     ; current_term= 0
-    ; append_entries_length=
-        Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
     ; random= Random.State.make [|config.node_id|]
     ; current_leader= None }
 

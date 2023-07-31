@@ -89,9 +89,12 @@ let accept_handler t sock addr =
         (e, Printexc.get_raw_backtrace ())
 
 let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
+  TRACE.run_cli_ex := true;
+  TRACE.run_in_ex := true;
   Switch.run
   @@ fun sw ->
-  let req_reporter = InternalReporter.rate_reporter 0 "cli_req" in
+  let req_reporter, should_run = InternalReporter.rate_reporter 0 "cli_req" in
+  should_run := true;
   let t =
     { conn_tbl= Hashtbl.create 16
     ; req_tbl= Hashtbl.create 4096
