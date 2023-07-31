@@ -222,7 +222,9 @@ struct
                   )
                 PP.log_update_pp ] )
       in
-      traceln "@.%a@." Fmt.(brackets @@ list ~sep:cut s_pp) (states |> Iter.to_list) ;
+      traceln "@.%a@."
+        Fmt.(brackets @@ list ~sep:cut s_pp)
+        (states |> Iter.to_list) ;
       traceln "Sent cache" ;
       traceln "%a@."
         Fmt.(list @@ parens @@ pair ~sep:(Fmt.any ":@ ") int int)
@@ -490,10 +492,6 @@ struct
     | _ ->
         ()
 
-  let trace_local_state change t =
-    if Ocons_core.Utils.debug_flag && false then
-      dtraceln "%s: %a" change (Fmt.braces PP.state_pp) t.local_state
-
   let command_added_reporter, should_run_ca_reporter =
     Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands added"
 
@@ -511,15 +509,10 @@ struct
     | Recv (m, src) ->
         let update_tracker = new_update_tracker () in
         update_cache t src m ;
-        trace_local_state "init" t ;
         update_commit_index_from_msg t src m update_tracker ;
-        trace_local_state "commit_index update" t ;
         acceptor_update t src m update_tracker ;
-        trace_local_state "acceptor_resp" t ;
         check_commit t update_tracker ;
-        trace_local_state "try_commit" t ;
         check_conflict_recovery t update_tracker ;
-        trace_local_state "conflict_recovery" t ;
         replicate_state t update_tracker
     | Commands ci when not (t.local_state.term = t.local_state.vterm) ->
         ci

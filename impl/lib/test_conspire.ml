@@ -29,9 +29,9 @@ let%expect_test "local_commit" =
                fd_timeout: 2
                invrs: Ok
                replica_ids: [0]
-       commit_index: -1
        failure_detector: state: []
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: []
        sent_cache:
@@ -48,9 +48,9 @@ let%expect_test "local_commit" =
                fd_timeout: 2
                invrs: Ok
                replica_ids: [0]
-       commit_index: 0
        failure_detector: state: []
-       local_state: term: 0
+       local_state: commit_index: 0
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache:
@@ -67,9 +67,9 @@ let%expect_test "local_commit" =
                fd_timeout: 2
                invrs: Ok
                replica_ids: [0]
-       commit_index: 2
        failure_detector: state: []
        local_state:
+        commit_index: 2
         term: 0
         vterm: 0
         vval:
@@ -96,20 +96,23 @@ let%expect_test "e2e commit" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -131,9 +134,9 @@ let%expect_test "e2e commit" =
   let recv_c1 =
     Recv
       ( { term= 0
-        ; commit_index= -1
-        ; vval= {segment_start= 0; segment_entries= [[c1]]}
-        ; vterm= 0 }
+        ; vval_seg= {segment_start= 0; segment_entries= [[c1]]}
+        ; vterm= 0
+        ; commit_index= -1 }
       , 1 )
   in
   let t2, actions = Impl.advance t2 recv_c1 in
@@ -146,20 +149,23 @@ let%expect_test "e2e commit" =
       fd_timeout: 2
       invrs: Ok
       replica_ids: [0, 1, 2, 3]
-     commit_index: -1
      failure_detector: state: [(0: 2); (1: 2); (3: 2)]
-     local_state: term: 0
+     local_state: commit_index: -1
+                  term: 0
                   vterm: 0
                   vval: [[Command(Read c1, 1)]]
      sent_cache: (0: 0)(1: 0)(3: 0)
      state_cache:
-      [(0: term: 0
+      [(0: commit_index: -1
+           term: 0
            vterm: 0
            vval: [])
-       (1: term: 0
+       (1: commit_index: -1
+           term: 0
            vterm: 0
            vval: [[Command(Read c1, 1)]])
-       (3: term: 0
+       (3: commit_index: -1
+           term: 0
            vterm: 0
            vval: [])]
      command_queue: []
@@ -188,20 +194,23 @@ let%expect_test "e2e commit" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (1: 2); (2: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(1: 0)(2: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (1: term: 0
+         (1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -224,7 +233,7 @@ let%expect_test "e2e commit" =
     Recv
       ( { term= 0
         ; commit_index= -1
-        ; vval= {segment_start= 0; segment_entries= [[c1]]}
+        ; vval_seg= {segment_start= 0; segment_entries= [[c1]]}
         ; vterm= 0 }
       , i )
   in
@@ -238,20 +247,23 @@ let%expect_test "e2e commit" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -266,20 +278,23 @@ let%expect_test "e2e commit" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: 0
        failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: 0
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
@@ -317,20 +332,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -360,20 +378,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 0); (2: 0); (3: 0)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -403,20 +424,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (1: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c2, 2)]]
        sent_cache: (0: 0)(1: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (1: term: 0
+         (1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -439,7 +463,7 @@ let%expect_test "e2e conflict re-propose" =
     Recv
       ( { term= 0
         ; commit_index= -1
-        ; vval= {segment_start= 0; segment_entries= [[c]]}
+        ; vval_seg= {segment_start= 0; segment_entries= [[c]]}
         ; vterm= 0 }
       , i )
   in
@@ -453,20 +477,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (1: 2); (2: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(1: 0)(2: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (1: term: 0
+         (1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -496,20 +523,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (1: 2); (3: 2)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c2, 2)]]
        sent_cache: (0: 0)(1: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (1: term: 0
+         (1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -539,20 +569,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 0); (2: 2); (3: 0)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -581,20 +614,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (1: 2); (2: 2)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(1: 0)(2: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (1: term: 0
+         (1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])]
        command_queue: []
@@ -619,7 +655,7 @@ let%expect_test "e2e conflict re-propose" =
       (Recv
          ( { term= 1
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c1]]}
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]}
            ; commit_index= -1 }
          , 3 ) )
   in
@@ -632,20 +668,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 0); (2: 2); (3: 2)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (3: term: 1
+         (3: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
@@ -655,7 +694,7 @@ let%expect_test "e2e conflict re-propose" =
       (Recv
          ( { term= 1
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2]]}
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]}
            ; commit_index= -1 }
          , 2 ) )
   in
@@ -668,20 +707,23 @@ let%expect_test "e2e conflict re-propose" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 0); (2: 2); (3: 2)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 1
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 1
+         (2: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (3: term: 1
+         (3: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
@@ -705,20 +747,23 @@ let%expect_test "commit other" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 0); (2: 0); (3: 0)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -744,7 +789,7 @@ let%expect_test "commit other" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 0 ) )
   in
   print t1 actions ;
@@ -756,20 +801,23 @@ let%expect_test "commit other" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (2: 0); (3: 0)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -794,7 +842,7 @@ let%expect_test "commit other" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 2 ) )
   in
   print t1 actions ;
@@ -806,20 +854,23 @@ let%expect_test "commit other" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(0: 2); (2: 2); (3: 0)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -830,7 +881,7 @@ let%expect_test "commit other" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 3 ) )
   in
   print t1 actions ;
@@ -842,20 +893,23 @@ let%expect_test "commit other" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: 0
        failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-       local_state: term: 1
+       local_state: commit_index: 0
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c2, 2)]]
        sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
-        [(0: term: 0
+        [(0: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])]
        command_queue: []
@@ -892,20 +946,23 @@ let%expect_test "commit force remote" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -931,7 +988,7 @@ let%expect_test "commit force remote" =
          ( { commit_index= 0
            ; term= 0
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 1 ) )
   in
   print t0 actions ;
@@ -943,20 +1000,23 @@ let%expect_test "commit force remote" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: 0
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: 0
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c2, 2)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: 0
+             term: 0
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -995,20 +1055,23 @@ let%expect_test "conflict merge recovery" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1033,7 +1096,7 @@ let%expect_test "conflict merge recovery" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 1 ) )
   in
   print t0 actions ;
@@ -1045,20 +1108,23 @@ let%expect_test "conflict merge recovery" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 1
+        [(1: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1083,7 +1149,7 @@ let%expect_test "conflict merge recovery" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c3]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c3]]} }
          , 2 ) )
   in
   print t0 actions ;
@@ -1095,20 +1161,23 @@ let%expect_test "conflict merge recovery" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 1
+       local_state: commit_index: -1
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 1
+        [(1: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (2: term: 1
+         (2: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c3, 3)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1119,7 +1188,7 @@ let%expect_test "conflict merge recovery" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2; c3]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2; c3]]} }
          , 3 ) )
   in
   print t0 actions ;
@@ -1131,23 +1200,27 @@ let%expect_test "conflict merge recovery" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
        local_state:
+        commit_index: -1
         term: 1
         vterm: 1
         vval: [[Command(Read c1, 1), Command(Read c2, 2), Command(Read c3, 3)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 1
+        [(1: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c2, 2)]])
-         (2: term: 1
+         (2: commit_index: -1
+             term: 1
              vterm: 0
              vval: [[Command(Read c3, 3)]])
-         (3: term: 1
-             vterm: 0
-             vval: [[Command(Read c2, 2), Command(Read c3, 3)]])]
+         (3:
+          commit_index: -1
+          term: 1
+          vterm: 0
+          vval: [[Command(Read c2, 2), Command(Read c3, 3)]])]
        command_queue: []
     actions: [Send(1,term: 1
                      commit_index: -1
@@ -1196,22 +1269,25 @@ let%expect_test "conflict o4&merge" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 0); (2: 0); (3: 0)]
        local_state:
+        commit_index: -1
         term: 0
         vterm: 0
         vval:
          [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c5, 5)]]
        sent_cache: (1: 2)(2: 2)(3: 2)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1245,7 +1321,8 @@ let%expect_test "conflict o4&merge" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c1]; [c3]; [c5]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]; [c3]; [c5]]}
+           }
          , 1 ) )
   in
   print t0 actions ;
@@ -1257,9 +1334,9 @@ let%expect_test "conflict o4&merge" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 0); (3: 0)]
        local_state:
+        commit_index: -1
         term: 1
         vterm: 0
         vval:
@@ -1267,14 +1344,17 @@ let%expect_test "conflict o4&merge" =
        sent_cache: (1: 2)(2: 2)(3: 2)
        state_cache:
         [(1:
+          commit_index: -1
           term: 1
           vterm: 0
           vval:
            [[Command(Read c1, 1)], [Command(Read c3, 3)], [Command(Read c5, 5)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1303,9 +1383,9 @@ let%expect_test "conflict o4&merge" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 0); (3: 0)]
        local_state:
+        commit_index: -1
         term: 1
         vterm: 0
         vval:
@@ -1313,14 +1393,17 @@ let%expect_test "conflict o4&merge" =
        sent_cache: (1: 2)(2: 2)(3: 2)
        state_cache:
         [(1:
+          commit_index: -1
           term: 1
           vterm: 0
           vval:
            [[Command(Read c1, 1)], [Command(Read c3, 3)], [Command(Read c5, 5)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: [Command(Read c6, 6)]
@@ -1332,7 +1415,8 @@ let%expect_test "conflict o4&merge" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c2]; [c4]; [c4]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]; [c4]; [c4]]}
+           }
          , 2 ) )
   in
   print t0 actions ;
@@ -1344,9 +1428,9 @@ let%expect_test "conflict o4&merge" =
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 0)]
        local_state:
+        commit_index: -1
         term: 1
         vterm: 1
         vval:
@@ -1356,16 +1440,19 @@ let%expect_test "conflict o4&merge" =
        sent_cache: (1: 3)(2: 3)(3: 3)
        state_cache:
         [(1:
+          commit_index: -1
           term: 1
           vterm: 0
           vval:
            [[Command(Read c1, 1)], [Command(Read c3, 3)], [Command(Read c5, 5)]])
          (2:
+          commit_index: -1
           term: 1
           vterm: 0
           vval:
            [[Command(Read c2, 2)], [Command(Read c4, 4)], [Command(Read c4, 4)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1413,28 +1500,32 @@ let%expect_test "conflict o4&merge" =
   let t0, _ = Impl.advance t0 Tick in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1; c4])) in
   print t0 actions ;
-  [%expect {|
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 0); (2: 0); (3: 0)]
        local_state:
+        commit_index: -1
         term: 0
         vterm: 0
         vval: [[Command(Read c1, 1)], [Command(Read c4, 4)]]
        sent_cache: (1: 1)(2: 1)(3: 1)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1462,19 +1553,22 @@ let%expect_test "conflict o4&merge" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 1
-           ; vval= {segment_start= 0; segment_entries= [[c1]; [c2]; [c3]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]; [c2]; [c3]]}
+           }
          , 1 ) )
   in
-  print t0 actions ; [%expect {|
+  print t0 actions ;
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 0); (3: 0)]
        local_state:
+        commit_index: -1
         term: 1
         vterm: 1
         vval:
@@ -1482,14 +1576,17 @@ let%expect_test "conflict o4&merge" =
        sent_cache: (1: 2)(2: 2)(3: 2)
        state_cache:
         [(1:
+          commit_index: -1
           term: 1
           vterm: 1
           vval:
            [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c3, 3)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1511,7 +1608,7 @@ let%expect_test "conflict o4&merge" =
                       start: 1
                       entries: [[Command(Read c2, 2)]; [Command(Read c3, 3)]]
                      vterm: 1)] |}]
-  (* TODO finish this test *)
+(* TODO finish this test *)
 
 let%expect_test "4th vote bug" =
   Imp.set_is_test true ;
@@ -1519,27 +1616,32 @@ let%expect_test "4th vote bug" =
   let t0 = create (c4 0) in
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
-  print t0 actions ; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1557,69 +1659,81 @@ let%expect_test "4th vote bug" =
                      commit_index: -1
                      vval: start: 0
                            entries: [[Command(Read c1, 1)]]
-                     vterm: 0)] |}];
+                     vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c1]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 1 ) )
-  in print t0 actions ; [%expect{|
+  in
+  print t0 actions ;
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: -1
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: -1
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
-    actions: [] |}];
+    actions: [] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c1]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 2 ) )
-  in print t0 actions ; [%expect{|
+  in
+  print t0 actions ;
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: 0
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: 0
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [])]
        command_queue: []
@@ -1638,38 +1752,43 @@ let%expect_test "4th vote bug" =
                      commit_index: 0
                      vval: start: 1
                            entries: []
-                     vterm: 0)] |}];
+                     vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval= {segment_start= 0; segment_entries= [[c1]]} }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 3 ) )
-  in print t0 actions ; [%expect{|
+  in
+  print t0 actions ;
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
         fd_timeout: 2
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
-       commit_index: 0
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: term: 0
+       local_state: commit_index: 0
+                    term: 0
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
-        [(1: term: 0
+        [(1: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (2: term: 0
+         (2: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])
-         (3: term: 0
+         (3: commit_index: -1
+             term: 0
              vterm: 0
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
-    actions: [] |}];
-
+    actions: [] |}]
