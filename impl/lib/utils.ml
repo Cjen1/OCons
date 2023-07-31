@@ -117,7 +117,7 @@ module SegmentLog = struct
           ()
       | () ->
           t.allocated <- t.allocated + 1 ;
-          IHTbl.add_exn t.segments ~key:t.allocated
+          Core.Hashtbl.add_exn t.segments ~key:t.allocated
             ~data:(Array.init t.segmentsize (fun _ -> t.init ())) ;
           ensure_allocated i
     in
@@ -144,12 +144,12 @@ module SegmentLog = struct
 
   let get t i =
     check t i ;
-    Array.get (IHTbl.find_exn t.segments (id_to_seg t i)) (i mod t.segmentsize)
+    Array.get (Core.Hashtbl.find_exn t.segments (id_to_seg t i)) (i mod t.segmentsize)
 
   let set t i v =
     allocate t i ;
     Array.set
-      (IHTbl.find_exn t.segments (id_to_seg t i))
+      (Core.Hashtbl.find_exn t.segments (id_to_seg t i))
       (i mod t.segmentsize) v ;
     if t.vhi < i then t.vhi <- i
 
@@ -198,7 +198,7 @@ module SegmentLog = struct
 
   let copy t =
     { segmentsize= t.segmentsize
-    ; segments= IHTbl.map t.segments ~f:Array.copy
+    ; segments= Core.Hashtbl.map t.segments ~f:Array.copy
     ; allocated= t.allocated
     ; vhi= t.vhi
     ; init= t.init }

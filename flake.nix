@@ -22,7 +22,7 @@
         on = opam-nix.lib.${system};
         devPackagesQuery = {
           ocaml-lsp-server = "*";
-          ocamlformat = "*";
+          ocamlformat = "0.25.1";
           utop = "*";
         };
         repos = [

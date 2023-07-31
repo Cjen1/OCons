@@ -24,8 +24,10 @@
     base
     core
     core_unix
-    eio
+    (eio (>= 0.11))
     eio_main
     eio_linux
     tdigest
+    irmin
+    irmin-containers
     ))
