@@ -2058,7 +2058,7 @@ let%expect_test "Commit acceptor_increment race condition" =
         replica_ids: [0, 1, 2, 3]
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
        local_state: commit_index: 0
-                    term: 0
+                    term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
        sent_cache: (1: 0)(2: 0)(3: 0)
@@ -2077,17 +2077,17 @@ let%expect_test "Commit acceptor_increment race condition" =
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
     actions: [CommitCommands(Command(Read c1, 1))
-              Send(1,term: 0
+              Send(1,term: 1
                      commit_index: 0
                      vval: start: 0
                            entries: [[Command(Read c1, 1)]]
                      vterm: 0)
-              Send(2,term: 0
+              Send(2,term: 1
                      commit_index: 0
                      vval: start: 0
                            entries: [[Command(Read c1, 1)]]
                      vterm: 0)
-              Send(3,term: 0
+              Send(3,term: 1
                      commit_index: 0
                      vval: start: 0
                            entries: [[Command(Read c1, 1)]]

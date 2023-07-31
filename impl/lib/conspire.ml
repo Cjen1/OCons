@@ -298,7 +298,7 @@ struct
              tracked_set tracker t.local_state.vval idx
                (Log.get cached_state.vval idx) ) ;
       t.local_state.commit_index <- m.commit_index ;
-      update_diverge tracker old_ci )
+      update_diverge tracker (old_ci + 1) )
 
   let acceptor_update t src (m : message) tracker =
     let cached_state = Map.find_exn t.state_cache src in
