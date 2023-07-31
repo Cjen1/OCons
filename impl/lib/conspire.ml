@@ -54,18 +54,22 @@ module Types = struct
   [@@deriving bin_io]
 
   type message =
-    {term: term; vval: log_update; vterm: term; commit_index: log_index}
+    {term: term; vval_seg: log_update; vterm: term; commit_index: log_index}
   [@@deriving bin_io]
 
-  type state = {vval: log_entry Log.t; mutable vterm: term; mutable term: term}
+  type state =
+    { vval: log_entry Log.t
+    ; mutable vterm: term
+    ; mutable term: term
+    ; mutable commit_index: log_index }
 
-  type stall_checker = {mutable ticks_since_commit: int}
+  type stall_checker =
+    {mutable prev_commit_idx: log_index; mutable ticks_since_commit: int}
 
   type t =
     { local_state: state
     ; state_cache: (node_id, state, Int.comparator_witness) Map.t
     ; sent_cache: (node_id, int ref, Int.comparator_witness) Map.t
-    ; mutable commit_index: log_index
     ; failure_detector: fd_sm
     ; config: config
     ; command_queue: Command.t Queue.t
@@ -73,7 +77,7 @@ module Types = struct
 
   let get_command idx t = Log.get t.local_state.vval idx |> Iter.of_list
 
-  let get_commit_index t = t.commit_index
+  let get_commit_index t = t.local_state.commit_index
 
   module PP = struct
     open Fmt
@@ -122,12 +126,13 @@ module Types = struct
       record
         [ field "term" (fun (s : message) -> s.term) int
         ; field "commit_index" (fun (s : message) -> s.commit_index) int
-        ; field "vval" (fun (s : message) -> s.vval) log_update_pp
+        ; field "vval" (fun (s : message) -> s.vval_seg) log_update_pp
         ; field "vterm" (fun (s : message) -> s.vterm) int ]
 
     let state_pp =
       record
-        [ field "term" (fun s -> s.term) int
+        [ field "commit_index" (fun s -> s.commit_index) int
+        ; field "term" (fun s -> s.term) int
         ; field "vterm" (fun s -> s.vterm) int
         ; field "vval"
             (fun s -> Log.iter s.vval |> Iter.to_list)
@@ -145,7 +150,6 @@ module Types = struct
     let t_pp =
       record
         [ field "config" (fun t -> t.config) config_pp
-        ; field "commit_index" (fun t -> t.commit_index) int
         ; field "failure_detector" (fun t -> t.failure_detector) fd_sm_pp
         ; field "local_state" (fun t -> t.local_state) state_pp
         ; field "sent_cache"
@@ -172,15 +176,19 @@ struct
   let is_live t nid =
     nid = t.config.node_id || Hashtbl.find_exn t.failure_detector.state nid > 0
 
-  let reset_stall_checker t = t.stall_checker.ticks_since_commit <- 10
+  let reset_stall_checker t =
+    if t.local_state.commit_index > t.stall_checker.prev_commit_idx then
+      t.stall_checker.prev_commit_idx <- t.local_state.commit_index ;
+    t.stall_checker.ticks_since_commit <- 2
 
   let stall_check t =
     let is_stalled = t.stall_checker.ticks_since_commit <= 0 in
     let should_make_progress =
-      Log.highest t.local_state.vval > t.commit_index
+      Log.highest t.local_state.vval > t.local_state.commit_index
+      || Queue.length t.command_queue > 0
     in
     if should_make_progress && is_stalled then (
-      let problem_idx = t.commit_index + 1 in
+      let problem_idx = t.local_state.commit_index + 1 in
       traceln "========== Stalled ==========" ;
       traceln "%d stalled on %d" t.config.node_id problem_idx ;
       (* Print the index for each replica
@@ -197,9 +205,13 @@ struct
         Fmt.(
           record
             [ field "nid" (fun (id, _) -> id) int
+            ; field "commit_index" (fun (_, (s : state)) -> s.commit_index) int
             ; field "term" (fun (_, (s : state)) -> s.term) int
             ; field "vterm" (fun (_, (s : state)) -> s.vterm) int
-            ; field "vval"
+            ; field "vval_length"
+                (fun (_, (s : state)) -> Log.highest s.vval)
+                int
+            ; field "vval_porb"
                 (fun (_, (s : state)) ->
                   let lo = problem_idx - 5 in
                   let lo = max 0 lo in
@@ -210,12 +222,13 @@ struct
                   )
                 PP.log_update_pp ] )
       in
-      traceln "%a@." Fmt.(list ~sep:cut s_pp) (states |> Iter.to_list) ;
+      traceln "@.%a@." Fmt.(brackets @@ list ~sep:cut s_pp) (states |> Iter.to_list) ;
       traceln "Sent cache" ;
       traceln "%a@."
         Fmt.(list @@ parens @@ pair ~sep:(Fmt.any ":@ ") int int)
         (t.sent_cache |> Map.to_alist |> List.map ~f:(fun (a, b) -> (a, !b))) ;
       traceln "========== Stalled ==========" ) ;
+    t.stall_checker.ticks_since_commit <- t.stall_checker.ticks_since_commit - 1 ;
     if is_stalled then reset_stall_checker t
 
   type update_tracker =
@@ -247,11 +260,11 @@ struct
       send dst
         { term= t.local_state.term
         ; vterm= t.local_state.vterm
-        ; vval=
+        ; vval_seg=
             { segment_start
             ; segment_entries=
                 Log.iter t.local_state.vval ~lo:segment_start |> Iter.to_list }
-        ; commit_index= t.commit_index } ;
+        ; commit_index= t.local_state.commit_index } ;
       sent_upto := Log.highest t.local_state.vval
     in
     match tracker with
@@ -267,19 +280,22 @@ struct
     cached_state.vterm <- m.vterm ;
     cached_state.term <- m.term ;
     let log = cached_state.vval in
-    Log.cut_after log (m.vval.segment_start - 1) ;
-    Iter.of_list m.vval.segment_entries
-    |> Iter.iteri (fun i v -> Log.set log (i + m.vval.segment_start) v)
+    Log.cut_after log (m.vval_seg.segment_start - 1) ;
+    Iter.of_list m.vval_seg.segment_entries
+    |> Iter.iteri (fun i v -> Log.set log (i + m.vval_seg.segment_start) v) ;
+    cached_state.commit_index <- m.commit_index
 
   let update_commit_index_from_msg t src (m : message) tracker =
-    if t.commit_index < m.commit_index then (
-      let old_ci = t.commit_index in
+    if t.local_state.commit_index < m.commit_index then (
+      let old_ci = t.local_state.commit_index in
       let cached_state = Map.find_exn t.state_cache src in
-      Iter.int_range ~start:(t.commit_index + 1) ~stop:m.commit_index
+      Iter.int_range
+        ~start:(t.local_state.commit_index + 1)
+        ~stop:m.commit_index
       |> Iter.iter (fun idx ->
              tracked_set tracker t.local_state.vval idx
                (Log.get cached_state.vval idx) ) ;
-      t.commit_index <- m.commit_index ;
+      t.local_state.commit_index <- m.commit_index ;
       update_diverge tracker old_ci )
 
   let acceptor_update t src (m : message) tracker =
@@ -287,46 +303,53 @@ struct
     let should_overwrite =
       m.vterm > t.local_state.term || m.vterm > t.local_state.vterm
     in
-    if m.vterm >= t.local_state.term && m.vterm >= t.local_state.vterm then
-      let rec aux idx =
-        match
-          (Log.find t.local_state.vval idx, Log.find cached_state.vval idx)
-        with
-        (* No more local state => diverge but not conflicting *)
-        | None, Some _ ->
-            Log.iteri cached_state.vval ~lo:idx (fun (idx, v) ->
-                Log.set t.local_state.vval idx v ) ;
-            t.local_state.vterm <- m.vterm ;
-            t.local_state.term <- m.vterm ;
-            update_diverge tracker idx
-        (* Logs don't match, check for overwrite*)
-        | Some l, Some r when not @@ [%compare.equal: LogEntry.t] l r ->
-            if should_overwrite then (
-              (* newer vterm/term => overwrite local state *)
+    ( if m.vterm >= t.local_state.term && m.vterm >= t.local_state.vterm then
+        let rec aux idx =
+          match
+            (Log.find t.local_state.vval idx, Log.find cached_state.vval idx)
+          with
+          (* No more local state => diverge but not conflicting *)
+          | None, Some _ ->
               Log.iteri cached_state.vval ~lo:idx (fun (idx, v) ->
                   Log.set t.local_state.vval idx v ) ;
+              assert (m.vterm >= t.local_state.vterm) ;
+              assert (m.vterm >= t.local_state.term) ;
               t.local_state.vterm <- m.vterm ;
               t.local_state.term <- m.vterm ;
-              update_diverge tracker idx )
-            else (
-              (* not matching and shouldn't overwrite => increment *)
-              t.local_state.term <- t.local_state.term + 1 ;
-              tracker.force <- true )
-        (* logs match and local state => recurse *)
-        | Some _, Some _ ->
-            aux (idx + 1)
-        (* no more remote state => no change *)
-        | _, None ->
-            ()
-      in
-      aux m.vval.segment_start
+              update_diverge tracker idx
+          (* Logs don't match, check for overwrite*)
+          | Some l, Some r when not @@ [%compare.equal: LogEntry.t] l r ->
+              if should_overwrite then (
+                (* newer vterm/term => overwrite local state *)
+                Log.iteri cached_state.vval ~lo:idx (fun (idx, v) ->
+                    Log.set t.local_state.vval idx v ) ;
+                assert (m.vterm >= t.local_state.vterm) ;
+                assert (m.vterm >= t.local_state.term) ;
+                t.local_state.vterm <- m.vterm ;
+                t.local_state.term <- m.vterm ;
+                update_diverge tracker idx )
+              else (
+                (* not matching and shouldn't overwrite => increment *)
+                t.local_state.term <- t.local_state.term + 1 ;
+                tracker.force <- true )
+          (* logs match and local state => recurse *)
+          | Some _, Some _ ->
+              aux (idx + 1)
+          (* no more remote state => no change *)
+          | _, None ->
+              ()
+        in
+        aux m.vval_seg.segment_start ) ;
+    if m.term > t.local_state.term then (
+      t.local_state.term <- m.term ;
+      tracker.force <- true )
 
   let commit_rate_reporter, should_run_cr_reporter =
     Ocons_core.Utils.InternalReporter.rate_reporter 0 "commit rate"
 
   let rec check_commit t tracker =
-    let checked_index = t.commit_index + 1 in
     should_run_cr_reporter := true ;
+    let checked_index = t.local_state.commit_index + 1 in
     let votes =
       t.config.replica_ids |> Iter.of_list
       |> Iter.map (function
@@ -349,7 +372,7 @@ struct
     in
     if count >= t.config.quorum_size then (
       Log.set t.local_state.vval checked_index r ;
-      t.commit_index <- checked_index ;
+      t.local_state.commit_index <- checked_index ;
       reset_stall_checker t ;
       tracker.force <- true ;
       commit_rate_reporter () ;
@@ -424,7 +447,8 @@ struct
           |> Set.to_list
         in
         let state = ref `O4 in
-        Iter.int_range ~start:(t.commit_index + 1) ~stop:max_idx (fun idx ->
+        Iter.int_range ~start:(t.local_state.commit_index + 1) ~stop:max_idx
+          (fun idx ->
             let values =
               vterm_votes |> Iter.filter_map (fun v -> Log.find v.vval idx)
             in
@@ -449,6 +473,8 @@ struct
             | `NonO4 ->
                 tracked_set tracker t.local_state.vval idx (merge values) ;
                 state := `NonO4 ) ;
+        assert (max_term >= t.local_state.vterm) ;
+        assert (max_term >= t.local_state.term) ;
         t.local_state.vterm <- max_term ;
         t.local_state.term <- max_term ;
         (* TODO avoid block when conflict *)
@@ -480,7 +506,8 @@ struct
         let update_tracker = new_update_tracker () in
         check_conflict_recovery t update_tracker ;
         update_tracker.force <- true ;
-        replicate_state t update_tracker
+        replicate_state t update_tracker ;
+        stall_check t
     | Recv (m, src) ->
         let update_tracker = new_update_tracker () in
         update_cache t src m ;
@@ -495,7 +522,10 @@ struct
         trace_local_state "conflict_recovery" t ;
         replicate_state t update_tracker
     | Commands ci when not (t.local_state.term = t.local_state.vterm) ->
-        ci |> Iter.iter (Queue.enqueue t.command_queue)
+        ci
+        |> Iter.iter (fun c ->
+               Queue.enqueue t.command_queue c ;
+               command_added_reporter () )
     | Commands ci ->
         let update_tracker = new_update_tracker () in
         let start = Log.highest t.local_state.vval + 1 in
@@ -517,7 +547,7 @@ struct
         )
       t
 
-  let init_state () = {term= 0; vterm= 0; vval= Log.create []}
+  let init_state () = {term= 0; vterm= 0; vval= Log.create []; commit_index= -1}
 
   let create (config : config) =
     let other_nodes_set =
@@ -527,7 +557,6 @@ struct
     ; local_state= init_state ()
     ; state_cache= Map.of_key_set other_nodes_set ~f:(fun _ -> init_state ())
     ; sent_cache= Map.of_key_set other_nodes_set ~f:(fun _ -> ref (-1))
-    ; commit_index= -1
     ; failure_detector=
         { state=
             Hashtbl.of_alist_exn
@@ -535,7 +564,7 @@ struct
               ( config.other_replica_ids
               |> List.map ~f:(fun id -> (id, config.fd_timeout)) ) }
     ; command_queue= Queue.create ()
-    ; stall_checker= {ticks_since_commit= 10} }
+    ; stall_checker= {ticks_since_commit= 2; prev_commit_idx= -1} }
 end
 
 module Impl = Make (ImperativeActions (Types))
