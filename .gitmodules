@@ -1,3 +1,0 @@
-[submodule "vendor/eio"]
-	path = vendor/eio
-	url = https://github.com/cjen1/eio
