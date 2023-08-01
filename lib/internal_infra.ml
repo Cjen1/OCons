@@ -115,7 +115,7 @@ module Make (C : Consensus_intf.S) = struct
             |> take_at_least_one (min num_to_take 8192)
                (* Limit total intake size *)
             |> Iter.map (fun c ->
-                   TRACE.ex_in c;
+                   TRACE.ex_in c ;
                    t.debug.request_reporter () ;
                    c )
           in
@@ -142,21 +142,17 @@ module Make (C : Consensus_intf.S) = struct
     handle_actions t actions
 
   let main_loop t =
-    try
-      (* Do internal mostly non-blocking things *)
-      let st = Eio.Time.now t.debug.clock in
-      internal_msgs t ;
-      admit_client_requests t ;
-      Ticker.tick t.ticker (tick t) ;
-      (* Then block to send all things *)
-      ensure_sent t ;
-      let dur = (Eio.Time.now t.debug.clock -. st) *. 1000. in
-      if dur > 0.01 then t.debug.main_loop_length_reporter dur ;
-      if dur > 100. then Magic_trace.take_snapshot () ;
-      ()
-    with e when Utils.is_not_cancel e ->
-      traceln "Failed with %a" Fmt.exn_backtrace
-        (e, Printexc.get_raw_backtrace ())
+    (* Do internal mostly non-blocking things *)
+    let st = Eio.Time.now t.debug.clock in
+    internal_msgs t ;
+    admit_client_requests t ;
+    Ticker.tick t.ticker (tick t) ;
+    (* Then block to send all things *)
+    ensure_sent t ;
+    let dur = (Eio.Time.now t.debug.clock -. st) *. 1000. in
+    if dur > 0.01 then t.debug.main_loop_length_reporter dur ;
+    if dur > 100. then Magic_trace.take_snapshot () ;
+    ()
 
   let run_inter ~sw (clock : #Eio.Time.clock) node_id config period resolvers
       client_msgs client_resps internal_streams =
@@ -168,13 +164,14 @@ module Make (C : Consensus_intf.S) = struct
     let state_machine = Core.Hashtbl.create (module Core.String) in
     let ticker = Ticker.create (clock :> Eio.Time.clock) period in
     let run (rep, should_run) =
-      should_run := true;
+      should_run := true ;
       rep
     in
     let debug =
       { command_length_reporter=
           InternalReporter.avg_reporter Int.to_float "cmd_len" |> run
-      ; no_commands_reporter= InternalReporter.rate_reporter 0 "no-commands" |> run
+      ; no_commands_reporter=
+          InternalReporter.rate_reporter 0 "no-commands" |> run
       ; request_reporter= InternalReporter.rate_reporter 0 "request" |> run
       ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space" |> run
       ; commit_reporter= InternalReporter.rate_reporter 0 "commit" |> run
@@ -237,8 +234,8 @@ module Make (C : Consensus_intf.S) = struct
 
   let run ~sw (env : _ env) node_id config period resolvers client_msgs
       client_resps port =
-    TRACE.run_commit := true;
-    TRACE.run_ex_in := true;
+    TRACE.run_commit := true ;
+    TRACE.run_ex_in := true ;
     let internal_streams = Hashtbl.create (List.length resolvers) in
     Fiber.fork ~sw (fun () ->
         Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) (fun () ->

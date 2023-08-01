@@ -61,7 +61,7 @@ module Command = struct
   include Comparable.Make (T)
 end
 
-type command = Command.t [@@deriving hash, sexp, compare, bin_io]
+type command = Command.t [@@deriving hash, sexp, compare, equal, bin_io]
 
 let update_command_time c = c.Command.trace_start <- Core_unix.gettimeofday ()
 
@@ -122,9 +122,9 @@ let update_state_machine : state_machine -> command -> op_result =
 
 let create_state_machine () = Hashtbl.create (module String)
 
-type log_index = int [@@deriving bin_io, compare, bin_io]
+type log_index = int [@@deriving compare, equal, bin_io]
 
-type term = int [@@deriving compare, compare, bin_io]
+type term = int [@@deriving compare, equal, bin_io]
 
 type log_entry = {command: command; term: term} [@@deriving accessors, compare]
 
