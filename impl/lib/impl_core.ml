@@ -171,7 +171,7 @@ module Conspire = struct
   let create_node _ = create
 
   let available_space_for_commands t =
-    let outstanding = Utils.SegmentLog.highest t.local_state.vval - t.commit_index in
+    let outstanding = Utils.SegmentLog.highest t.local_state.vval - t.local_state.commit_index in
     assert (outstanding >= 0) ;
     max (t.config.max_outstanding - outstanding) 0
 
