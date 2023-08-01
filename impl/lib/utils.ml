@@ -100,14 +100,25 @@ module RBuf = struct
 end
 
 module SegmentLog = struct
-  module IHTbl = Core.Hashtbl.Make (Core.Int)
+  open Core
+
+  module SegTbl = struct
+    open Core
+    include Hashtbl.Make (Int)
+
+    let equal equal t1 t2 =
+      Hashtbl.length t1 = Hashtbl.length t2
+      && Hashtbl.for_alli t1 ~f:(fun ~key ~data ->
+             Hashtbl.mem t2 key && equal data (Hashtbl.find_exn t2 key) )
+  end
 
   type 'a t =
     { segmentsize: int
-    ; segments: 'a array IHTbl.t
+    ; segments: 'a array SegTbl.t
     ; mutable allocated: int
     ; mutable vhi: int (* highest set index *)
-    ; init: unit -> 'a }
+    ; init: unit -> 'a [@equal.ignore] }
+  [@@deriving equal]
 
   let allocate t i =
     let rec ensure_allocated i =
@@ -118,7 +129,7 @@ module SegmentLog = struct
       | () ->
           t.allocated <- t.allocated + 1 ;
           Core.Hashtbl.add_exn t.segments ~key:t.allocated
-            ~data:(Array.init t.segmentsize (fun _ -> t.init ())) ;
+            ~data:(Array.init t.segmentsize ~f:(fun _ -> t.init ())) ;
           ensure_allocated i
     in
     ensure_allocated i ;
@@ -140,11 +151,13 @@ module SegmentLog = struct
                 i
                 (t.allocated * t.segmentsize) ) )
 
-  let id_to_seg t i = Int.div i t.segmentsize
+  let id_to_seg t i = Int.( i / t.segmentsize)
 
   let get t i =
     check t i ;
-    Array.get (Core.Hashtbl.find_exn t.segments (id_to_seg t i)) (i mod t.segmentsize)
+    Array.get
+      (Core.Hashtbl.find_exn t.segments (id_to_seg t i))
+      (i mod t.segmentsize)
 
   let set t i v =
     allocate t i ;
@@ -173,7 +186,7 @@ module SegmentLog = struct
   let iteri_len t ?(lo = 0) ?(hi = t.vhi) () : (int * 'a) Iter.t * int =
     let iter f = iteri t ~lo ~hi f in
     let len = hi - lo + 1 in
-    if Iter.length iter != len then
+    if not (Iter.length iter = len) then
       Fmt.invalid_arg "hi(%d) - lo(%d) + 1 = %d != len(%d)" hi lo len
         (Iter.length iter)
     else (iter, len)
@@ -207,13 +220,13 @@ module SegmentLog = struct
 
   let create ?(segmentsize = 4096) init =
     { segmentsize
-    ; segments= IHTbl.create ()
+    ; segments= SegTbl.create ()
     ; allocated= -1
     ; vhi= -1
     ; init= (fun () -> init) }
 
   let create_mut ?(segmentsize = 4096) init =
-    {segmentsize; segments= IHTbl.create (); allocated= -1; vhi= -1; init}
+    {segmentsize; segments= SegTbl.create (); allocated= -1; vhi= -1; init}
 
   let map t i f = set t i (f (get t i))
 end
