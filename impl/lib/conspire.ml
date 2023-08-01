@@ -10,7 +10,7 @@ module Value = struct
   open Core
 
   (* sorted list by command_id *)
-  type t = command list [@@deriving compare, hash, bin_io, sexp]
+  type t = command list [@@deriving compare, equal, hash, bin_io, sexp]
 end
 
 module LogEntry = struct
@@ -48,7 +48,7 @@ module Types = struct
 
   type fd_sm = {state: (node_id, int) Hashtbl.t}
 
-  type log_entry = Value.t [@@deriving compare, bin_io]
+  type log_entry = Value.t [@@deriving compare, equal, bin_io]
 
   type log_update = {segment_entries: log_entry list; segment_start: log_index}
   [@@deriving bin_io]
@@ -62,12 +62,14 @@ module Types = struct
     ; mutable vterm: term
     ; mutable term: term
     ; mutable commit_index: log_index }
+  [@@deriving equal]
 
   type stall_checker =
     {mutable prev_commit_idx: log_index; mutable ticks_since_commit: int}
 
   type t =
     { local_state: state
+    ; expected_remote_state: (node_id, state, Int.comparator_witness) Map.t
     ; state_cache: (node_id, state, Int.comparator_witness) Map.t
     ; sent_cache: (node_id, int ref, Int.comparator_witness) Map.t
     ; failure_detector: fd_sm
@@ -138,6 +140,26 @@ module Types = struct
             (fun s -> Log.iter s.vval |> Iter.to_list)
             (brackets @@ list ~sep:comma log_entry_pp) ]
 
+    let state_pp_short ?from =
+      Fmt.(
+        record
+          [ field "commit_index" (fun (s : state) -> s.commit_index) int
+          ; field "term" (fun (s : state) -> s.term) int
+          ; field "vterm" (fun (s : state) -> s.vterm) int
+          ; field "vval_length" (fun (s : state) -> Log.highest s.vval) int
+          ; field "vval_seg"
+              (fun (s : state) ->
+                let delta = 5 in
+                let lo =
+                  Option.value ~default:(Log.highest s.vval - delta) from
+                in
+                let lo = max 0 lo in
+                let hi = lo + delta in
+                let hi = min hi (Log.highest s.vval) in
+                { segment_start= lo
+                ; segment_entries= Log.iter ~lo ~hi s.vval |> Iter.to_list } )
+              log_update_pp ] )
+
     let fd_sm_pp =
       record
         [ field "state"
@@ -201,29 +223,12 @@ struct
              | nid ->
                  (nid, Map.find_exn t.state_cache nid) )
       in
-      let s_pp : (node_id * state) Fmt.t =
-        Fmt.(
-          record
-            [ field "nid" (fun (id, _) -> id) int
-            ; field "commit_index" (fun (_, (s : state)) -> s.commit_index) int
-            ; field "term" (fun (_, (s : state)) -> s.term) int
-            ; field "vterm" (fun (_, (s : state)) -> s.vterm) int
-            ; field "vval_length"
-                (fun (_, (s : state)) -> Log.highest s.vval)
-                int
-            ; field "vval_porb"
-                (fun (_, (s : state)) ->
-                  let lo = problem_idx - 5 in
-                  let lo = max 0 lo in
-                  let hi = problem_idx + 5 in
-                  let hi = min hi (Log.highest s.vval) in
-                  { segment_start= lo
-                  ; segment_entries= Log.iter ~lo ~hi s.vval |> Iter.to_list }
-                  )
-                PP.log_update_pp ] )
-      in
       traceln "@.%a@."
-        Fmt.(brackets @@ list ~sep:cut s_pp)
+        Fmt.(
+          brackets
+          @@ list ~sep:cut
+               (pair int ~sep:(Fmt.any ":@ ")
+                  (PP.state_pp_short ~from:problem_idx) ) )
         (states |> Iter.to_list) ;
       traceln "Sent cache" ;
       traceln "%a@."
@@ -236,49 +241,31 @@ struct
   type update_tracker =
     {mutable diverge_from: log_index option; mutable force: bool}
 
+  let update_pp =
+    let open Fmt in
+    record
+      [ field "force" (fun s -> s.force) bool
+      ; field "diverge"
+          (fun s -> s.diverge_from)
+          (option ~none:(any "None") int) ]
+
   let new_update_tracker () = {diverge_from= None; force= false}
 
   let update_diverge track idx =
-    let r =
-      match track.diverge_from with None -> idx | Some prev -> min prev idx
-    in
+    let r = Option.value track.diverge_from ~default:Int.max_value in
+    let r = min r idx in
     track.diverge_from <- Some r
+
+  let set_force track = track.force <- true
 
   let tracked_set track log idx v =
     let exists = Log.mem log idx in
-    if (not exists) || not ([%compare.equal: Value.t] (Log.get log idx) v) then (
+    if (not exists) || not ([%equal: Value.t] (Log.get log idx) v) then (
       update_diverge track idx ; Log.set log idx v )
 
-  let replicate_state t tracker =
-    let rep ?diverge_from t dst =
-      let sent_upto = Map.find_exn t.sent_cache dst in
-      let segment_start =
-        match diverge_from with
-        | None ->
-            !sent_upto + 1
-        | Some idx ->
-            min idx (!sent_upto + 1)
-      in
-      send dst
-        { term= t.local_state.term
-        ; vterm= t.local_state.vterm
-        ; vval_seg=
-            { segment_start
-            ; segment_entries=
-                Log.iter t.local_state.vval ~lo:segment_start |> Iter.to_list }
-        ; commit_index= t.local_state.commit_index } ;
-      sent_upto := Log.highest t.local_state.vval
-    in
-    match tracker with
-    | {diverge_from= Some _; _} | {force= true; _} ->
-        List.iter t.config.other_replica_ids
-          ~f:(rep t ?diverge_from:tracker.diverge_from)
-    | _ ->
-        ()
-
   (* Corresponding to new_state_cache := state with ![src] = m *)
-  let update_cache t src (m : message) =
-    let cached_state = Map.find_exn t.state_cache src in
+  let update_cache cache src (m : message) =
+    let cached_state = Map.find_exn cache src in
     cached_state.vterm <- m.vterm ;
     cached_state.term <- m.term ;
     let log = cached_state.vval in
@@ -286,6 +273,87 @@ struct
     Iter.of_list m.vval_seg.segment_entries
     |> Iter.iteri (fun i v -> Log.set log (i + m.vval_seg.segment_start) v) ;
     cached_state.commit_index <- m.commit_index
+
+  let assert_equal pp equal a b =
+    if not (equal a b) then
+      Fmt.failwith "inequal: @[<1>%a@]"
+        Fmt.(pair ~sep:semi (braces pp) (braces pp))
+        (a, b)
+
+  let get_remote_update t tracker sent_upto =
+    let segment_start =
+      match tracker.diverge_from with
+      | None ->
+          sent_upto + 1
+      | Some idx ->
+          min idx (sent_upto + 1)
+    in
+    { term= t.local_state.term
+    ; vterm= t.local_state.vterm
+    ; vval_seg=
+        { segment_start
+        ; segment_entries=
+            Log.iter t.local_state.vval ~lo:segment_start |> Iter.to_list }
+    ; commit_index= t.local_state.commit_index }
+
+  let should_update = function
+    | {diverge_from= Some _; _} | {force= true; _} ->
+        true
+    | _ ->
+        false
+
+  let check_remote_state_update t tracker =
+    if should_update tracker then
+      List.iter t.config.other_replica_ids ~f:(fun dst ->
+          let sent_upto = Map.find_exn t.sent_cache dst in
+          let current = t.local_state in
+          let current_remote = Map.find_exn t.expected_remote_state dst in
+          let update = get_remote_update t tracker !sent_upto in
+          (* Test params *)
+          assert_equal
+            Fmt.(list ~sep:comma int)
+            [%equal: int list]
+            [current.term; current.vterm; current.commit_index]
+            [update.term; update.vterm; update.commit_index] ;
+          let current_log = Log.iter current.vval |> Iter.to_seq_persistent in
+          let rem_log =
+            (fun k ->
+              let rec aux idx =
+                if idx < update.vval_seg.segment_start then (
+                  k (Log.get current_remote.vval idx) ;
+                  aux (idx + 1) )
+                else List.iter update.vval_seg.segment_entries ~f:k
+              in
+              aux 0 )
+            |> Iter.to_seq_persistent
+          in
+          assert_equal
+            Fmt.(seq ~sep:semi PP.log_entry_pp)
+            [%equal: log_entry Seq.t] current_log rem_log )
+
+  let replicate_state t tracker =
+    let rep tracker t dst =
+      let sent_upto = Map.find_exn t.sent_cache dst in
+      let msg = get_remote_update t tracker !sent_upto in
+      send dst msg ;
+      update_cache t.expected_remote_state dst msg ;
+      if
+        not
+          ([%equal: state] t.local_state
+             (Map.find_exn t.expected_remote_state dst) )
+      then (
+        traceln "FAILED to correctly update remote state" ;
+        traceln "Local state" ;
+        traceln "@.%a@." PP.state_pp t.local_state ;
+        traceln "Update" ;
+        traceln "@.%a@." PP.message_pp msg ;
+        traceln "failed remote: %d" dst ;
+        traceln "@.%a@." PP.state_pp (Map.find_exn t.expected_remote_state dst) ;
+        failwith "Updated remote state diverged" ) ;
+      sent_upto := Log.highest t.local_state.vval
+    in
+    if should_update tracker then
+      List.iter t.config.other_replica_ids ~f:(rep tracker t)
 
   let update_commit_index_from_msg t src (m : message) tracker =
     if t.local_state.commit_index < m.commit_index then (
@@ -313,27 +381,27 @@ struct
           (* No more local state => diverge but not conflicting *)
           | None, Some _ ->
               Log.iteri cached_state.vval ~lo:idx (fun (idx, v) ->
-                  Log.set t.local_state.vval idx v ) ;
+                  tracked_set tracker t.local_state.vval idx v ) ;
               assert (m.vterm >= t.local_state.vterm) ;
               assert (m.vterm >= t.local_state.term) ;
               t.local_state.vterm <- m.vterm ;
               t.local_state.term <- m.vterm ;
-              update_diverge tracker idx
+              set_force tracker
           (* Logs don't match, check for overwrite*)
           | Some l, Some r when not @@ [%compare.equal: LogEntry.t] l r ->
               if should_overwrite then (
                 (* newer vterm/term => overwrite local state *)
                 Log.iteri cached_state.vval ~lo:idx (fun (idx, v) ->
-                    Log.set t.local_state.vval idx v ) ;
+                    tracked_set tracker t.local_state.vval idx v ) ;
                 assert (m.vterm >= t.local_state.vterm) ;
                 assert (m.vterm >= t.local_state.term) ;
                 t.local_state.vterm <- m.vterm ;
                 t.local_state.term <- m.vterm ;
-                update_diverge tracker idx )
+                set_force tracker )
               else (
                 (* not matching and shouldn't overwrite => increment *)
                 t.local_state.term <- t.local_state.term + 1 ;
-                tracker.force <- true )
+                set_force tracker )
           (* logs match and local state => recurse *)
           | Some _, Some _ ->
               aux (idx + 1)
@@ -344,7 +412,7 @@ struct
         aux m.vval_seg.segment_start ) ;
     if m.term > t.local_state.term then (
       t.local_state.term <- m.term ;
-      tracker.force <- true )
+      set_force tracker )
 
   let commit_rate_reporter, should_run_cr_reporter =
     Ocons_core.Utils.InternalReporter.rate_reporter 0 "commit rate"
@@ -373,10 +441,10 @@ struct
         r
     in
     if count >= t.config.quorum_size then (
-      Log.set t.local_state.vval checked_index r ;
+      tracked_set tracker t.local_state.vval checked_index r ;
       t.local_state.commit_index <- checked_index ;
       reset_stall_checker t ;
-      tracker.force <- true ;
+      set_force tracker ;
       commit_rate_reporter () ;
       check_commit t tracker )
 
@@ -479,6 +547,7 @@ struct
         assert (max_term >= t.local_state.term) ;
         t.local_state.vterm <- max_term ;
         t.local_state.term <- max_term ;
+        set_force tracker ;
         (* TODO avoid block when conflict *)
         let start = Log.highest t.local_state.vval + 1 in
         Queue.iteri t.command_queue ~f:(fun i c ->
@@ -503,12 +572,12 @@ struct
         Hashtbl.map_inplace t.failure_detector.state ~f:(fun v -> v - 1) ;
         let update_tracker = new_update_tracker () in
         check_conflict_recovery t update_tracker ;
-        update_tracker.force <- true ;
+        set_force update_tracker ;
         replicate_state t update_tracker ;
         stall_check t
     | Recv (m, src) ->
         let update_tracker = new_update_tracker () in
-        update_cache t src m ;
+        update_cache t.state_cache src m ;
         update_commit_index_from_msg t src m update_tracker ;
         acceptor_update t src m update_tracker ;
         check_commit t update_tracker ;
@@ -532,12 +601,26 @@ struct
   let advance t e =
     run_side_effects
       (fun () ->
-        try handle_event t e
+        try
+          handle_event t e ;
+          List.iter t.config.other_replica_ids ~f:(fun dst ->
+              if
+                not
+                  ([%equal: state] t.local_state
+                     (Map.find_exn t.expected_remote_state dst) )
+              then (
+                traceln "FAILED to correctly update remote state" ;
+                traceln "Local state" ;
+                traceln "@.%a@." PP.state_pp t.local_state ;
+                traceln "failed remote: %d" dst ;
+                traceln "@.%a@." PP.state_pp
+                  (Map.find_exn t.expected_remote_state dst) ;
+                failwith "Updated remote state diverged" ) )
         with ex ->
-          traceln "FAILED while handling %a" (event_pp ~pp_msg:PP.message_pp) e ;
-          Stdlib.(
-            Printexc.raise_with_backtrace ex @@ Printexc.get_raw_backtrace () )
-        )
+          Exn.reraise ex
+            (Fmt.str "Failed while handling %a"
+               (event_pp ~pp_msg:PP.message_pp : message event Fmt.t)
+               e ) )
       t
 
   let init_state () = {term= 0; vterm= 0; vval= Log.create []; commit_index= -1}
@@ -548,6 +631,8 @@ struct
     in
     { config
     ; local_state= init_state ()
+    ; expected_remote_state=
+        Map.of_key_set other_nodes_set ~f:(fun _ -> init_state ())
     ; state_cache= Map.of_key_set other_nodes_set ~f:(fun _ -> init_state ())
     ; sent_cache= Map.of_key_set other_nodes_set ~f:(fun _ -> ref (-1))
     ; failure_detector=
