@@ -22,6 +22,8 @@ module type ActionSig = sig
 
   val traceln : ('a, Format.formatter, unit, unit, unit, unit) format6 -> 'a
 
+  val rassert : bool -> unit
+
   val set_is_test : bool -> unit
 end
 
@@ -109,4 +111,6 @@ module ImperativeActions (C : CTypes) :
   let traceln fmt = if !is_test then Eio.traceln fmt else Utils.traceln fmt
 
   let dtraceln fmt = if !is_test then Eio.traceln fmt else Utils.dtraceln fmt
+
+  let rassert b = if !is_test && b then Fmt.failwith "Assert failed"
 end

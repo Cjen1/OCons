@@ -151,7 +151,7 @@ module SegmentLog = struct
                 i
                 (t.allocated * t.segmentsize) ) )
 
-  let id_to_seg t i = Int.( i / t.segmentsize)
+  let id_to_seg t i = Int.(i / t.segmentsize)
 
   let get t i =
     check t i ;
@@ -283,3 +283,9 @@ let rec seq_zip seq_iter () =
   else
     let vs = seq_iter |> Iter.filter_map Seq.uncons in
     Seq.Cons (Iter.map fst vs, seq_zip (Iter.map snd vs))
+
+let assert_equal pp equal a b =
+  if not (equal a b) then
+    Fmt.failwith "inequal: @[<1>%a@]"
+      Fmt.(pair ~sep:semi (braces pp) (braces pp))
+      (a, b)
