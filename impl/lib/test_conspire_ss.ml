@@ -185,7 +185,7 @@ let%expect_test "e2e commit" =
     actions: [Send(1,SyncResp(0,term: 0
                                 vterm: 0
                                 vvalue: [Command(Read c1, 1)]))] |}] ;
-  let recv i = Recv (SyncResp (0,{ term= 0; vterm= 0; vvalue= [c1]}), i) in
+  let recv i = Recv (SyncResp (0, {term= 0; vterm= 0; vvalue= [c1]}), i) in
   let t1, actions = Impl.advance t1 (recv 2) in
   print t1 actions ;
   [%expect
@@ -371,7 +371,7 @@ let%expect_test "e2e conflict re-propose" =
                              term: 0
                              value: [Command(Read c2, 2)]))] |}] ;
   let t3, actions =
-    Impl.advance t3 (Recv (Sync ( 0,{ term= 0; value= [c1]}), 1))
+    Impl.advance t3 (Recv (Sync (0, {term= 0; value= [c1]}), 1))
   in
   print t3 actions ;
   [%expect
@@ -391,7 +391,7 @@ let%expect_test "e2e conflict re-propose" =
                                 vvalue: [Command(Read c1, 1)]))] |}] ;
   (* Conflict from t1 *)
   let t2, actions =
-    Impl.advance t2 (Recv (Sync ( 0,{ term= 0; value= [c1]}), 1))
+    Impl.advance t2 (Recv (Sync (0, {term= 0; value= [c1]}), 1))
   in
   print t2 actions ;
   [%expect
@@ -430,7 +430,7 @@ let%expect_test "e2e conflict re-propose" =
                                    vvalue: [Command(Read c2, 2)]))] |}] ;
   (* Conflict from t2 *)
   let t1, actions =
-    Impl.advance t1 (Recv (Sync ( 0,{ term= 0; value= [c2]}), 2))
+    Impl.advance t1 (Recv (Sync (0, {term= 0; value= [c2]}), 2))
   in
   print t1 actions ;
   [%expect
@@ -468,7 +468,7 @@ let%expect_test "e2e conflict re-propose" =
                                    vterm: 0
                                    vvalue: [Command(Read c1, 1)]))] |}] ;
   let t3, actions =
-    Impl.advance t3 (Recv (Sync ( 0,{ term= 0; value= [c2]}), 2))
+    Impl.advance t3 (Recv (Sync (0, {term= 0; value= [c2]}), 2))
   in
   print t3 actions ;
   [%expect
@@ -507,8 +507,7 @@ let%expect_test "e2e conflict re-propose" =
                                    vvalue: [Command(Read c1, 1)]))] |}] ;
   (* Conflict result *)
   let t1, actions =
-    Impl.advance t1
-      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c1]}), 3))
+    Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c1]}), 3))
   in
   print t1 actions ;
   [%expect
@@ -544,8 +543,7 @@ let%expect_test "e2e conflict re-propose" =
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 2)]
     actions: [] |}] ;
   let t1, actions =
-    Impl.advance t1
-      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c2]}), 2))
+    Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c2]}), 2))
   in
   print t1 actions ;
   [%expect
@@ -627,16 +625,13 @@ let%expect_test "e2e conflict merge" =
                              term: 0
                              value: [Command(Read c1, 1)]))] |}] ;
   let t1, _ =
-    Impl.advance t1
-      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c1]}), 0))
+    Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c1]}), 0))
   in
   let t1, _ =
-    Impl.advance t1
-      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c1]}), 1))
+    Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c1]}), 1))
   in
   let t1, actions =
-    Impl.advance t1
-      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c2]}), 2))
+    Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c2]}), 2))
   in
   print t1 actions ;
   [%expect
@@ -672,8 +667,7 @@ let%expect_test "e2e conflict merge" =
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [] |}] ;
   let t1, actions =
-    Impl.advance t1
-      (Recv (SyncResp ( 0,{ term= 1; vterm= 0; vvalue= [c2]}), 3))
+    Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c2]}), 3))
   in
   print t1 actions ;
   [%expect

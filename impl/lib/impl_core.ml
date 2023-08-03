@@ -168,15 +168,20 @@ end
 module Conspire = struct
   include Conspire.Types
   include Conspire.Impl
+
   let create_node _ = create
 
   let available_space_for_commands t =
-    let outstanding = Utils.SegmentLog.highest t.state.local_state.vval - t.state.local_state.commit_index in
+    let outstanding =
+      Utils.SegmentLog.highest t.state.local_state.vval
+      - t.state.local_state.commit_index
+    in
     assert (outstanding >= 0) ;
     max (t.config.max_outstanding - outstanding) 0
 
   let should_ack_clients _ = true
 
   let parse = Line_prot.Conspire.parse
+
   let serialise = Line_prot.Conspire.serialise
 end

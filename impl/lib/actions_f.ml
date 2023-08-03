@@ -84,9 +84,7 @@ module ImperativeActions (C : CTypes) :
     let commit_upto =
       let ct = (!s |> Option.get).t in
       let ci = get_commit_index ct in
-      if ci > (!s |> Option.get).starting_cid then
-        Some (ci)
-      else None
+      if ci > (!s |> Option.get).starting_cid then Some ci else None
     in
     let make_command_iter upto =
       (* make an iter from lowest un-committed command upwards *)
@@ -102,7 +100,7 @@ module ImperativeActions (C : CTypes) :
 
   let run_side_effects f t =
     s := Some (s_init t) ;
-    let init_commit_index = get_commit_index t  in
+    let init_commit_index = get_commit_index t in
     f () ;
     ((!s |> Option.get).t, get_actions init_commit_index)
 

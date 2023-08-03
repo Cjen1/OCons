@@ -589,7 +589,7 @@ struct
     | Tick ->
         Hashtbl.map_inplace t.failure_detector.state ~f:(fun v -> v - 1) ;
         check_conflict_recovery t ;
-        replicate_state t ~force:true;
+        replicate_state t ~force:true ;
         stall_check t
     | Recv (m, src) ->
         Replication.apply_update (Map.find_exn t.state_cache src) m ;

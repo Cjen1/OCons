@@ -23,7 +23,7 @@ let bin_io_read reader t =
   consume t (len + size_header_length) ;
   x
 
-let bin_io_write write_buf (writer) sizer t =
+let bin_io_write write_buf writer sizer t =
   let open Bin_prot.Utils in
   let open W in
   let hlen = size_header_length in

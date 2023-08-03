@@ -60,6 +60,7 @@ module Types = struct
   [@@deriving accessors]
 
   let get_command idx t = (Log.get t.log idx).command |> Iter.singleton
+
   let get_commit_index t = t.commit_index
 
   module PP = struct
@@ -285,8 +286,7 @@ struct
           (t @> node_state @> Candidate.quorum)
           ~f:(Quorum.add src q_entries) ()
     (* Leader *)
-    | ( Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src)
-      , Leader _ ) ->
+    | Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src), Leader _ ->
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_ackd) () ~f:(IntMap.add src idx)
     | Recv (AppendEntriesResponse ({success= Error idx; _} as m), src), Leader _

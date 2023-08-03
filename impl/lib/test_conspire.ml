@@ -134,8 +134,7 @@ let%expect_test "e2e commit" =
       ( { term= 0
         ; vval_seg= {segment_start= 0; segment_entries= [[c1]]}
         ; vterm= 0
-        ; commit_index= -1 
-        }
+        ; commit_index= -1 }
       , 1 )
   in
   let t2, actions = Impl.advance t2 recv_c1 in
@@ -211,8 +210,7 @@ let%expect_test "e2e commit" =
       ( { term= 0
         ; commit_index= -1
         ; vval_seg= {segment_start= 0; segment_entries= [[c1]]}
-        ; vterm= 0 
-        }
+        ; vterm= 0 }
       , i )
   in
   let t1, actions = Impl.advance t1 (recv 2) in
@@ -397,8 +395,7 @@ let%expect_test "e2e conflict re-propose" =
       ( { term= 0
         ; commit_index= -1
         ; vval_seg= {segment_start= 0; segment_entries= [[c]]}
-        ; vterm= 0 
-        }
+        ; vterm= 0 }
       , i )
   in
   let t3, actions = Impl.advance t3 (recv c1 1) in
@@ -546,8 +543,7 @@ let%expect_test "e2e conflict re-propose" =
          ( { term= 1
            ; vterm= 0
            ; vval_seg= {segment_start= 0; segment_entries= [[c1]]}
-           ; commit_index= -1 
-           }
+           ; commit_index= -1 }
          , 3 ) )
   in
   print t1 actions ;
@@ -585,12 +581,12 @@ let%expect_test "e2e conflict re-propose" =
          ( { term= 1
            ; vterm= 0
            ; vval_seg= {segment_start= 0; segment_entries= [[c2]]}
-           ; commit_index= -1 
-           }
+           ; commit_index= -1 }
          , 2 ) )
   in
   print t1 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: config:
         node_id: 1
         quorum_size: 3
@@ -671,8 +667,7 @@ let%expect_test "commit other" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 0 ) )
   in
   print t1 actions ;
@@ -714,8 +709,7 @@ let%expect_test "commit other" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 2 ) )
   in
   print t1 actions ;
@@ -753,12 +747,12 @@ let%expect_test "commit other" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 3 ) )
   in
   print t1 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: config:
         node_id: 1
         quorum_size: 3
@@ -838,8 +832,7 @@ let%expect_test "commit force remote" =
          ( { commit_index= 0
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 1 ) )
   in
   print t0 actions ;
@@ -925,8 +918,7 @@ let%expect_test "conflict merge recovery" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
          , 1 ) )
   in
   print t0 actions ;
@@ -968,8 +960,7 @@ let%expect_test "conflict merge recovery" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c3]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c3]]} }
          , 2 ) )
   in
   print t0 actions ;
@@ -1007,8 +998,7 @@ let%expect_test "conflict merge recovery" =
          ( { commit_index= -1
            ; term= 1
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2; c3]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c2; c3]]} }
          , 3 ) )
   in
   print t0 actions ;
@@ -1108,7 +1098,6 @@ let%expect_test "conflict o4&merge" =
            ; term= 1
            ; vterm= 0
            ; vval_seg= {segment_start= 0; segment_entries= [[c1]; [c3]; [c5]]}
-           
            }
          , 1 ) )
   in
@@ -1191,12 +1180,12 @@ let%expect_test "conflict o4&merge" =
            ; term= 1
            ; vterm= 0
            ; vval_seg= {segment_start= 0; segment_entries= [[c2]; [c4]; [c4]]}
-           
            }
          , 2 ) )
   in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
@@ -1295,12 +1284,12 @@ let%expect_test "conflict o4&merge" =
            ; term= 1
            ; vterm= 1
            ; vval_seg= {segment_start= 0; segment_entries= [[c1]; [c2]; [c3]]}
-           
            }
          , 1 ) )
   in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
@@ -1383,8 +1372,7 @@ let%expect_test "4th vote bug" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 1 ) )
   in
   print t0 actions ;
@@ -1422,8 +1410,7 @@ let%expect_test "4th vote bug" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 2 ) )
   in
   print t0 actions ;
@@ -1466,8 +1453,7 @@ let%expect_test "4th vote bug" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 3 ) )
   in
   print t0 actions ;
@@ -1581,8 +1567,7 @@ let%expect_test "Commit acceptor_increment race condition" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 2 ) )
   in
   print t1 actions ;
@@ -1621,8 +1606,7 @@ let%expect_test "Commit acceptor_increment race condition" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c0]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c0]]} }
          , 0 ) )
   in
   print t1 actions ;
@@ -1665,8 +1649,7 @@ let%expect_test "Commit acceptor_increment race condition" =
          ( { commit_index= -1
            ; term= 0
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 3 ) )
   in
   print t1 actions ;
@@ -1711,11 +1694,12 @@ let%expect_test "Commit acceptor_increment race condition" =
          ( { commit_index= 0
            ; term= 1
            ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} 
-           }
+           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
          , 3 ) )
   in
-  print t0 actions ; [%expect {|
+  print t0 actions ;
+  [%expect
+    {|
     t: config:
         node_id: 0
         quorum_size: 3
