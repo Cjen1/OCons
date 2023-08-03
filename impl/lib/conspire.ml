@@ -138,13 +138,10 @@ module Replication = struct
 
   let get_msg_to_send t =
     let msg = update_to_msg t in
+    apply_update t.expected_remote msg ;
     t.sent_upto <- Log.highest t.local_state.vval ;
     t.change_flag <- false ;
     msg
-
-  let clone state =
-    let vval = Log.copy state.vval in
-    {state with vval}
 
   let find_diverge ~equal l1 l2 =
     let rec aux l1 l2 idx =
@@ -168,25 +165,6 @@ module Replication = struct
       {segment_start= lo; segment_entries= Log.iter ~lo ~hi v |> Iter.to_list}
     in
     Fmt.pf ppf "%a" log_update_pp seg
-
-  let invariant t =
-    let expected = clone t.expected_remote in
-    let update = update_to_msg t in
-    apply_update expected update ;
-    assert_equal
-      Fmt.(list ~sep:comma int)
-      [%equal: int list]
-      [t.local_state.term; t.local_state.vterm; t.local_state.commit_index]
-      [expected.term; expected.vterm; expected.commit_index] ;
-    match
-      find_diverge ~equal:[%equal: log_entry] t.local_state.vval expected.vval
-    with
-    | None ->
-        ()
-    | Some idx ->
-        Fmt.failwith "inequal logs at: %d@.%a" idx
-          Fmt.(parens @@ pair ~sep:cut (log_pp ~from:idx) (log_pp ~from:idx))
-          (t.local_state.vval, expected.vval)
 
   type update_kind =
     | CommitIndex of log_index
@@ -214,6 +192,14 @@ module Replication = struct
         Log.set t.local_state.vval idx v
     | _ ->
         ()
+
+  let pp =
+    let open Fmt in
+    record
+      [ field "change_flag" (fun t -> t.change_flag) bool
+      ; field "sent_upto" (fun t -> t.sent_upto) int
+      ; field "local" (fun t -> t.local_state) state_pp
+      ; field "expected" (fun t -> t.expected_remote) state_pp ]
 end
 
 module StallChecker = struct
