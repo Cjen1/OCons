@@ -35,7 +35,6 @@ let%expect_test "local_commit" =
                       term: 0
                       vterm: 0
                       vval: []
-         sent_cache:
          state_cache: []
          command_queue: []
       actions: [] |}] ;
@@ -54,10 +53,14 @@ let%expect_test "local_commit" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache:
          state_cache: []
          command_queue: []
-      actions: [CommitCommands(Command(Read c1, 1))] |}] ;
+      actions: [CommitCommands(Command(Read c1, 1))
+                Broadcast(term: 0
+                          commit_index: 0
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
   print t actions ;
@@ -75,10 +78,15 @@ let%expect_test "local_commit" =
           vterm: 0
           vval:
            [[Command(Read c1, 1)], [Command(Read c2, 3)], [Command(Read c3, 2)]]
-         sent_cache:
          state_cache: []
          command_queue: []
-      actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))] |}]
+      actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))
+                Broadcast(term: 0
+                          commit_index: 2
+                          vval:
+                           start: 1
+                           entries: [[Command(Read c2, 3)]; [Command(Read c3, 2)]]
+                          vterm: 0)] |}]
 
 let%expect_test "e2e commit" =
   Imp.set_is_test true ;
@@ -102,7 +110,6 @@ let%expect_test "e2e commit" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -117,21 +124,11 @@ let%expect_test "e2e commit" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let recv_c1 =
     Recv
       ( { term= 0
@@ -156,7 +153,6 @@ let%expect_test "e2e commit" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(1: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -171,21 +167,11 @@ let%expect_test "e2e commit" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let t3, actions = Impl.advance t3 recv_c1 in
   print t3 actions ;
   [%expect
@@ -201,7 +187,6 @@ let%expect_test "e2e commit" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(1: 0)(2: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -216,21 +201,11 @@ let%expect_test "e2e commit" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let recv i =
     Recv
       ( { term= 0
@@ -255,7 +230,6 @@ let%expect_test "e2e commit" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -286,7 +260,6 @@ let%expect_test "e2e commit" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -302,21 +275,11 @@ let%expect_test "e2e commit" =
                vval: [[Command(Read c1, 1)]])]
          command_queue: []
       actions: [CommitCommands(Command(Read c1, 1))
-                Send(0,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}]
+                Broadcast(term: 0
+                          commit_index: 0
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}]
 
 let%expect_test "e2e conflict re-propose" =
   Imp.set_is_test true ;
@@ -340,7 +303,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -355,21 +317,11 @@ let%expect_test "e2e conflict re-propose" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let t1, _ = Impl.advance t1 Tick in
   let t1, actions = Impl.advance t1 Tick in
   print t1 actions ;
@@ -386,7 +338,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -401,21 +352,11 @@ let%expect_test "e2e conflict re-propose" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   let c2 = make_command (Read "c2") in
   let t2, actions = Impl.advance t2 (Commands (Iter.of_list [c2])) in
   print t2 actions ;
@@ -432,7 +373,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c2, 2)]]
-         sent_cache: (0: 0)(1: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -447,21 +387,11 @@ let%expect_test "e2e conflict re-propose" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c2, 2)]]
-                       vterm: 0)
-                Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c2, 2)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c2, 2)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c2, 2)]]
+                          vterm: 0)] |}] ;
   let recv c i =
     Recv
       ( { term= 0
@@ -486,7 +416,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(1: 0)(2: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -501,21 +430,11 @@ let%expect_test "e2e conflict re-propose" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   (* Conflict from t1 *)
   let t2, actions = Impl.advance t2 (recv c1 1) in
   print t2 actions ;
@@ -532,7 +451,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c2, 2)]]
-         sent_cache: (0: 0)(1: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -547,21 +465,11 @@ let%expect_test "e2e conflict re-propose" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(1,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   (* Conflict from t2 *)
   let t1, actions = Impl.advance t1 (recv c2 2) in
   print t1 actions ;
@@ -578,7 +486,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -593,21 +500,11 @@ let%expect_test "e2e conflict re-propose" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   let t3, actions = Impl.advance t3 (recv c2 2) in
   print t3 actions ;
   [%expect
@@ -623,7 +520,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(1: 0)(2: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -638,21 +534,11 @@ let%expect_test "e2e conflict re-propose" =
                vterm: 0
                vval: [[Command(Read c2, 2)]])]
          command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(1,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   (* Conflict result *)
   let t1, actions =
     Impl.advance t1
@@ -678,7 +564,6 @@ let%expect_test "e2e conflict re-propose" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -717,7 +602,6 @@ let%expect_test "e2e conflict re-propose" =
                     term: 1
                     vterm: 1
                     vval: [[Command(Read c1, 1)]]
-       sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
         [(0: commit_index: -1
              term: 0
@@ -732,21 +616,11 @@ let%expect_test "e2e conflict re-propose" =
              vterm: 0
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
-    actions: [Send(0,term: 1
-                     commit_index: -1
-                     vval: start: 1
-                           entries: []
-                     vterm: 1)
-              Send(2,term: 1
-                     commit_index: -1
-                     vval: start: 1
-                           entries: []
-                     vterm: 1)
-              Send(3,term: 1
-                     commit_index: -1
-                     vval: start: 1
-                           entries: []
-                     vterm: 1)] |}] ;
+    actions: [Broadcast(term: 1
+                        commit_index: -1
+                        vval: start: 1
+                              entries: []
+                        vterm: 1)] |}] ;
   ignore (t1, t2, t3)
 
 let%expect_test "commit other" =
@@ -771,7 +645,6 @@ let%expect_test "commit other" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -786,21 +659,11 @@ let%expect_test "commit other" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   let c2 = make_command (Read "c2") in
   let t1, actions =
     Impl.advance t1
@@ -826,7 +689,6 @@ let%expect_test "commit other" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -841,21 +703,11 @@ let%expect_test "commit other" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   let t1, actions =
     Impl.advance t1
       (Recv
@@ -880,7 +732,6 @@ let%expect_test "commit other" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -919,7 +770,6 @@ let%expect_test "commit other" =
                     term: 1
                     vterm: 0
                     vval: [[Command(Read c2, 2)]]
-       sent_cache: (0: 0)(2: 0)(3: 0)
        state_cache:
         [(0: commit_index: -1
              term: 0
@@ -935,21 +785,11 @@ let%expect_test "commit other" =
              vval: [[Command(Read c2, 2)]])]
        command_queue: []
     actions: [CommitCommands(Command(Read c2, 2))
-              Send(0,term: 1
-                     commit_index: 0
-                     vval: start: 0
-                           entries: [[Command(Read c2, 2)]]
-                     vterm: 0)
-              Send(2,term: 1
-                     commit_index: 0
-                     vval: start: 0
-                           entries: [[Command(Read c2, 2)]]
-                     vterm: 0)
-              Send(3,term: 1
-                     commit_index: 0
-                     vval: start: 0
-                           entries: [[Command(Read c2, 2)]]
-                     vterm: 0)] |}] ;
+              Broadcast(term: 1
+                        commit_index: 0
+                        vval: start: 0
+                              entries: [[Command(Read c2, 2)]]
+                        vterm: 0)] |}] ;
   ignore t1
 
 let%expect_test "commit force remote" =
@@ -972,7 +812,6 @@ let%expect_test "commit force remote" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -987,21 +826,11 @@ let%expect_test "commit force remote" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let c2 = make_command (Read "c2") in
   let t0, actions =
     Impl.advance t0
@@ -1027,7 +856,6 @@ let%expect_test "commit force remote" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c2, 2)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: 0
                term: 0
@@ -1043,21 +871,11 @@ let%expect_test "commit force remote" =
                vval: [])]
          command_queue: []
       actions: [CommitCommands(Command(Read c2, 2))
-                Send(1,term: 0
-                       commit_index: 0
-                       vval: start: 0
-                             entries: [[Command(Read c2, 2)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: 0
-                       vval: start: 0
-                             entries: [[Command(Read c2, 2)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: 0
-                       vval: start: 0
-                             entries: [[Command(Read c2, 2)]]
-                       vterm: 0)] |}] ;
+                Broadcast(term: 0
+                          commit_index: 0
+                          vval: start: 0
+                                entries: [[Command(Read c2, 2)]]
+                          vterm: 0)] |}] ;
   ignore t0
 
 let%expect_test "conflict merge recovery" =
@@ -1082,7 +900,6 @@ let%expect_test "conflict merge recovery" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1097,21 +914,11 @@ let%expect_test "conflict merge recovery" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
@@ -1136,7 +943,6 @@ let%expect_test "conflict merge recovery" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 1
@@ -1151,21 +957,11 @@ let%expect_test "conflict merge recovery" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
@@ -1190,7 +986,6 @@ let%expect_test "conflict merge recovery" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 1
@@ -1231,7 +1026,6 @@ let%expect_test "conflict merge recovery" =
           term: 1
           vterm: 1
           vval: [[Command(Read c1, 1), Command(Read c2, 2), Command(Read c3, 3)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 1
@@ -1247,30 +1041,14 @@ let%expect_test "conflict merge recovery" =
             vterm: 0
             vval: [[Command(Read c2, 2), Command(Read c3, 3)]])]
          command_queue: []
-      actions: [Send(1,term: 1
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[Command(Read c1, 1), Command(Read c2, 2),
-                           Command(Read c3, 3)]]
-                       vterm: 1)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[Command(Read c1, 1), Command(Read c2, 2),
-                           Command(Read c3, 3)]]
-                       vterm: 1)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[Command(Read c1, 1), Command(Read c2, 2),
-                           Command(Read c3, 3)]]
-                       vterm: 1)] |}]
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval:
+                           start: 0
+                           entries:
+                            [[Command(Read c1, 1), Command(Read c2, 2),
+                              Command(Read c3, 3)]]
+                          vterm: 1)] |}]
 
 let%expect_test "conflict o4&merge" =
   Imp.set_is_test true ;
@@ -1301,7 +1079,6 @@ let%expect_test "conflict o4&merge" =
           vterm: 0
           vval:
            [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c5, 5)]]
-         sent_cache: (1: 2)(2: 2)(3: 2)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1316,30 +1093,14 @@ let%expect_test "conflict o4&merge" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[Command(Read c1, 1)]; [Command(Read c2, 2)];
-                          [Command(Read c5, 5)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[Command(Read c1, 1)]; [Command(Read c2, 2)];
-                          [Command(Read c5, 5)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[Command(Read c1, 1)]; [Command(Read c2, 2)];
-                          [Command(Read c5, 5)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval:
+                           start: 0
+                           entries:
+                            [[Command(Read c1, 1)]; [Command(Read c2, 2)];
+                             [Command(Read c5, 5)]]
+                          vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
@@ -1367,7 +1128,6 @@ let%expect_test "conflict o4&merge" =
           vterm: 0
           vval:
            [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c5, 5)]]
-         sent_cache: (1: 2)(2: 2)(3: 2)
          state_cache:
           [(1:
             commit_index: -1
@@ -1384,21 +1144,11 @@ let%expect_test "conflict o4&merge" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 1
-                       commit_index: -1
-                       vval: start: 3
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 3
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 3
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 3
+                                entries: []
+                          vterm: 0)] |}] ;
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c6])) in
   print t0 actions ;
   [%expect
@@ -1416,7 +1166,6 @@ let%expect_test "conflict o4&merge" =
           vterm: 0
           vval:
            [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c5, 5)]]
-         sent_cache: (1: 2)(2: 2)(3: 2)
          state_cache:
           [(1:
             commit_index: -1
@@ -1463,7 +1212,6 @@ let%expect_test "conflict o4&merge" =
          [[Command(Read c1, 1)],
           [Command(Read c2, 2), Command(Read c3, 3), Command(Read c4, 4)],
           [Command(Read c4, 4), Command(Read c5, 5)], [Command(Read c6, 6)]]
-       sent_cache: (1: 3)(2: 3)(3: 3)
        state_cache:
         [(1:
           commit_index: -1
@@ -1482,36 +1230,16 @@ let%expect_test "conflict o4&merge" =
              vterm: 0
              vval: [])]
        command_queue: []
-    actions: [Send(1,term: 1
-                     commit_index: -1
-                     vval:
-                      start: 1
-                      entries:
-                       [[Command(Read c2, 2), Command(Read c3, 3),
-                         Command(Read c4, 4)];
-                        [Command(Read c4, 4), Command(Read c5, 5)];
-                        [Command(Read c6, 6)]]
-                     vterm: 1)
-              Send(2,term: 1
-                     commit_index: -1
-                     vval:
-                      start: 1
-                      entries:
-                       [[Command(Read c2, 2), Command(Read c3, 3),
-                         Command(Read c4, 4)];
-                        [Command(Read c4, 4), Command(Read c5, 5)];
-                        [Command(Read c6, 6)]]
-                     vterm: 1)
-              Send(3,term: 1
-                     commit_index: -1
-                     vval:
-                      start: 1
-                      entries:
-                       [[Command(Read c2, 2), Command(Read c3, 3),
-                         Command(Read c4, 4)];
-                        [Command(Read c4, 4), Command(Read c5, 5)];
-                        [Command(Read c6, 6)]]
-                     vterm: 1)] |}] ;
+    actions: [Broadcast(term: 1
+                        commit_index: -1
+                        vval:
+                         start: 1
+                         entries:
+                          [[Command(Read c2, 2), Command(Read c3, 3),
+                            Command(Read c4, 4)];
+                           [Command(Read c4, 4), Command(Read c5, 5)];
+                           [Command(Read c6, 6)]]
+                        vterm: 1)] |}] ;
   ignore t0
 
 let%expect_test "conflict o4&merge" =
@@ -1540,7 +1268,6 @@ let%expect_test "conflict o4&merge" =
           term: 0
           vterm: 0
           vval: [[Command(Read c1, 1)], [Command(Read c4, 4)]]
-         sent_cache: (1: 1)(2: 1)(3: 1)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1555,24 +1282,12 @@ let%expect_test "conflict o4&merge" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries: [[Command(Read c1, 1)]; [Command(Read c4, 4)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries: [[Command(Read c1, 1)]; [Command(Read c4, 4)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries: [[Command(Read c1, 1)]; [Command(Read c4, 4)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval:
+                           start: 0
+                           entries: [[Command(Read c1, 1)]; [Command(Read c4, 4)]]
+                          vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
@@ -1599,7 +1314,6 @@ let%expect_test "conflict o4&merge" =
         vterm: 1
         vval:
          [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c3, 3)]]
-       sent_cache: (1: 2)(2: 2)(3: 2)
        state_cache:
         [(1:
           commit_index: -1
@@ -1616,24 +1330,12 @@ let%expect_test "conflict o4&merge" =
              vterm: 0
              vval: [])]
        command_queue: []
-    actions: [Send(1,term: 1
-                     commit_index: -1
-                     vval:
-                      start: 1
-                      entries: [[Command(Read c2, 2)]; [Command(Read c3, 3)]]
-                     vterm: 1)
-              Send(2,term: 1
-                     commit_index: -1
-                     vval:
-                      start: 1
-                      entries: [[Command(Read c2, 2)]; [Command(Read c3, 3)]]
-                     vterm: 1)
-              Send(3,term: 1
-                     commit_index: -1
-                     vval:
-                      start: 1
-                      entries: [[Command(Read c2, 2)]; [Command(Read c3, 3)]]
-                     vterm: 1)] |}]
+    actions: [Broadcast(term: 1
+                        commit_index: -1
+                        vval:
+                         start: 1
+                         entries: [[Command(Read c2, 2)]; [Command(Read c3, 3)]]
+                        vterm: 1)] |}]
 (* TODO finish this test *)
 
 let%expect_test "4th vote bug" =
@@ -1656,7 +1358,6 @@ let%expect_test "4th vote bug" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1671,21 +1372,11 @@ let%expect_test "4th vote bug" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
@@ -1710,7 +1401,6 @@ let%expect_test "4th vote bug" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1750,7 +1440,6 @@ let%expect_test "4th vote bug" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1766,21 +1455,11 @@ let%expect_test "4th vote bug" =
                vval: [])]
          command_queue: []
       actions: [CommitCommands(Command(Read c1, 1))
-                Send(1,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+                Broadcast(term: 0
+                          commit_index: 0
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
@@ -1805,7 +1484,6 @@ let%expect_test "4th vote bug" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1843,7 +1521,6 @@ let%expect_test "Commit acceptor_increment race condition" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c0, 2)]]
-         sent_cache: (1: 0)(2: 0)(3: 0)
          state_cache:
           [(1: commit_index: -1
                term: 0
@@ -1858,21 +1535,11 @@ let%expect_test "Commit acceptor_increment race condition" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c0, 2)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c0, 2)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c0, 2)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c0, 2)]]
+                          vterm: 0)] |}] ;
   let t1, actions = Impl.advance t1 (Commands (Iter.singleton c1)) in
   print t1 actions ;
   [%expect
@@ -1888,7 +1555,6 @@ let%expect_test "Commit acceptor_increment race condition" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -1903,21 +1569,11 @@ let%expect_test "Commit acceptor_increment race condition" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 0
-                             entries: [[Command(Read c1, 1)]]
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 0
+                          commit_index: -1
+                          vval: start: 0
+                                entries: [[Command(Read c1, 1)]]
+                          vterm: 0)] |}] ;
   (* Vote for c1 from 2 *)
   let t1, actions =
     Impl.advance t1
@@ -1943,7 +1599,6 @@ let%expect_test "Commit acceptor_increment race condition" =
                       term: 0
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -1984,7 +1639,6 @@ let%expect_test "Commit acceptor_increment race condition" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -1999,21 +1653,11 @@ let%expect_test "Commit acceptor_increment race condition" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
   (* Vote for c1 from 3 *)
   let t1, actions =
     Impl.advance t1
@@ -2025,7 +1669,6 @@ let%expect_test "Commit acceptor_increment race condition" =
            }
          , 3 ) )
   in
-  (* Commit c1, but be on term 1 from conflict from t0 *)
   print t1 actions ;
   [%expect
     {|
@@ -2040,7 +1683,6 @@ let%expect_test "Commit acceptor_increment race condition" =
                       term: 1
                       vterm: 0
                       vval: [[Command(Read c1, 1)]]
-         sent_cache: (0: 0)(2: 0)(3: 0)
          state_cache:
           [(0: commit_index: -1
                term: 0
@@ -2056,21 +1698,12 @@ let%expect_test "Commit acceptor_increment race condition" =
                vval: [[Command(Read c1, 1)]])]
          command_queue: []
       actions: [CommitCommands(Command(Read c1, 1))
-                Send(0,term: 1
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
+                Broadcast(term: 1
+                          commit_index: 0
+                          vval: start: 1
+                                entries: []
+                          vterm: 0)] |}] ;
+  (* Commit c1, but be on term 1 from conflict from t0 *)
   (* TODO check that this cannot occur *)
   let t0, actions =
     Impl.advance t0
@@ -2094,7 +1727,6 @@ let%expect_test "Commit acceptor_increment race condition" =
                     term: 1
                     vterm: 0
                     vval: [[Command(Read c1, 1)]]
-       sent_cache: (1: 0)(2: 0)(3: 0)
        state_cache:
         [(1: commit_index: -1
              term: 0
@@ -2110,18 +1742,8 @@ let%expect_test "Commit acceptor_increment race condition" =
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
     actions: [CommitCommands(Command(Read c1, 1))
-              Send(1,term: 1
-                     commit_index: 0
-                     vval: start: 0
-                           entries: [[Command(Read c1, 1)]]
-                     vterm: 0)
-              Send(2,term: 1
-                     commit_index: 0
-                     vval: start: 0
-                           entries: [[Command(Read c1, 1)]]
-                     vterm: 0)
-              Send(3,term: 1
-                     commit_index: 0
-                     vval: start: 0
-                           entries: [[Command(Read c1, 1)]]
-                     vterm: 0)] |}]
+              Broadcast(term: 1
+                        commit_index: 0
+                        vval: start: 0
+                              entries: [[Command(Read c1, 1)]]
+                        vterm: 0)] |}]

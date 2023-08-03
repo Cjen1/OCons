@@ -210,7 +210,7 @@ module Replication = struct
       when not
              ([%equal: log_entry option] (Some v)
                 (Log.find t.local_state.vval idx) ) ->
-        t.sent_upto <- min t.sent_upto idx ;
+        t.sent_upto <- min t.sent_upto (idx - 1) ;
         Log.set t.local_state.vval idx v
     | _ ->
         ()
@@ -372,8 +372,8 @@ struct
                        (state_pp_short ~from:problem_idx) ) ] )
           t )
 
-  let replicate_state t =
-    if requires_update t.state then
+  let replicate_state ?(force = false) t =
+    if force || requires_update t.state then
       let msg = get_msg_to_send t.state in
       broadcast msg
 
@@ -589,7 +589,7 @@ struct
     | Tick ->
         Hashtbl.map_inplace t.failure_detector.state ~f:(fun v -> v - 1) ;
         check_conflict_recovery t ;
-        replicate_state t ;
+        replicate_state t ~force:true;
         stall_check t
     | Recv (m, src) ->
         Replication.apply_update (Map.find_exn t.state_cache src) m ;
