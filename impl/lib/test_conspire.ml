@@ -786,7 +786,7 @@ let%expect_test "commit other" =
                         vterm: 0)] |}] ;
   ignore t1
 
-let%expect_test "commit force remote" =
+let%expect_test "Remote commit not cause local" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t0 = create (c4 0) in
@@ -826,6 +826,7 @@ let%expect_test "commit force remote" =
                                 entries: [[Command(Read c1, 1)]]
                           vterm: 0)] |}] ;
   let c2 = make_command (Read "c2") in
+  (* Recv remote commit of other command *)
   let t0, actions =
     Impl.advance t0
       (Recv
@@ -845,10 +846,10 @@ let%expect_test "commit force remote" =
           invrs: Ok
           replica_ids: [0, 1, 2, 3]
          failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: 0
-                      term: 0
+         local_state: commit_index: -1
+                      term: 1
                       vterm: 0
-                      vval: [[Command(Read c2, 2)]]
+                      vval: [[Command(Read c1, 1)]]
          state_cache:
           [(1: commit_index: 0
                term: 0
@@ -863,11 +864,10 @@ let%expect_test "commit force remote" =
                vterm: 0
                vval: [])]
          command_queue: []
-      actions: [CommitCommands(Command(Read c2, 2))
-                Broadcast(term: 0
-                          commit_index: 0
-                          vval: start: 0
-                                entries: [[Command(Read c2, 2)]]
+      actions: [Broadcast(term: 1
+                          commit_index: -1
+                          vval: start: 1
+                                entries: []
                           vterm: 0)] |}] ;
   ignore t0
 
@@ -1707,10 +1707,10 @@ let%expect_test "Commit acceptor_increment race condition" =
         invrs: Ok
         replica_ids: [0, 1, 2, 3]
        failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: commit_index: 0
+       local_state: commit_index: -1
                     term: 1
                     vterm: 0
-                    vval: [[Command(Read c1, 1)]]
+                    vval: [[Command(Read c0, 2)]]
        state_cache:
         [(1: commit_index: -1
              term: 0
@@ -1725,9 +1725,8 @@ let%expect_test "Commit acceptor_increment race condition" =
              vterm: 0
              vval: [[Command(Read c1, 1)]])]
        command_queue: []
-    actions: [CommitCommands(Command(Read c1, 1))
-              Broadcast(term: 1
-                        commit_index: 0
-                        vval: start: 0
-                              entries: [[Command(Read c1, 1)]]
+    actions: [Broadcast(term: 1
+                        commit_index: -1
+                        vval: start: 1
+                              entries: []
                         vterm: 0)] |}]

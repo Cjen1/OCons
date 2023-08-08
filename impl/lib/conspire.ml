@@ -363,16 +363,6 @@ struct
       let msg = get_msg_to_send t.state in
       broadcast msg
 
-  let update_commit_index_from_msg t src (m : message) =
-    ( if t.state.local_state.commit_index < m.commit_index then
-        let cached_state = Map.find_exn t.state_cache src in
-        Iter.int_range
-          ~start:(t.state.local_state.commit_index + 1)
-          ~stop:m.commit_index
-        |> Iter.iter (fun idx ->
-               set t.state (VVal (idx, Log.get cached_state.vval idx)) ) ) ;
-    set t.state (CommitIndex m.commit_index)
-
   let acceptor_update t src (m : message) =
     let cached_state = Map.find_exn t.state_cache src in
     let should_overwrite =
@@ -411,8 +401,7 @@ struct
           | _, None ->
               ()
         in
-        aux m.vval_seg.segment_start ) ;
-    if m.term > t.state.local_state.term then set t.state (Term m.term)
+        aux m.vval_seg.segment_start )
 
   let commit_rate_reporter, should_run_cr_reporter =
     Ocons_core.Utils.InternalReporter.rate_reporter 0 "commit rate"
@@ -579,7 +568,6 @@ struct
         stall_check t
     | Recv (m, src) ->
         Replication.apply_update (Map.find_exn t.state_cache src) m ;
-        update_commit_index_from_msg t src m ;
         acceptor_update t src m ;
         check_commit t ;
         check_conflict_recovery t ;
