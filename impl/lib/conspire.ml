@@ -13,32 +13,40 @@ module Value = struct
   let pp : t Fmt.t =
     let open Fmt in
     brackets @@ list ~sep:comma Command.pp
+
+  let empty = []
 end
 
-module LogEntry = struct
-  module T = struct
-    type t = Value.t [@@deriving compare, hash, bin_io, sexp]
-  end
-
-  include T
-  include Core.Comparable.Make (T)
-end
+module CommandTree = Conspire_sync.Make (Value)
+module LogEntry = CommandTree.LogEntry
 
 module GlobalTypes = struct
-  type log_entry = Value.t [@@deriving compare, equal, bin_io]
+  type log_entry = LogEntry.t [@@deriving compare, equal, bin_io]
 
-  let log_entry_pp = Value.pp
-
-  type log_update = {segment_entries: log_entry list; segment_start: log_index}
+  type log_update =
+    | Segment of {segment_entries: log_entry list; segment_start: log_index}
+    | Ack of {idx: log_index; node_hash: LogEntry.hash}
   [@@deriving bin_io]
 
-  let log_update_pp =
+  let log_update_pp ppf v =
     let open Fmt in
-    record
-      [ field "start" (fun u -> u.segment_start) int
-      ; field "entries"
-          (fun u -> u.segment_entries)
-          (Fmt.brackets @@ list ~sep:semi log_entry_pp) ]
+    match v with
+    | Segment {segment_entries; segment_start} ->
+        let pp =
+          record
+            [ field "start" (fun _ -> segment_start) int
+            ; field "entries"
+                (fun _ -> segment_entries)
+                (brackets @@ list ~sep:semi LogEntry.pp) ]
+        in
+        pf ppf "%a" pp ()
+    | Ack {idx; node_hash} ->
+        let pp =
+          record
+            [ field "idx" (fun _ -> idx) int
+            ; field "hash" (fun _ -> node_hash) int ]
+        in
+        pf ppf "Ack%a" (parens pp) ()
 
   type state =
     { vval: log_entry Log.t
@@ -55,7 +63,7 @@ module GlobalTypes = struct
       ; field "vterm" (fun s -> s.vterm) int
       ; field "vval"
           (fun s -> Log.iter s.vval |> Iter.to_list)
-          (brackets @@ list ~sep:comma log_entry_pp) ]
+          (brackets @@ list ~sep:comma LogEntry.pp) ]
 
   let state_pp_short ?from =
     Fmt.(
@@ -73,8 +81,9 @@ module GlobalTypes = struct
               let lo = max 0 lo in
               let hi = lo + delta in
               let hi = min hi (Log.highest s.vval) in
-              { segment_start= lo
-              ; segment_entries= Log.iter ~lo ~hi s.vval |> Iter.to_list } )
+              Segment
+                { segment_start= lo
+                ; segment_entries= Log.iter ~lo ~hi s.vval |> Iter.to_list } )
             log_update_pp ] )
 
   type message =
@@ -91,6 +100,9 @@ module GlobalTypes = struct
 end
 
 module Replication = struct
+  (* back replication with a hashtbl to value to allow re-construction of log, if state changed to prevent perfect match
+     so store in hashtbl each (term, idx) -> (command, parent) for reconstruction over term increments
+  *)
   open GlobalTypes
 
   type local = state
@@ -99,48 +111,82 @@ module Replication = struct
 
   type update_tracker = {log_diverged_from: log_index option; other_change: bool}
 
-  type t =
-    { local_state: local
-    ; expected_remote: remote
+  type remote_view =
+    { expected_remote: remote
     ; mutable sent_upto: log_index
     ; mutable change_flag: bool }
 
-  let init_state () = {term= 0; vterm= 0; vval= Log.create []; commit_index= -1}
+  type t = {local_state: local; remote_views: remote_view Hashtbl.M(Int).t}
 
-  let create () =
+  let init_state () =
+    {term= 0; vterm= 0; vval= Log.create LogEntry.bot; commit_index= -1}
+
+  let create nodes =
     { local_state= init_state ()
-    ; expected_remote= init_state ()
-    ; sent_upto= -1
-    ; change_flag= false }
+    ; remote_views=
+        Hashtbl.of_alist_exn
+          (module Int)
+          (List.map nodes ~f:(fun nid ->
+               ( nid
+               , { expected_remote= init_state ()
+                 ; sent_upto= -1
+                 ; change_flag= false } ) ) ) }
 
-  (* Corresponding to new_state_cache := state with ![src] = m *)
-  let apply_update (state : state) (m : message) =
+  let reset_sent_upto t diverge_from =
+    Hashtbl.iter t.remote_views ~f:(fun v ->
+        v.sent_upto <- min v.sent_upto diverge_from )
+
+  let set_change_flag t =
+    Hashtbl.iter t.remote_views ~f:(fun v -> v.change_flag <- true)
+
+  (* Used to update cached state on remote *)
+  let apply_update (ctree : CommandTree.t) (state : state) (m : message) =
     state.vterm <- m.vterm ;
     state.term <- m.term ;
     state.commit_index <- m.commit_index ;
     let log = state.vval in
-    Log.cut_after log (m.vval_seg.segment_start - 1) ;
-    Iter.of_list m.vval_seg.segment_entries
-    |> Iter.iteri (fun i v -> Log.set log (i + m.vval_seg.segment_start) v)
+    let _update_state : unit =
+      match m.vval_seg with
+      | Segment seg ->
+          Log.cut_after log (seg.segment_start - 1) ;
+          Iter.of_list seg.segment_entries
+          |> Iter.iteri (fun i v -> Log.set log (i + seg.segment_start) v)
+      | Ack {idx; node_hash} ->
+          CommandTree.fixup ctree state.vval ~idx ~ack_hash:node_hash |> ignore
+    in
+    CommandTree.add_log ctree state.vval ()
 
-  let requires_update t =
-    t.change_flag || Log.highest t.local_state.vval > t.sent_upto
+  let requires_update t nid =
+    let v = Hashtbl.find_exn t.remote_views nid in
+    v.change_flag || Log.highest t.local_state.vval > v.sent_upto
 
-  let update_to_msg t =
-    let segment_start = t.sent_upto + 1 in
+  (* if ack is true we assume that the remote has the relevant commands in its command tree *)
+  let update_to_msg t nid ~ack =
+    let v = Hashtbl.find_exn t.remote_views nid in
+    let segment_start = v.sent_upto + 1 in
+    let vval_seg =
+      match ack with
+      | false ->
+          Segment
+            { segment_start
+            ; segment_entries=
+                Log.iter t.local_state.vval ~lo:segment_start |> Iter.to_list }
+      | true ->
+          let idx = Log.highest t.local_state.vval in
+          let e = Log.get t.local_state.vval idx in
+          Ack {idx; node_hash= e.hist}
+    in
     { term= t.local_state.term
     ; vterm= t.local_state.vterm
-    ; vval_seg=
-        { segment_start
-        ; segment_entries=
-            Log.iter t.local_state.vval ~lo:segment_start |> Iter.to_list }
+    ; vval_seg
     ; commit_index= t.local_state.commit_index }
 
-  let get_msg_to_send t =
-    let msg = update_to_msg t in
-    apply_update t.expected_remote msg ;
-    t.sent_upto <- Log.highest t.local_state.vval ;
-    t.change_flag <- false ;
+  let get_msg_to_send t ctree ?(ack = false) nid =
+    let v = Hashtbl.find_exn t.remote_views nid in
+    let msg = update_to_msg t nid ~ack in
+    apply_update ctree v.expected_remote msg ;
+    v.sent_upto <- Log.highest t.local_state.vval ;
+    v.change_flag <- false ;
     msg
 
   let find_diverge ~equal l1 l2 =
@@ -162,44 +208,64 @@ module Replication = struct
     let hi = lo + delta in
     let hi = min hi (Log.highest v) in
     let seg =
-      {segment_start= lo; segment_entries= Log.iter ~lo ~hi v |> Iter.to_list}
+      Segment
+        {segment_start= lo; segment_entries= Log.iter ~lo ~hi v |> Iter.to_list}
     in
     Fmt.pf ppf "%a" log_update_pp seg
 
-  type update_kind =
-    | CommitIndex of log_index
-    | Term of term
-    | VTerm of term
-    | VVal of (log_index * log_entry)
+  let set_ci t idx =
+    if idx > t.local_state.commit_index then (
+      t.local_state.commit_index <- idx ;
+      set_change_flag t )
 
-  let set t = function
-    | CommitIndex idx when idx > t.local_state.commit_index ->
-        t.local_state.commit_index <- idx ;
-        t.change_flag <- true
-    | Term term when not (term = t.local_state.term) ->
-        assert (term > t.local_state.term) ;
-        t.local_state.term <- term ;
-        t.change_flag <- true
-    | VTerm vterm when not (vterm = t.local_state.vterm) ->
-        assert (vterm > t.local_state.vterm) ;
-        t.local_state.vterm <- vterm ;
-        t.change_flag <- true
-    | VVal (idx, v)
-      when not
-             ([%equal: log_entry option] (Some v)
-                (Log.find t.local_state.vval idx) ) ->
-        t.sent_upto <- min t.sent_upto (idx - 1) ;
-        Log.set t.local_state.vval idx v
-    | _ ->
-        ()
+  let set_term t term =
+    if term > t.local_state.term then (
+      t.local_state.term <- term ;
+      set_change_flag t )
 
+  let set_vterm t term =
+    if term > t.local_state.vterm then (
+      t.local_state.vterm <- term ;
+      set_change_flag t )
+
+  let set_vval t idx v =
+    if
+      not
+        ([%equal: log_entry option] (Some v) (Log.find t.local_state.vval idx))
+    then (
+      reset_sent_upto t (idx - 1) ;
+      Log.set t.local_state.vval idx v )
+
+  let command_added_reporter, should_run_ca_reporter =
+    Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands added"
+
+  let add_commands t ctree citer =
+    should_run_ca_reporter := true ;
+    let idx = ref @@ Log.highest t.local_state.vval in
+    let hist =
+      ref @@ if !idx < 0 then 0 else (Log.get t.local_state.vval !idx).hist
+    in
+    citer (fun c ->
+        command_added_reporter () ;
+        incr idx ;
+        let le = LogEntry.make !hist [c] in
+        hist := le.hist ;
+        set_vval t !idx le ) ;
+    CommandTree.add_log ctree t.local_state.vval
+
+  (*
   let pp =
     let open Fmt in
     record
       [ field "change_flag" (fun t -> t.change_flag) bool
-      ; field "sent_upto" (fun t -> t.sent_upto) int
+      ; field "sent_upto"
+          (fun t -> Hashtbl.to_alist t.sent_upto)
+          (brackets @@ list @@ pair ~sep:(Fmt.any ";@ ") int int)
       ; field "local" (fun t -> t.local_state) state_pp
-      ; field "expected" (fun t -> t.expected_remote) state_pp ]
+      ; field "expected"
+          (fun t -> Hashtbl.to_alist t.expected_remote)
+          (brackets @@ list @@ pair ~sep:(Fmt.any ";@ ") int state_pp) ]
+      *)
 end
 
 module StallChecker = struct
@@ -255,14 +321,16 @@ module Types = struct
   type message = GlobalTypes.message
 
   type t =
-    { state: Replication.t
+    { ctree: CommandTree.t
+    ; state: Replication.t
     ; state_cache: (node_id, Replication.remote, Int.comparator_witness) Map.t
     ; failure_detector: fd_sm
     ; config: config
     ; command_queue: Command.t Queue.t
     ; stall_checker: StallChecker.t }
 
-  let get_command idx t = Log.get t.state.local_state.vval idx |> Iter.of_list
+  let get_command idx t =
+    (Log.get t.state.local_state.vval idx).value |> Iter.of_list
 
   let get_commit_index t = t.state.local_state.commit_index
 
@@ -329,8 +397,8 @@ module Make
              with type t = Types.t
               and type message = GlobalTypes.message) =
 struct
+  module R = Replication
   open GlobalTypes
-  open Replication
   include Types
   open Act
 
@@ -358,85 +426,77 @@ struct
                        (state_pp_short ~from:problem_idx) ) ] )
           t )
 
-  let replicate_state ?(force = false) t =
-    if force || requires_update t.state then
-      let msg = get_msg_to_send t.state in
-      broadcast msg
-
-  let acceptor_update t src (m : message) =
-    let cached_state = Map.find_exn t.state_cache src in
-    let should_overwrite =
-      m.vterm > t.state.local_state.term || m.vterm > t.state.local_state.vterm
+  let acceptor_reply t src log_update =
+    let local = t.state.local_state in
+    let remote = Map.find_exn t.state_cache src in
+    let msg_term : term = remote.vterm in
+    let ack t src =
+      Replication.get_msg_to_send t.state t.ctree ~ack:true src |> send src
     in
-    ( if
-        m.vterm >= t.state.local_state.term
-        && m.vterm >= t.state.local_state.vterm
-      then
+    match (msg_term >= local.term, log_update) with
+    (* Ack => term = current_term => must extend *)
+    | true, Ack {idx; node_hash} ->
+        assert ((Log.get local.vval idx).LogEntry.hist = node_hash)
+    (* Just fully overwrite *)
+    | true, Segment {segment_start; _} when msg_term > local.vterm ->
+        Replication.set_term t.state msg_term ;
+        Replication.set_vterm t.state msg_term ;
+        (* no need to truncate since equiv to immediately voting for remaining entries *)
+        Log.iteri remote.vval ~lo:segment_start (fun (idx, v) ->
+            Replication.set_vval t.state idx v ) ;
+        ack t src
+    | true, Segment {segment_start; _} when msg_term = local.vterm ->
         let rec aux idx =
-          match
-            ( Log.find t.state.local_state.vval idx
-            , Log.find cached_state.vval idx )
-          with
-          (* No more local state => diverge but not conflicting *)
+          match (Log.find local.vval idx, Log.find remote.vval idx) with
+          (* remote extends local => write *)
           | None, Some _ ->
-              Log.iteri cached_state.vval ~lo:idx (fun (idx, v) ->
-                  set t.state (VVal (idx, v)) ) ;
-              set t.state (VTerm m.vterm) ;
-              set t.state (Term m.vterm)
-          (* Logs don't match, check for overwrite*)
-          | Some l, Some r when not @@ [%compare.equal: LogEntry.t] l r ->
-              if should_overwrite then (
-                (* newer vterm/term => overwrite local state *)
-                Log.iteri cached_state.vval ~lo:idx (fun (idx, v) ->
-                    set t.state (VVal (idx, v)) ) ;
-                set t.state (VTerm m.vterm) ;
-                set t.state (Term m.vterm) )
-              else
-                (* not matching and shouldn't overwrite => increment *)
-                set t.state (Term (t.state.local_state.term + 1))
-          (* logs match and local state => recurse *)
-          | Some _, Some _ ->
+              Log.iteri remote.vval ~lo:idx (fun (idx, v) ->
+                  R.set_vval t.state idx v ) ;
+              ack t src
+          (* same log => ack *)
+          | None, None ->
+              ack t src
+          (* Logs match => recurse *)
+          | Some l, Some r when [%equal: LogEntry.t] l r ->
               aux (idx + 1)
-          (* no more remote state => no change *)
-          | _, None ->
+          (* logs don't match => increment term *)
+          | Some l, Some r ->
+              assert (not @@ [%equal: LogEntry.t] l r) ;
+              R.set_term t.state (local.term + 1)
+          | _ ->
               ()
         in
-        aux m.vval_seg.segment_start )
+        aux segment_start
+    | _ ->
+        ()
+
+  let acceptor_reply_term_increase t msg =
+    if msg.term > t.state.local_state.term then R.set_term t.state msg.term
 
   let commit_rate_reporter, should_run_cr_reporter =
     Ocons_core.Utils.InternalReporter.rate_reporter 0 "commit rate"
 
-  let rec check_commit t =
+  let check_commit (t : t) =
     should_run_cr_reporter := true ;
-    let checked_index = t.state.local_state.commit_index + 1 in
-    let votes =
-      t.config.replica_ids |> Iter.of_list
-      |> Iter.map (function
-           | nid when nid = t.config.node_id ->
-               t.state.local_state
-           | nid ->
-               Map.find_exn t.state_cache nid )
+    let vterm_votes =
+      List.filter_map t.config.other_replica_ids ~f:(fun nid ->
+          let s = Map.find_exn t.state_cache nid in
+          if s.vterm = t.state.local_state.vterm then Some s else None )
     in
-    let max_vterm =
-      votes |> Iter.fold (fun acc (s : state) -> max acc s.vterm) (-1)
+    let rec aux idx =
+      if Log.mem t.state.local_state.vval idx then
+        let lv = Log.find t.state.local_state.vval idx in
+        let vc =
+          List.count vterm_votes ~f:(fun s ->
+              [%equal: LogEntry.t option] lv (Log.find s.vval idx) )
+        in
+        if vc + 1 >= t.config.quorum_size then (
+          R.set_ci t.state idx ;
+          StallChecker.reset t.stall_checker idx ;
+          commit_rate_reporter () ;
+          aux (idx + 1) )
     in
-    let r, count =
-      votes
-      |> Iter.filter_map (fun (s : state) ->
-             if s.vterm = max_vterm then Log.find s.vval checked_index else None )
-      |> Iter.count ~hash:Value.hash ~eq:[%compare.equal: Value.t]
-      |> fun r ->
-      IterLabels.fold ~init:([], -1)
-        ~f:(fun (max_v, c) (v, count) ->
-          if count > c then (v, count) else (max_v, c) )
-        r
-    in
-    if count >= t.config.quorum_size then (
-      set t.state (VVal (checked_index, r)) ;
-      set t.state (CommitIndex checked_index) ;
-      StallChecker.reset t.stall_checker t.state.local_state.commit_index ;
-      commit_rate_reporter () ;
-      check_commit t )
+    aux (t.state.local_state.commit_index + 1)
 
   let conflict_recovery_rate, should_run_cra_reporter =
     Ocons_core.Utils.InternalReporter.rate_reporter 0 "conflict rate"
@@ -451,7 +511,6 @@ struct
     Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float
       "max_term - vterm"
 
-  (* All live nodes vote *)
   let check_conflict_recovery t =
     should_run_cra_reporter := true ;
     should_run_cras_reporter := true ;
@@ -497,55 +556,59 @@ struct
           votes |> Iter.fold (fun acc (s : state) -> max acc s.vterm) (-1)
         in
         let vterm_votes =
-          votes |> Iter.filter (fun (s : state) -> s.vterm = max_vterm)
+          votes
+          |> Iter.filter (fun (s : state) -> s.vterm = max_vterm)
+          |> Iter.map (fun vote -> vote.vval)
+          |> Iter.to_list
         in
         let o4 num_value_votes =
           num_value_votes + missing_votes >= t.config.quorum_size
         in
-        let max_idx =
-          vterm_votes
-          |> Iter.fold (fun prev v -> max prev @@ Log.highest v.vval) (-1)
+        (* idea:
+             take current log as target
+             if o4 condition holds on current idx, advance
+             otherwise choose different log
+               If no other log then choose this one (o4 point is in past)
+        *)
+        let rec choose_log logs idx =
+          match logs with
+          | [] ->
+              Fmt.failwith "Need at least one log"
+          | [l] ->
+              l
+          | l :: rest ->
+              advance_index l rest idx
+        and advance_index curr others idx =
+          match Log.find curr idx with
+          | None ->
+              choose_log others idx
+          | Some _ as lv ->
+              let same_votes =
+                List.filter others ~f:(fun l ->
+                    [%equal: LogEntry.t option] lv (Log.find l idx) )
+              in
+              if o4 (List.length same_votes) then
+                advance_index curr same_votes (idx + 1)
+              else choose_log others idx
         in
-        let merge values =
-          let s = Set.empty (module Command) in
-          IterLabels.fold values ~init:s ~f:(fun s vs ->
-              List.fold vs ~init:s ~f:Set.add )
-          |> Set.to_list
+        let chosen_value =
+          choose_log vterm_votes t.state.local_state.commit_index
         in
-        let state = ref `O4 in
-        Iter.int_range ~start:(t.state.local_state.commit_index + 1)
-          ~stop:max_idx (fun idx ->
-            let values =
-              vterm_votes |> Iter.filter_map (fun v -> Log.find v.vval idx)
-            in
-            match !state with
-            | `O4 -> (
-                let value_counts =
-                  Iter.count ~hash:Value.hash ~eq:[%compare.equal: Value.t]
-                    values
-                in
-                let o4_value = ref None in
-                value_counts (fun (v, c) ->
-                    if o4 c then (
-                      assert (Option.is_none !o4_value) ;
-                      o4_value := Some v ) ) ;
-                match !o4_value with
-                | None ->
-                    set t.state (VVal (idx, merge values)) ;
-                    state := `NonO4
-                | Some v ->
-                    set t.state (VVal (idx, v)) ;
-                    state := `O4 )
-            | `NonO4 ->
-                set t.state (VVal (idx, merge values)) ;
-                state := `NonO4 ) ;
-        set t.state (VTerm max_term) ;
-        set t.state (Term max_term) ;
-        (* TODO avoid block when conflict *)
-        let start = Log.highest t.state.local_state.vval + 1 in
-        Queue.iteri t.command_queue ~f:(fun i c ->
-            set t.state (VVal (i + start, [c])) ) ;
-        Queue.clear t.command_queue ) )
+        Log.iteri chosen_value ~lo:t.state.local_state.commit_index
+          (fun (idx, v) -> R.set_vval t.state idx v) ;
+        R.set_term t.state max_term ;
+        R.set_vterm t.state max_term ;
+        R.add_commands t.state t.ctree
+          (fun f ->
+            Queue.iter t.command_queue ~f ;
+            Queue.clear t.command_queue )
+          () ) )
+
+  let replicate_state ?(force = false) t =
+    t.config.other_replica_ids
+    |> List.iter ~f:(fun nid ->
+           if force || R.requires_update t.state nid then
+             send nid (R.get_msg_to_send t.state t.ctree nid) )
 
   let failure_detector_update t (event : message event) =
     match event with
@@ -554,11 +617,7 @@ struct
     | _ ->
         ()
 
-  let command_added_reporter, should_run_ca_reporter =
-    Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands added"
-
   let handle_event t (event : message event) =
-    should_run_ca_reporter := true ;
     failure_detector_update t event ;
     match event with
     | Tick ->
@@ -567,23 +626,16 @@ struct
         replicate_state t ~force:true ;
         stall_check t
     | Recv (m, src) ->
-        Replication.apply_update (Map.find_exn t.state_cache src) m ;
-        acceptor_update t src m ;
+        R.apply_update t.ctree (Map.find_exn t.state_cache src) m ;
+        acceptor_reply t src m.vval_seg ;
         check_commit t ;
         check_conflict_recovery t ;
         replicate_state t
     | Commands ci when not (t.state.local_state.term = t.state.local_state.vterm)
       ->
-        ci
-        |> Iter.iter (fun c ->
-               Queue.enqueue t.command_queue c ;
-               command_added_reporter () )
+        ci (Queue.enqueue t.command_queue)
     | Commands ci ->
-        let start = Log.highest t.state.local_state.vval + 1 in
-        ci
-        |> Iter.iteri (fun i c ->
-               set t.state (VVal (i + start, [c])) ;
-               command_added_reporter () ) ;
+        R.add_commands t.state t.ctree ci () ;
         check_commit t ;
         replicate_state t
 
@@ -603,7 +655,8 @@ struct
       config.other_replica_ids |> Set.of_list (module Int)
     in
     { config
-    ; state= Replication.create ()
+    ; state= Replication.create config.other_replica_ids
+    ; ctree= CommandTree.create ()
     ; state_cache=
         Map.of_key_set other_nodes_set ~f:(fun _ -> Replication.init_state ())
     ; failure_detector=

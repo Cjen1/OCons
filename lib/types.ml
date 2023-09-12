@@ -10,7 +10,7 @@ type command_id = int [@@deriving bin_io, compare, sexp, hash]
 
 type client_id = int [@@deriving bin_io]
 
-type node_id = int [@@deriving sexp_of, bin_io]
+type node_id = int [@@deriving sexp_of, bin_io, compare, equal]
 
 type key = string [@@deriving bin_io, compare, sexp]
 
@@ -124,7 +124,7 @@ let create_state_machine () = Hashtbl.create (module String)
 
 type log_index = int [@@deriving compare, equal, bin_io]
 
-type term = int [@@deriving compare, equal, bin_io]
+type term = int [@@deriving compare, equal, bin_io, hash]
 
 type log_entry = {command: command; term: term} [@@deriving accessors, compare]
 
