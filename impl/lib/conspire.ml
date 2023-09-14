@@ -21,12 +21,12 @@ module CommandTree = Conspire_sync.Make (Value)
 module LogEntry = CommandTree.LogEntry
 
 module GlobalTypes = struct
-  type log_entry = LogEntry.t [@@deriving compare, equal, bin_io]
+  type log_entry = LogEntry.t [@@deriving compare, equal, bin_io, show]
 
   type log_update =
     | Segment of {segment_entries: log_entry list; segment_start: log_index}
     | Ack of {idx: log_index; node_hash: LogEntry.hash}
-  [@@deriving bin_io]
+  [@@deriving bin_io, show]
 
   let log_update_pp ppf v =
     let open Fmt in
@@ -49,64 +49,18 @@ module GlobalTypes = struct
         pf ppf "Ack%a" (parens pp) ()
 
   type state =
-    { vval: log_entry Log.t
+    { vval: LogEntry.t
     ; mutable vterm: term
     ; mutable term: term
     ; mutable commit_index: log_index }
-  [@@deriving equal]
-
-  let state_pp =
-    let open Fmt in
-    record
-      [ field "commit_index" (fun s -> s.commit_index) int
-      ; field "term" (fun s -> s.term) int
-      ; field "vterm" (fun s -> s.vterm) int
-      ; field "vval"
-          (fun s -> Log.iter s.vval |> Iter.to_list)
-          (brackets @@ list ~sep:comma LogEntry.pp) ]
-
-  let state_pp_short ?from =
-    Fmt.(
-      record
-        [ field "commit_index" (fun (s : state) -> s.commit_index) int
-        ; field "term" (fun (s : state) -> s.term) int
-        ; field "vterm" (fun (s : state) -> s.vterm) int
-        ; field "vval_length" (fun (s : state) -> Log.highest s.vval) int
-        ; field "vval_seg"
-            (fun (s : state) ->
-              let delta = 5 in
-              let lo =
-                Option.value ~default:(Log.highest s.vval - delta) from
-              in
-              let lo = max 0 lo in
-              let hi = lo + delta in
-              let hi = min hi (Log.highest s.vval) in
-              Segment
-                { segment_start= lo
-                ; segment_entries= Log.iter ~lo ~hi s.vval |> Iter.to_list } )
-            log_update_pp ] )
+  [@@deriving equal, show]
 
   type message =
     {term: term; vval_seg: log_update; vterm: term; commit_index: log_index}
-  [@@deriving bin_io]
-
-  let message_pp =
-    let open Fmt in
-    record
-      [ field "term" (fun (s : message) -> s.term) int
-      ; field "commit_index" (fun (s : message) -> s.commit_index) int
-      ; field "vval" (fun (s : message) -> s.vval_seg) log_update_pp
-      ; field "vterm" (fun (s : message) -> s.vterm) int ]
+  [@@deriving bin_io, show]
 end
 
-let log_get log idx = if idx = -1 then LogEntry.bot else Log.get log idx
-
-let log_find log idx = if idx = -1 then Some LogEntry.bot else Log.find log idx
-
 module Replication = struct
-  (* back replication with a hashtbl to value to allow re-construction of log, if state changed to prevent perfect match
-     so store in hashtbl each (term, idx) -> (command, parent) for reconstruction over term increments
-  *)
   open GlobalTypes
 
   type local = state

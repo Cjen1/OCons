@@ -5,4 +5,4 @@
  (libraries base core core_kernel.uuid core_unix core_unix.time_unix eio
    accessor ocons.cmgr iter ocons.magic_trace tdigest)
  (preprocess
-  (pps ppx_jane ppx_accessor)))
+  (pps ppx_jane ppx_accessor ppx_deriving.show)))

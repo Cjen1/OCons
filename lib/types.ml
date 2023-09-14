@@ -122,9 +122,9 @@ let update_state_machine : state_machine -> command -> op_result =
 
 let create_state_machine () = Hashtbl.create (module String)
 
-type log_index = int [@@deriving compare, equal, bin_io]
+type log_index = int [@@deriving compare, equal, bin_io, hash, sexp, show]
 
-type term = int [@@deriving compare, equal, bin_io, hash]
+type term = int [@@deriving compare, equal, bin_io, hash, show]
 
 type log_entry = {command: command; term: term} [@@deriving accessors, compare]
 

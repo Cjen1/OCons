@@ -12,11 +12,11 @@ end
 
 module Make (Value : ValueSig) = struct
   module LogEntry = struct
-    type hash = int [@@deriving compare, hash, bin_io, sexp]
+    type hash = int [@@deriving compare, equal, hash, bin_io, sexp, show]
 
     module T = struct
       type t = {hist: hash; parent_hist: hash; value: Value.t}
-      [@@deriving compare, hash, bin_io, sexp]
+      [@@deriving compare, hash, bin_io, sexp, show]
     end
 
     include T
