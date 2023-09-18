@@ -5,10 +5,13 @@ open C.Types
 open Actions_f
 open Ocons_core.Consensus_intf
 module IdMap = Iter.Map.Make (Int)
+open Conspire_command_tree
 
 module Value = struct
+  let pp_command = Command.pp
+
   (* sorted list by command_id *)
-  type t = command list [@@deriving compare, equal, hash, bin_io, sexp]
+  type t = command list [@@deriving compare, equal, hash, bin_io, sexp, show]
 
   let pp : t Fmt.t =
     let open Fmt in
@@ -17,212 +20,56 @@ module Value = struct
   let empty = []
 end
 
-module CommandTree = Conspire_sync.Make (Value)
-module LogEntry = CommandTree.LogEntry
+module CTree = CommandTree (Value)
 
 module GlobalTypes = struct
-  type log_entry = LogEntry.t [@@deriving compare, equal, bin_io, show]
-
-  type log_update =
-    | Segment of {segment_entries: log_entry list; segment_start: log_index}
-    | Ack of {idx: log_index; node_hash: LogEntry.hash}
-  [@@deriving bin_io, show]
-
-  let log_update_pp ppf v =
-    let open Fmt in
-    match v with
-    | Segment {segment_entries; segment_start} ->
-        let pp =
-          record
-            [ field "start" (fun _ -> segment_start) int
-            ; field "entries"
-                (fun _ -> segment_entries)
-                (brackets @@ list ~sep:semi LogEntry.pp) ]
-        in
-        pf ppf "%a" pp ()
-    | Ack {idx; node_hash} ->
-        let pp =
-          record
-            [ field "idx" (fun _ -> idx) int
-            ; field "hash" (fun _ -> node_hash) int ]
-        in
-        pf ppf "Ack%a" (parens pp) ()
-
   type state =
-    { vval: LogEntry.t
+    { mutable vval: VectorClock.t
     ; mutable vterm: term
     ; mutable term: term
-    ; mutable commit_index: log_index }
-  [@@deriving equal, show]
+    ; mutable commit_index: VectorClock.t }
+  [@@deriving show, bin_io]
 
-  type message =
-    {term: term; vval_seg: log_update; vterm: term; commit_index: log_index}
-  [@@deriving bin_io, show]
+  type message = CTreeUpdate of CTree.update | ConsUpdate of state
+  [@@deriving show, bin_io]
 end
 
 module Replication = struct
   open GlobalTypes
 
-  type local = state
+  type remote_view = {mutable expected: CTree.t [@opaque]} [@@deriving show]
 
-  type remote = state
+  type t =
+    { state: state
+    ; mutable store: CTree.t
+    ; mutable change_flag: bool
+    ; remotes: remote_view Map.M(Int).t
+          [@printer Conspire_command_tree.map_pp Fmt.int pp_remote_view] }
+  [@@deriving show]
 
-  type update_tracker = {log_diverged_from: log_index option; other_change: bool}
+  let recv_update t src update =
+    t.store <- CTree.apply_update t.store update ;
+    let remote = Map.find_exn t.remotes src in
+    remote.expected <- CTree.apply_update remote.expected update
 
-  type remote_view =
-    { expected_remote: remote
-    ; mutable sent_upto: log_index
-    ; mutable change_flag: bool }
+  let get_ctree_msg t dst =
+    let remote = Map.find_exn t.remotes dst in
+    if not (CTree.mem remote.expected t.state.vval) then
+      let update = CTree.make_update t.store t.state.vval remote.expected in
+      Some update
+    else None
 
-  type t = {local_state: local; remote_views: remote_view Hashtbl.M(Int).t}
+  let get_cons_update ?(force = false) t =
+    if force || t.change_flag then Some t.state else None
 
-  let init_state () =
-    {term= 0; vterm= 0; vval= Log.create LogEntry.bot; commit_index= -1}
-
-  let create nodes =
-    { local_state= init_state ()
-    ; remote_views=
-        Hashtbl.of_alist_exn
-          (module Int)
-          (List.map nodes ~f:(fun nid ->
-               ( nid
-               , { expected_remote= init_state ()
-                 ; sent_upto= -1
-                 ; change_flag= false } ) ) ) }
-
-  let reset_sent_upto t diverge_from =
-    Hashtbl.iter t.remote_views ~f:(fun v ->
-        v.sent_upto <- min v.sent_upto diverge_from )
-
-  let set_change_flag t =
-    Hashtbl.iter t.remote_views ~f:(fun v -> v.change_flag <- true)
-
-  (* Used to update cached state on remote *)
-  let apply_update (ctree : CommandTree.t) (state : state) (m : message) =
-    state.vterm <- m.vterm ;
-    state.term <- m.term ;
-    state.commit_index <- m.commit_index ;
-    let log = state.vval in
-    let _update_state : unit =
-      match m.vval_seg with
-      | Segment seg ->
-          Log.cut_after log (seg.segment_start - 1) ;
-          Iter.of_list seg.segment_entries
-          |> Iter.iteri (fun i v -> Log.set log (i + seg.segment_start) v)
-      | Ack {idx; node_hash} ->
-          CommandTree.fixup ctree state.vval ~idx ~ack_hash:node_hash |> ignore
+  let add_commands t ~node vals =
+    assert (t.state.term = t.state.vterm) ;
+    let ctree, hd =
+      CTree.addv t.store ~node ~parent:t.state.vval ~term:t.state.term vals
     in
-    CommandTree.add_log ctree state.vval ()
-
-  let requires_update t nid =
-    let v = Hashtbl.find_exn t.remote_views nid in
-    v.change_flag || Log.highest t.local_state.vval > v.sent_upto
-
-  (* if ack is true we assume that the remote has the relevant commands in its command tree *)
-  let update_to_msg t nid ~ack =
-    let v = Hashtbl.find_exn t.remote_views nid in
-    let segment_start = v.sent_upto + 1 in
-    let vval_seg =
-      match ack with
-      | false ->
-          Segment
-            { segment_start
-            ; segment_entries=
-                Log.iter t.local_state.vval ~lo:segment_start |> Iter.to_list }
-      | true ->
-          let idx = Log.highest t.local_state.vval in
-          Ack {idx; node_hash= (log_get t.local_state.vval idx).hist}
-    in
-    { term= t.local_state.term
-    ; vterm= t.local_state.vterm
-    ; vval_seg
-    ; commit_index= t.local_state.commit_index }
-
-  let get_msg_to_send t ctree ?(ack = false) nid =
-    let v = Hashtbl.find_exn t.remote_views nid in
-    let msg = update_to_msg t nid ~ack in
-    apply_update ctree v.expected_remote msg ;
-    v.sent_upto <- Log.highest t.local_state.vval ;
-    v.change_flag <- false ;
-    msg
-
-  let find_diverge ~equal l1 l2 =
-    let rec aux l1 l2 idx =
-      match (Log.find l1 idx, Log.find l2 idx) with
-      | None, None ->
-          None
-      | Some i, Some j ->
-          if equal i j then aux l1 l2 (idx + 1) else Some idx
-      | Some _, None | None, Some _ ->
-          Some idx
-    in
-    aux l1 l2 0
-
-  let log_pp ?from ppf v =
-    let delta = 5 in
-    let lo = Option.value ~default:(Log.highest v - delta) from in
-    let lo = max 0 lo in
-    let hi = lo + delta in
-    let hi = min hi (Log.highest v) in
-    let seg =
-      Segment
-        {segment_start= lo; segment_entries= Log.iter ~lo ~hi v |> Iter.to_list}
-    in
-    Fmt.pf ppf "%a" log_update_pp seg
-
-  let set_ci t idx =
-    if idx > t.local_state.commit_index then (
-      t.local_state.commit_index <- idx ;
-      set_change_flag t )
-
-  let set_term t term =
-    if term > t.local_state.term then (
-      t.local_state.term <- term ;
-      set_change_flag t )
-
-  let set_vterm t term =
-    if term > t.local_state.vterm then (
-      t.local_state.vterm <- term ;
-      set_change_flag t )
-
-  let set_vval t idx v =
-    if
-      not
-        ([%equal: log_entry option] (Some v) (Log.find t.local_state.vval idx))
-    then (
-      reset_sent_upto t (idx - 1) ;
-      Log.set t.local_state.vval idx v )
-
-  let command_added_reporter, should_run_ca_reporter =
-    Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands added"
-
-  let add_commands t ctree citer =
-    should_run_ca_reporter := true ;
-    let idx = ref @@ Log.highest t.local_state.vval in
-    let hist =
-      ref @@ if !idx < 0 then 0 else (log_get t.local_state.vval !idx).hist
-    in
-    citer (fun c ->
-        command_added_reporter () ;
-        incr idx ;
-        let le = LogEntry.make !hist [c] in
-        hist := le.hist ;
-        set_vval t !idx le ) ;
-    CommandTree.add_log ctree t.local_state.vval
-
-  (*
-  let pp =
-    let open Fmt in
-    record
-      [ field "change_flag" (fun t -> t.change_flag) bool
-      ; field "sent_upto"
-          (fun t -> Hashtbl.to_alist t.sent_upto)
-          (brackets @@ list @@ pair ~sep:(Fmt.any ";@ ") int int)
-      ; field "local" (fun t -> t.local_state) state_pp
-      ; field "expected"
-          (fun t -> Hashtbl.to_alist t.expected_remote)
-          (brackets @@ list @@ pair ~sep:(Fmt.any ";@ ") int state_pp) ]
-      *)
+    t.state.vval <- hd ;
+    t.store <- ctree ;
+    t.change_flag <- true
 end
 
 module StallChecker = struct
@@ -258,6 +105,7 @@ module Types = struct
     ; quorum_size: int
     ; fd_timeout: int
     ; max_outstanding: int }
+  [@@deriving show {with_path= false}]
 
   let make_config ~node_id ~replica_ids ~fd_timeout ?(max_outstanding = 8192) ()
       : config =
@@ -278,250 +126,106 @@ module Types = struct
   type message = GlobalTypes.message
 
   type t =
-    { ctree: CommandTree.t
-    ; state: Replication.t
-    ; state_cache: (node_id, Replication.remote, Int.comparator_witness) Map.t
-    ; failure_detector: fd_sm
+    { rep: Replication.t
+    ; other_nodes: state Map.M(Int).t [@printer map_pp Fmt.int pp_state]
+    ; failure_detector: fd_sm [@opaque]
     ; config: config
-    ; command_queue: Command.t Queue.t
-    ; stall_checker: StallChecker.t }
+    ; command_queue: Value.t Queue.t [@opaque]
+    ; stall_checker: StallChecker.t [@opaque]
+    ; commit_log: Value.t Log.t }
+  [@@deriving show {with_path= false}]
 
   let get_command idx t =
-    (log_get t.state.local_state.vval idx).value |> Iter.of_list
+    if idx < 0 then Iter.empty else Log.get t.commit_log idx |> Iter.of_list
 
-  let get_commit_index t = t.state.local_state.commit_index
+  let get_commit_index t = Log.highest t.commit_log
 
   module PP = struct
-    open Fmt
-
-    let invrs_pp ppf invrs =
-      match
-        List.filter_map invrs ~f:(function
-          | _, true ->
-              None
-          | s, false ->
-              Some s )
-      with
-      | ls when List.is_empty ls ->
-          pf ppf "Ok"
-      | ls ->
-          pf ppf "violated: %a" (brackets @@ list ~sep:comma string) ls
-
-    let config_pp : config Fmt.t =
-      let get_invrs cfg =
-        [ ( "node_id not in other_replicas"
-          , not @@ Stdlib.List.mem cfg.node_id cfg.other_replica_ids )
-        ; ( "replica_count correct"
-          , List.length cfg.replica_ids = cfg.replica_count ) ]
-      in
-      record
-        [ field "node_id" (fun c -> c.node_id) int
-        ; field "quorum_size" (fun c -> c.quorum_size) int
-        ; field "fd_timeout" (fun c -> c.fd_timeout) int
-        ; field "invrs" get_invrs invrs_pp
-        ; field "replica_ids"
-            (fun c -> c.replica_ids)
-            (brackets @@ list ~sep:comma int) ]
-
-    let fd_sm_pp =
-      record
-        [ field "state"
-            (fun (v : fd_sm) ->
-              Hashtbl.to_alist v.state
-              |> List.sort ~compare:(fun (a, _) (b, _) -> Int.compare a b) )
-            ( brackets @@ list ~sep:semi @@ parens
-            @@ pair ~sep:(Fmt.any ":@ ") int int ) ]
-
-    let message_pp = GlobalTypes.message_pp
-
-    let t_pp =
-      record
-        [ field "config" (fun t -> t.config) config_pp
-        ; field "failure_detector" (fun t -> t.failure_detector) fd_sm_pp
-        ; field "local_state" (fun t -> t.state.local_state) state_pp
-        ; field "state_cache"
-            (fun t -> t.state_cache |> Map.to_alist)
-            ( brackets @@ list @@ parens
-            @@ pair ~sep:(Fmt.any ":@ ") int state_pp )
-        ; field "command_queue"
-            (fun t -> Queue.to_list t.command_queue)
-            (brackets @@ list @@ Command.pp) ]
+    let message_pp = pp_message
+    let t_pp = pp
   end
-
-  let log_continuous l ctree =
-    Log.iteri l
-    |> IterLabels.fold ~init:LogEntry.bot
-         ~f:(fun (prev : LogEntry.t) (idx, v) ->
-           if not @@ CommandTree.mem ctree v then
-             Fmt.failwith "(%d: %d) is missing in cmdtree after handling" idx
-               v.hist ;
-           if not (v.parent_hist = prev.hist) then
-             Fmt.failwith
-               "(%d: %d) has a broken log whern %d doesn't equal prev.hist(%d)"
-               idx v.hist v.parent_hist prev.hist ;
-           v )
-    |> ignore
-
-  let log_invariant t =
-    List.iter t.config.replica_ids ~f:(fun i ->
-        let l =
-          if i = t.config.node_id then t.state.local_state.vval
-          else (Map.find_exn t.state_cache i).vval
-        in
-        log_continuous l t.ctree )
 end
 
 module Make
-    (Act : ActionSig
-             with type t = Types.t
-              and type message = GlobalTypes.message) =
+    (Act : ActionSig with type t = Types.t and type message = Types.message) =
 struct
+  open Types
   module R = Replication
-  open GlobalTypes
-  include Types
-  open Act
 
-  let is_live t nid =
+  let replication ?(force = false) (t : t) =
+    List.iter t.config.other_replica_ids ~f:(fun dst ->
+        let update = R.get_ctree_msg t.rep dst in
+        Option.iter update ~f:(fun update ->
+            let remote = Map.find_exn t.rep.remotes dst in
+            remote.expected <- CTree.apply_update remote.expected update ;
+            Act.send dst (GlobalTypes.CTreeUpdate update) ) ) ;
+    Option.iter (R.get_cons_update ~force t.rep) ~f:(fun up ->
+        Act.broadcast (ConsUpdate up) ) ;
+    t.rep.change_flag <- false
+
+  let is_live (t : t) nid =
     nid = t.config.node_id || Hashtbl.find_exn t.failure_detector.state nid > 0
 
-  let stall_check t =
+  let stall_check (t : t) =
     StallChecker.check t.stall_checker ~pp:(fun ppf () ->
-        let problem_idx = t.state.local_state.commit_index in
-        Fmt.pf ppf "Stalled on %d at %d@.%a" t.config.node_id problem_idx
-          Fmt.(
-            record
-              [ field "replica_states"
-                  (fun t ->
-                    t.config.replica_ids |> Iter.of_list
-                    |> Iter.map (function
-                         | nid when nid = t.config.node_id ->
-                             (Fmt.str "local(%d)" nid, t.state.local_state)
-                         | nid ->
-                             ( Fmt.str "remote(%d)" nid
-                             , Map.find_exn t.state_cache nid ) )
-                    |> Iter.to_list )
-                  ( braces @@ list @@ parens
-                  @@ pair ~sep:(any ":@ ") string
-                       (state_pp_short ~from:problem_idx) ) ] )
-          t )
+        let problem_idx = t.rep.state.commit_index in
+        Fmt.pf ppf "Stalled on %d at %a@." t.config.node_id VectorClock.pp
+          problem_idx )
 
-  let acceptor_reply t src log_update =
-    let local = t.state.local_state in
-    let remote = Map.find_exn t.state_cache src in
+  let acceptor_reply t src =
+    let local = t.rep.state in
+    let remote = Map.find_exn t.other_nodes src in
     let msg_term : term = remote.vterm in
-    let ack t src =
-      ignore (t, src)
-      (*
-      TODO
-      let msg = Replication.get_msg_to_send t.state t.ctree ~ack:true src in
-      send src msg
-      *)
-    in
-    log_invariant t ;
-    match (msg_term >= local.term, log_update) with
-    (* Ack => term = current_term => must extend *)
-    | true, Ack {idx; node_hash} ->
-        traceln "(%d, %d) (%d, %d)" msg_term local.term
-          (log_get local.vval idx).hist node_hash ;
-        assert ((log_get local.vval idx).LogEntry.hist = node_hash)
-    (* Just fully overwrite *)
-    | true, Segment {segment_start; _} when msg_term > local.vterm ->
-        Replication.set_term t.state msg_term ;
-        Replication.set_vterm t.state msg_term ;
-        (* no need to truncate since equiv to immediately voting for remaining entries *)
-        log_invariant t ;
-        Log.iteri remote.vval ~lo:segment_start (fun (idx, v) ->
-            Replication.set_vval t.state idx v ) ;
-        log_invariant t ;
-        ack t src
-    | true, Segment {segment_start; _} when msg_term = local.vterm ->
-        let rec aux idx =
-          match (Log.find local.vval idx, Log.find remote.vval idx) with
-          (* remote extends local => write *)
-          | None, Some _ ->
-              log_invariant t ;
-              Log.iteri remote.vval ~lo:idx (fun (idx, v) ->
-                  R.set_vval t.state idx v ) ;
-              log_invariant t ;
-              ack t src
-          (* same log => ack *)
-          | None, None ->
-              ack t src
-          (* Logs match => recurse *)
-          | Some l, Some r when [%equal: LogEntry.t] l r ->
-              aux (idx + 1)
-          (* logs don't match => increment term *)
-          | Some l, Some r ->
-              assert (not @@ [%equal: LogEntry.t] l r) ;
-              R.set_term t.state (local.term + 1)
-          | _ ->
-              ()
-        in
-        aux segment_start
+    match msg_term >= local.term with
+    (* overwrite *)
+    | true when msg_term > local.vterm ->
+        local.term <- msg_term ;
+        local.vterm <- msg_term ;
+        local.vval <- remote.vval ;
+        t.rep.change_flag <- true
+    (* extends local *)
+    | true
+      when msg_term = local.vterm
+           && CTree.prefix t.rep.store local.vval remote.vval ->
+        local.vval <- remote.vval ;
+        t.rep.change_flag <- true
+    (* conflict with local => increment *)
+    | true when msg_term = local.vterm ->
+        local.vterm <- msg_term + 1 ;
+        t.rep.change_flag <- true
     | _ ->
         ()
 
-  let acceptor_reply_term_increase t msg =
-    if msg.term > t.state.local_state.term then R.set_term t.state msg.term
-
-  let commit_rate_reporter, should_run_cr_reporter =
-    Ocons_core.Utils.InternalReporter.rate_reporter 0 "commit rate"
-
-  let check_commit (t : t) =
-    should_run_cr_reporter := true ;
+  let check_commit t =
     let vterm_votes =
       List.filter_map t.config.other_replica_ids ~f:(fun nid ->
-          let s = Map.find_exn t.state_cache nid in
-          if s.vterm = t.state.local_state.vterm then Some s else None )
+          let s = Map.find_exn t.other_nodes nid in
+          if s.vterm = t.rep.state.vterm then Some s else None )
     in
-    let rec aux idx =
-      if Log.mem t.state.local_state.vval idx then
-        let lv = Log.find t.state.local_state.vval idx in
-        let vc =
+    let voted_path =
+      CTree.path_between t.rep.store t.rep.state.commit_index t.rep.state.vval
+    in
+    List.iter voted_path ~f:(fun vc ->
+        let votes =
           List.count vterm_votes ~f:(fun s ->
-              [%equal: LogEntry.t option] lv (Log.find s.vval idx) )
+              CTree.prefix t.rep.store vc s.vval )
         in
-        if vc + 1 >= t.config.quorum_size then (
-          R.set_ci t.state idx ;
-          StallChecker.reset t.stall_checker idx ;
-          commit_rate_reporter () ;
-          aux (idx + 1) )
-    in
-    aux (t.state.local_state.commit_index + 1)
-
-  let conflict_recovery_rate, should_run_cra_reporter =
-    Ocons_core.Utils.InternalReporter.rate_reporter 0 "conflict rate"
-
-  let conflict_recovery_success_rate, should_run_cras_reporter =
-    Ocons_core.Utils.InternalReporter.rate_reporter 0 "conflict success rate"
-
-  let max_term_report, should_run_mt_reporter =
-    Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "max_term"
-
-  let max_term_delta, should_run_mtd_reporter =
-    Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float
-      "max_term - vterm"
+        if votes + 1 >= t.config.quorum_size then
+          Option.iter (CTree.get_value t.rep.store vc) ~f:(Log.add t.commit_log) )
 
   let check_conflict_recovery t =
-    should_run_cra_reporter := true ;
-    should_run_cras_reporter := true ;
-    should_run_mt_reporter := true ;
-    should_run_mtd_reporter := true ;
     let votes =
       t.config.replica_ids |> Iter.of_list
       |> Iter.map (function
            | nid when nid = t.config.node_id ->
-               t.state.local_state
+               t.rep.state
            | nid ->
-               Map.find_exn t.state_cache nid )
+               Map.find_exn t.other_nodes nid )
     in
     let max_term =
       votes |> Iter.fold (fun acc (s : state) -> max acc s.term) (-1)
     in
-    max_term_report max_term ;
-    if max_term > t.state.local_state.vterm then (
-      conflict_recovery_rate () ;
-      max_term_delta (max_term - t.state.local_state.vterm) ;
+    if max_term > t.rep.state.vterm then
       let num_max_term_votes =
         votes |> Iter.filter_count (fun (s : state) -> s.term = max_term)
       in
@@ -532,8 +236,8 @@ struct
                is_live t nid
                =>
                let s =
-                 if nid = t.config.node_id then t.state.local_state
-                 else Map.find_exn t.state_cache nid
+                 if nid = t.config.node_id then t.rep.state
+                 else Map.find_exn t.other_nodes nid
                in
                s.term = max_term )
       in
@@ -541,7 +245,6 @@ struct
         num_max_term_votes >= t.config.quorum_size
         && (true || all_live_nodes_vote)
       then (
-        conflict_recovery_success_rate () ;
         let votes =
           votes |> Iter.filter (fun (s : state) -> s.term = max_term)
         in
@@ -552,106 +255,29 @@ struct
         let vterm_votes =
           votes |> Iter.filter (fun (s : state) -> s.vterm = max_vterm)
         in
-        let o4 num_value_votes =
-          num_value_votes + missing_votes >= t.config.quorum_size
+        let o4_prefix =
+          CTree.greatest_sufficiently_common_prefix t.rep.store
+            (vterm_votes |> Iter.map (fun s -> s.vval) |> Iter.to_list)
+            (t.config.quorum_size - missing_votes)
         in
-        assert (
-          let ci = t.state.local_state.commit_index in
-          let lv = log_get t.state.local_state.vval ci in
-          let vc =
-            Iter.filter_count
-              (fun v -> [%equal: LogEntry.t] (log_get v.vval ci) lv)
-              votes
-          in
-          vc >= t.config.quorum_size ) ;
-        (* idea:
-             take current log as target
-             if o4 condition holds on current idx, advance
-             otherwise choose different log
-               If no other log then choose this one (o4 point is in past)
-        *)
-        log_invariant t ;
-        let hd_vote = Iter.head_exn vterm_votes in
-        let start_idx = hd_vote.commit_index in
-        Log.iteri hd_vote.vval ~lo:start_idx
-          ~hi:t.state.local_state.commit_index (fun (idx, v) ->
-            R.set_vval t.state idx v ) ;
-        log_invariant t ;
-        let rec choose_another_log curr others idx =
-          match others with
-          | [] ->
-              (curr, idx)
-          | l :: rest ->
-              advance_index l rest idx
-        and advance_index curr others idx =
-          match Log.find curr idx with
-          | None ->
-              choose_another_log curr others idx
-          | Some _ as lv ->
-              let same_votes =
-                List.filter others ~f:(fun l ->
-                    [%equal: LogEntry.t option] lv (log_find l idx) )
-              in
-              if o4 (List.length same_votes + 1) then
-                advance_index curr same_votes (idx + 1)
-              else choose_another_log curr others idx
-        in
-        (* Update local log to maximum committed one *)
-        let max_ci =
+        let max_length_o4_vote =
           vterm_votes
-          |> Iter.fold (fun acc (s : state) -> max acc s.commit_index) (-1)
+          |> Iter.filter (fun s -> CTree.prefix t.rep.store o4_prefix s.vval)
+          |> Iter.max_exn ~lt:(fun a b ->
+                 CTree.get_idx t.rep.store a.vval
+                 < CTree.get_idx t.rep.store b.vval )
         in
-        let max_ci_vote =
-          vterm_votes
-          |> Iter.find (fun (s : state) ->
-                 if s.commit_index = max_ci then Some s else None )
-          |> Option.value_exn
+        t.rep.state.term <- max_term ;
+        t.rep.state.vterm <- max_term ;
+        t.rep.state.vval <- max_length_o4_vote.vval ;
+        (* ensure commands re-replicated *)
+        let command_iter : Value.t Iter.t =
+         fun f ->
+          Queue.iter t.command_queue ~f ;
+          Queue.clear t.command_queue
         in
-        let valid_votes =
-          vterm_votes
-          |> Iter.map (fun vote -> vote.vval)
-          |> Iter.filter (fun v ->
-                 let mcv = log_find max_ci_vote.vval max_ci in
-                 let rv = log_find v max_ci in
-                 [%equal: LogEntry.t option] rv mcv )
-          |> Iter.to_list
-        in
-        let chosen_value, diverge =
-          advance_index (List.hd_exn valid_votes) (List.tl_exn valid_votes)
-            start_idx
-        in
-        assert (
-          Iter.int_range ~start:start_idx ~stop:(diverge - 1) (fun idx ->
-              let lv = Log.get chosen_value idx in
-              let vc =
-                Iter.filter_count
-                  (fun (v : state) ->
-                    [%equal: LogEntry.t option] (Some lv) (Log.find v.vval idx)
-                    )
-                  vterm_votes
-              in
-              if not (o4 vc) then
-                Fmt.failwith "Insufficient votes at %d, in %d %d" idx start_idx
-                  diverge ) ;
-          true ) ;
-        log_invariant t ;
-        log_continuous chosen_value t.ctree ;
-        Log.iteri chosen_value ~lo:start_idx (fun (idx, v) ->
-            R.set_vval t.state idx v ) ;
-        log_invariant t ;
-        R.set_term t.state max_term ;
-        R.set_vterm t.state max_term ;
-        R.add_commands t.state t.ctree
-          (fun f ->
-            Queue.iter t.command_queue ~f ;
-            Queue.clear t.command_queue )
-          () ) )
-
-  let replicate_state ?(force = false) t =
-    t.config.other_replica_ids
-    |> List.iter ~f:(fun nid ->
-           if force || R.requires_update t.state nid then
-             send nid (R.get_msg_to_send t.state t.ctree nid) )
+        R.add_commands t.rep ~node:t.config.node_id command_iter ;
+        t.rep.change_flag <- true )
 
   let failure_detector_update t (event : message event) =
     match event with
@@ -666,61 +292,34 @@ struct
     | Tick ->
         Hashtbl.map_inplace t.failure_detector.state ~f:(fun v -> v - 1) ;
         check_conflict_recovery t ;
-        replicate_state t ~force:true ;
+        replication t ~force:true ;
         stall_check t
-    | Recv (m, src) ->
-        log_invariant t ;
-        R.apply_update t.ctree (Map.find_exn t.state_cache src) m ;
-        log_invariant t ;
-        acceptor_reply t src m.vval_seg ;
-        log_invariant t ;
-        check_commit t ;
-        log_invariant t ;
-        check_conflict_recovery t ;
-        log_invariant t ;
-        replicate_state t
-    | Commands ci when not (t.state.local_state.term = t.state.local_state.vterm)
-      ->
-        ci (Queue.enqueue t.command_queue)
+    | Commands ci when not (t.rep.state.term = t.rep.state.vterm) ->
+        ci
+        |> Iter.map (fun v -> [v])
+        |> Iter.iter (Queue.enqueue t.command_queue)
     | Commands ci ->
-        R.add_commands t.state t.ctree ci () ;
-        check_commit t ;
-        replicate_state t
+        R.add_commands t.rep ~node:t.config.node_id
+          (ci |> Iter.map (fun v -> [v]))
+    | Recv (m, src) -> (
+      match m with
+      | CTreeUpdate update ->
+          R.recv_update t.rep src update
+      | ConsUpdate state ->
+          let remote = Map.find_exn t.other_nodes src in
+          remote.term <- state.term ;
+          remote.vterm <- state.vterm ;
+          remote.vval <- state.vval ;
+          remote.commit_index <- state.commit_index ;
+          acceptor_reply t src ;
+          check_commit t ;
+          check_conflict_recovery t ;
+          replication t )
 
   let advance t e =
-    run_side_effects
+    Act.run_side_effects
       (fun () -> Exn.handle_uncaught_and_exit (fun () -> handle_event t e))
       t
-  (*
-    run_side_effects
-      (fun () ->
-        try handle_event t e
-        with ex ->
-          Exn.reraise ex
-            (Fmt.str "Failed while handling %a"
-               (event_pp ~pp_msg:PP.message_pp : message event Fmt.t)
-               e ) )
-      t
-      *)
-
-  let create (config : config) =
-    let other_nodes_set =
-      config.other_replica_ids |> Set.of_list (module Int)
-    in
-    { config
-    ; state= Replication.create config.other_replica_ids
-    ; ctree= CommandTree.create ()
-    ; state_cache=
-        Map.of_key_set other_nodes_set ~f:(fun _ -> Replication.init_state ())
-    ; failure_detector=
-        { state=
-            Hashtbl.of_alist_exn
-              (module Int)
-              ( config.other_replica_ids
-              |> List.map ~f:(fun id -> (id, config.fd_timeout)) ) }
-    ; command_queue= Queue.create ()
-    ; stall_checker= {ticks_since_commit= 2; prev_commit_idx= -1; tick_limit= 2}
-    }
 end
 
 module Impl = Make (ImperativeActions (Types))

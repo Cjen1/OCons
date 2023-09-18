@@ -32,12 +32,11 @@ let%expect_test "local_commit" =
                  invrs: Ok
                  replica_ids: [0]
          failure_detector: state: []
-         local_state: commit_index: -1
-                      term: 0
-                      vterm: 0
-                      vval: []
+         local_state:
+          { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0; commit_index = -1
+            }
          state_cache: []
-         command_queue: []
+         cdmmand_queue: []
       actions: [] |}] ;
   let c1 = make_command (Read "c1") in
   let t, actions = Impl.advance t (Commands (c1 |> Iter.singleton)) in
@@ -51,14 +50,13 @@ let%expect_test "local_commit" =
                  replica_ids: [0]
          failure_detector: state: []
          local_state:
-          commit_index: 0
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
+          { Conspire.GlobalTypes.vval =
+            [[hist: 711483029
+              parent_hist: 0
+              value: [Command(Read c1, 1)]]];
+            vterm = 0; term = 0; commit_index = 0 }
          state_cache: []
-         command_queue: []
+         cdmmand_queue: []
       actions: [CommitCommands(Command(Read c1, 1))] |}] ;
   let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
@@ -72,21 +70,19 @@ let%expect_test "local_commit" =
                  replica_ids: [0]
          failure_detector: state: []
          local_state:
-          commit_index: 2
-          term: 0
-          vterm: 0
-          vval:
-           [[hist: 711483029
-             parent_hist: 0
-             value: [Command(Read c1, 1)]],
-            [hist: 331898321
-             parent_hist: 711483029
-             value: [Command(Read c2, 3)]],
-            [hist: 705707545
-             parent_hist: 331898321
-             value: [Command(Read c3, 2)]]]
+          { Conspire.GlobalTypes.vval =
+            [[hist: 711483029
+              parent_hist: 0
+              value: [Command(Read c1, 1)]]
+             [hist: 331898321
+              parent_hist: 711483029
+              value: [Command(Read c2, 3)]]
+             [hist: 705707545
+              parent_hist: 331898321
+              value: [Command(Read c3, 2)]]];
+            vterm = 0; term = 0; commit_index = 2 }
          state_cache: []
-         command_queue: []
+         cdmmand_queue: []
       actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))] |}]
 
 let%expect_test "e2e commit" =
@@ -108,53 +104,49 @@ let%expect_test "e2e commit" =
           replica_ids: [0, 1, 2, 3]
          failure_detector: state: [(0: 2); (2: 2); (3: 2)]
          local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
+          { Conspire.GlobalTypes.vval =
+            [[hist: 711483029
+              parent_hist: 0
+              value: [Command(Read c1, 1)]]];
+            vterm = 0; term = 0; commit_index = -1 }
          state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)] |}] ;
+          [(0:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })
+           (2:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })
+           (3:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })]
+         cdmmand_queue: []
+      actions: [Send(0,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })
+                Send(2,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })
+                Send(3,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })] |}] ;
   let lec1 = LE.make 0 [c1] in
   let recv_c1 =
     Recv
@@ -176,52 +168,52 @@ let%expect_test "e2e commit" =
           replica_ids: [0, 1, 2, 3]
          failure_detector: state: [(0: 2); (1: 2); (3: 2)]
          local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
+          { Conspire.GlobalTypes.vval =
+            [[hist: 711483029
+              parent_hist: 0
+              value: [Command(Read c1, 1)]]];
+            vterm = 0; term = 0; commit_index = -1 }
          state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
+          [(0:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })
            (1:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval: Ack(idx: 0
-                                 hash: 711483029)
-                       vterm: 0)
-                Send(0,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)] |}] ;
+            { Conspire.GlobalTypes.vval =
+              [[hist: 711483029
+                parent_hist: 0
+                value: [Command(Read c1, 1)]]];
+              vterm = 0; term = 0; commit_index = -1 })
+           (3:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })]
+         cdmmand_queue: []
+      actions: [Send(0,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })
+                Send(1,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })
+                Send(3,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })] |}] ;
   let t3, actions = Impl.advance t3 recv_c1 in
   print t3 actions ;
   [%expect
@@ -234,52 +226,52 @@ let%expect_test "e2e commit" =
           replica_ids: [0, 1, 2, 3]
          failure_detector: state: [(0: 2); (1: 2); (2: 2)]
          local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
+          { Conspire.GlobalTypes.vval =
+            [[hist: 711483029
+              parent_hist: 0
+              value: [Command(Read c1, 1)]]];
+            vterm = 0; term = 0; commit_index = -1 }
          state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
+          [(0:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })
            (1:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval: Ack(idx: 0
-                                 hash: 711483029)
-                       vterm: 0)
-                Send(0,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)] |}] ;
+            { Conspire.GlobalTypes.vval =
+              [[hist: 711483029
+                parent_hist: 0
+                value: [Command(Read c1, 1)]]];
+              vterm = 0; term = 0; commit_index = -1 })
+           (2:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })]
+         cdmmand_queue: []
+      actions: [Send(0,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })
+                Send(1,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })
+                Send(2,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {
+                           segment_entries =
+                           [[hist: 711483029
+                             parent_hist: 0
+                             value: [Command(Read c1, 1)]]];
+                           segment_start = 0};
+                         vterm = 0; commit_index = -1 })] |}] ;
   let recv i =
     Recv
       ( { term= 0
@@ -292,6 +284,7 @@ let%expect_test "e2e commit" =
   print t1 actions ;
   [%expect
     {|
+      +(0, 0) (711483029, 711483029)
       t: config:
           node_id: 1
           quorum_size: 3
@@ -300,34 +293,31 @@ let%expect_test "e2e commit" =
           replica_ids: [0, 1, 2, 3]
          failure_detector: state: [(0: 2); (2: 2); (3: 2)]
          local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
+          { Conspire.GlobalTypes.vval =
+            [[hist: 711483029
+              parent_hist: 0
+              value: [Command(Read c1, 1)]]];
+            vterm = 0; term = 0; commit_index = -1 }
          state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
+          [(0:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })
            (2:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
+            { Conspire.GlobalTypes.vval =
+              [[hist: 711483029
+                parent_hist: 0
+                value: [Command(Read c1, 1)]]];
+              vterm = 0; term = 0; commit_index = -1 })
+           (3:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })]
+         cdmmand_queue: []
       actions: [] |}] ;
   let t1, actions = Impl.advance t1 (recv 3) in
   print t1 actions ;
   [%expect
     {|
+      +(0, 0) (711483029, 711483029)
       t: config:
           node_id: 1
           quorum_size: 3
@@ -336,49 +326,46 @@ let%expect_test "e2e commit" =
           replica_ids: [0, 1, 2, 3]
          failure_detector: state: [(0: 2); (2: 2); (3: 2)]
          local_state:
-          commit_index: 0
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
+          { Conspire.GlobalTypes.vval =
+            [[hist: 711483029
+              parent_hist: 0
+              value: [Command(Read c1, 1)]]];
+            vterm = 0; term = 0; commit_index = 0 }
          state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
+          [(0:
+            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
+              commit_index = -1 })
            (2:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])
+            { Conspire.GlobalTypes.vval =
+              [[hist: 711483029
+                parent_hist: 0
+                value: [Command(Read c1, 1)]]];
+              vterm = 0; term = 0; commit_index = -1 })
            (3:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])]
-         command_queue: []
+            { Conspire.GlobalTypes.vval =
+              [[hist: 711483029
+                parent_hist: 0
+                value: [Command(Read c1, 1)]]];
+              vterm = 0; term = 0; commit_index = -1 })]
+         cdmmand_queue: []
       actions: [CommitCommands(Command(Read c1, 1))
-                Send(0,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: 0
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}]
+                Send(0,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {segment_entries = [];
+                           segment_start = 1};
+                         vterm = 0; commit_index = 0 })
+                Send(2,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {segment_entries = [];
+                           segment_start = 1};
+                         vterm = 0; commit_index = 0 })
+                Send(3,{ Conspire.GlobalTypes.term = 0;
+                         vval_seg =
+                         Conspire.GlobalTypes.Segment {segment_entries = [];
+                           segment_start = 1};
+                         vterm = 0; commit_index = 0 })] |}]
 
+(*
 let%expect_test "e2e conflict re-propose" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
@@ -1999,4 +1986,5 @@ let%expect_test "Commit acceptor_increment race condition" =
                         vval: start: 1
                               entries: []
                         vterm: 0)] |}]
+  *)
   *)

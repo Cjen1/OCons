@@ -10,7 +10,7 @@ type command_id = int [@@deriving bin_io, compare, sexp, hash]
 
 type client_id = int [@@deriving bin_io]
 
-type node_id = int [@@deriving sexp_of, bin_io, compare, equal]
+type node_id = int [@@deriving sexp_of, bin_io, compare, equal, show]
 
 type key = string [@@deriving bin_io, compare, sexp]
 

@@ -229,6 +229,9 @@ module SegmentLog = struct
     {segmentsize; segments= SegTbl.create (); allocated= -1; vhi= -1; init}
 
   let map t i f = set t i (f (get t i))
+
+  let pp ppv ppf t =
+    Fmt.pf ppf "%a" Fmt.(brackets @@ list @@ ppv) (iter t |> Iter.to_list)
 end
 
 module CIDHashtbl = Hashtbl.Make (struct
