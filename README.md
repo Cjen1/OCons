@@ -5,7 +5,6 @@ A multi-degree paxos replicated log implemented in OCaml.
 ### Features
 
 * Highly moddable core state machine
-* Persistance to disk (fsync'd)
 * Relatively high performance
 
 ### Library structure
