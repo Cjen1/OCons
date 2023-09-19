@@ -28,7 +28,7 @@ module Make (C : Consensus_intf.S) = struct
     Switch.run
     @@ fun sw ->
     let command_stream = Eio.Stream.create Int.max_int in
-    Utils.InternalReporter.run ~sw env#clock config.stat_report;
+    Utils.InternalReporter.run ~sw env#clock config.stat_report ;
     let result_stream = Eio.Stream.create Int.max_int in
     let create_conn addr sw =
       let c = (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way) in
@@ -51,9 +51,11 @@ module Make (C : Consensus_intf.S) = struct
           exit (-1) )
       (fun () ->
         try
+          (*
           Eio.Domain_manager.run env#domain_mgr (fun () ->
-              ExInfra.run env#net env#clock config.external_port command_stream
-                result_stream )
+            *)
+          ExInfra.run env#net env#clock config.external_port command_stream
+            result_stream
         with e when Utils.is_not_cancel e ->
           traceln "External infra failed" ;
           traceln "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ()) ;

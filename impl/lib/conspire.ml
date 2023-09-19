@@ -28,16 +28,23 @@ module GlobalTypes = struct
     ; mutable vterm: term
     ; mutable term: term
     ; mutable commit_index: VectorClock.t }
-  [@@deriving show, bin_io]
+  [@@deriving show {with_path= false}, bin_io]
+
+  let init_state nodes =
+    { term= 0
+    ; vterm= 0
+    ; vval= VectorClock.empty nodes 0
+    ; commit_index= VectorClock.empty nodes 0 }
 
   type message = CTreeUpdate of CTree.update | ConsUpdate of state
-  [@@deriving show, bin_io]
+  [@@deriving show {with_path= false}, bin_io]
 end
 
 module Replication = struct
   open GlobalTypes
 
-  type remote_view = {mutable expected: CTree.t [@opaque]} [@@deriving show]
+  type remote_view = {mutable expected: CTree.t [@opaque]}
+  [@@deriving show {with_path= false}]
 
   type t =
     { state: state
@@ -45,7 +52,7 @@ module Replication = struct
     ; mutable change_flag: bool
     ; remotes: remote_view Map.M(Int).t
           [@printer Conspire_command_tree.map_pp Fmt.int pp_remote_view] }
-  [@@deriving show]
+  [@@deriving show {with_path= false}]
 
   let recv_update t src update =
     t.store <- CTree.apply_update t.store update ;
@@ -70,6 +77,15 @@ module Replication = struct
     t.state.vval <- hd ;
     t.store <- ctree ;
     t.change_flag <- true
+
+  let create nodes other_nodes =
+    let empty_tree = CTree.create nodes 0 in
+    { state= init_state nodes
+    ; store= empty_tree
+    ; change_flag= false
+    ; remotes=
+        List.map other_nodes ~f:(fun i -> (i, {expected= empty_tree}))
+        |> Map.of_alist_exn (module Int) }
 end
 
 module StallChecker = struct
@@ -123,13 +139,17 @@ module Types = struct
 
   type fd_sm = {state: (node_id, int) Hashtbl.t}
 
-  type message = GlobalTypes.message
+  let pp_fd_sm ppf {state} =
+    let open Fmt in
+    pf ppf "%a"
+      (braces @@ list ~sep:comma @@ pair ~sep:(any ":@ ") int int)
+      (Hashtbl.to_alist state)
 
   type t =
     { rep: Replication.t
     ; other_nodes: state Map.M(Int).t [@printer map_pp Fmt.int pp_state]
-    ; failure_detector: fd_sm [@opaque]
-    ; config: config
+    ; failure_detector: fd_sm
+    ; config: config [@opaque]
     ; command_queue: Value.t Queue.t [@opaque]
     ; stall_checker: StallChecker.t [@opaque]
     ; commit_log: Value.t Log.t }
@@ -142,7 +162,10 @@ module Types = struct
 
   module PP = struct
     let message_pp = pp_message
+
     let t_pp = pp
+    
+    let config_pp = pp_config
   end
 end
 
@@ -187,11 +210,12 @@ struct
     | true
       when msg_term = local.vterm
            && CTree.prefix t.rep.store local.vval remote.vval ->
-        local.vval <- remote.vval ;
-        t.rep.change_flag <- true
+        if not ([%equal: VectorClock.t] remote.vval local.vval) then (
+          local.vval <- remote.vval ;
+          t.rep.change_flag <- true )
     (* conflict with local => increment *)
     | true when msg_term = local.vterm ->
-        local.vterm <- msg_term + 1 ;
+        local.term <- msg_term + 1 ;
         t.rep.change_flag <- true
     | _ ->
         ()
@@ -204,14 +228,17 @@ struct
     in
     let voted_path =
       CTree.path_between t.rep.store t.rep.state.commit_index t.rep.state.vval
+      |> List.tl_exn
     in
     List.iter voted_path ~f:(fun vc ->
         let votes =
           List.count vterm_votes ~f:(fun s ->
               CTree.prefix t.rep.store vc s.vval )
         in
-        if votes + 1 >= t.config.quorum_size then
-          Option.iter (CTree.get_value t.rep.store vc) ~f:(Log.add t.commit_log) )
+        if votes + 1 >= t.config.quorum_size then (
+          t.rep.state.commit_index <- vc ;
+          Option.iter (CTree.get_value t.rep.store vc) ~f:(Log.add t.commit_log)
+          ) )
 
   let check_conflict_recovery t =
     let votes =
@@ -229,7 +256,7 @@ struct
       let num_max_term_votes =
         votes |> Iter.filter_count (fun (s : state) -> s.term = max_term)
       in
-      let all_live_nodes_vote =
+      let all_live_nodes_vote () =
         t.config.replica_ids
         |> List.for_all ~f:(fun nid ->
                let ( => ) a b = (not a) || b in
@@ -241,9 +268,7 @@ struct
                in
                s.term = max_term )
       in
-      if
-        num_max_term_votes >= t.config.quorum_size
-        && (true || all_live_nodes_vote)
+      if num_max_term_votes >= t.config.quorum_size && all_live_nodes_vote ()
       then (
         let votes =
           votes |> Iter.filter (fun (s : state) -> s.term = max_term)
@@ -300,7 +325,9 @@ struct
         |> Iter.iter (Queue.enqueue t.command_queue)
     | Commands ci ->
         R.add_commands t.rep ~node:t.config.node_id
-          (ci |> Iter.map (fun v -> [v]))
+          (ci |> Iter.map (fun v -> [v])) ;
+        check_commit t ;
+        replication t
     | Recv (m, src) -> (
       match m with
       | CTreeUpdate update ->
@@ -320,6 +347,26 @@ struct
     Act.run_side_effects
       (fun () -> Exn.handle_uncaught_and_exit (fun () -> handle_event t e))
       t
+
+  let create (config : config) =
+    let rep = R.create config.replica_ids config.other_replica_ids in
+    let other_nodes =
+      List.map config.other_replica_ids ~f:(fun i ->
+          (i, init_state config.replica_ids) )
+      |> Map.of_alist_exn (module Int)
+    in
+    let failure_detector =
+      { state=
+          List.map config.other_replica_ids ~f:(fun i -> (i, config.fd_timeout))
+          |> Hashtbl.of_alist_exn (module Int) }
+    in
+    { rep
+    ; other_nodes
+    ; failure_detector
+    ; config
+    ; command_queue= Queue.create ()
+    ; stall_checker= {ticks_since_commit= 2; prev_commit_idx= -1; tick_limit= 2}
+    ; commit_log= Log.create [] }
 end
 
 module Impl = Make (ImperativeActions (Types))

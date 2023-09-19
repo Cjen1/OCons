@@ -1,3 +1,4 @@
+open! Core
 open! Types
 open! Utils
 open! Actions_f
@@ -5,11 +6,15 @@ module Imp = ImperativeActions (Conspire.Types)
 module Impl = Conspire.Make (Imp)
 open! Conspire.Types
 open! Impl
-open Ocons_core.Consensus_intf
-open Conspire.GlobalTypes
-module LE = Conspire.LogEntry
+open! Conspire.GlobalTypes
 
-let action_pp = action_pp ~pp_msg:PP.message_pp
+let action_pp = Ocons_core.Consensus_intf.action_pp ~pp_msg:PP.message_pp
+
+let make_clock term clocks =
+  let clock =
+    Map.of_alist_exn (module Int) (List.mapi clocks ~f:(fun idx v -> (idx, v)))
+  in
+  Conspire_command_tree.VectorClock.{term; clock}
 
 let c1 = make_config ~node_id:0 ~replica_ids:[0] ~fd_timeout:2 ()
 
@@ -26,64 +31,53 @@ let%expect_test "local_commit" =
   print t [] ;
   [%expect
     {|
-      t: config: node_id: 0
-                 quorum_size: 1
-                 fd_timeout: 2
-                 invrs: Ok
-                 replica_ids: [0]
-         failure_detector: state: []
-         local_state:
-          { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0; commit_index = -1
-            }
-         state_cache: []
-         cdmmand_queue: []
+      t: { rep =
+           { state = { vval = 0:[0]; vterm = 0; term = 0; commit_index = 0:[0] };
+             store = { ctree = [(0:[0], Root)] }; change_flag = false; remotes = []
+             };
+           other_nodes = []; failure_detector = {}; config = <opaque>;
+           command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
       actions: [] |}] ;
   let c1 = make_command (Read "c1") in
   let t, actions = Impl.advance t (Commands (c1 |> Iter.singleton)) in
   print t actions ;
   [%expect
     {|
-      t: config: node_id: 0
-                 quorum_size: 1
-                 fd_timeout: 2
-                 invrs: Ok
-                 replica_ids: [0]
-         failure_detector: state: []
-         local_state:
-          { Conspire.GlobalTypes.vval =
-            [[hist: 711483029
-              parent_hist: 0
-              value: [Command(Read c1, 1)]]];
-            vterm = 0; term = 0; commit_index = 0 }
-         state_cache: []
-         cdmmand_queue: []
-      actions: [CommitCommands(Command(Read c1, 1))] |}] ;
+      t: { rep =
+           { state = { vval = 0:[1]; vterm = 0; term = 0; commit_index = 0:[1] };
+             store =
+             { ctree = [(0:[0], Root): (0:[1], (1, 0:[0], [Command(Read c1, 1)]))]
+               };
+             change_flag = false; remotes = [] };
+           other_nodes = []; failure_detector = {}; config = <opaque>;
+           command_queue = <opaque>; stall_checker = <opaque>;
+           commit_log = [[Command(Read c1, 1)]] }
+      actions: [CommitCommands(Command(Read c1, 1))
+                Broadcast((ConsUpdate
+                             { vval = 0:[1]; vterm = 0; term = 0;
+                               commit_index = 0:[1] }))] |}] ;
   let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
   print t actions ;
   [%expect
     {|
-      t: config: node_id: 0
-                 quorum_size: 1
-                 fd_timeout: 2
-                 invrs: Ok
-                 replica_ids: [0]
-         failure_detector: state: []
-         local_state:
-          { Conspire.GlobalTypes.vval =
-            [[hist: 711483029
-              parent_hist: 0
-              value: [Command(Read c1, 1)]]
-             [hist: 331898321
-              parent_hist: 711483029
-              value: [Command(Read c2, 3)]]
-             [hist: 705707545
-              parent_hist: 331898321
-              value: [Command(Read c3, 2)]]];
-            vterm = 0; term = 0; commit_index = 2 }
-         state_cache: []
-         cdmmand_queue: []
-      actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))] |}]
+      t: { rep =
+           { state = { vval = 0:[3]; vterm = 0; term = 0; commit_index = 0:[3] };
+             store =
+             { ctree =
+               [(0:[0], Root): (0:[1], (1, 0:[0], [Command(Read c1, 1)])):
+                (0:[2], (2, 0:[1], [Command(Read c2, 3)])):
+                (0:[3], (3, 0:[2], [Command(Read c3, 2)]))]
+               };
+             change_flag = false; remotes = [] };
+           other_nodes = []; failure_detector = {}; config = <opaque>;
+           command_queue = <opaque>; stall_checker = <opaque>;
+           commit_log =
+           [[Command(Read c1, 1)][Command(Read c2, 3)][Command(Read c3, 2)]] }
+      actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))
+                Broadcast((ConsUpdate
+                             { vval = 0:[3]; vterm = 0; term = 0;
+                               commit_index = 0:[3] }))] |}]
 
 let%expect_test "e2e commit" =
   Imp.set_is_test true ;
@@ -96,1895 +90,398 @@ let%expect_test "e2e commit" =
   print t1 actions ;
   [%expect
     {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state:
-          { Conspire.GlobalTypes.vval =
-            [[hist: 711483029
-              parent_hist: 0
-              value: [Command(Read c1, 1)]]];
-            vterm = 0; term = 0; commit_index = -1 }
-         state_cache:
-          [(0:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })
-           (2:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })
-           (3:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })]
-         cdmmand_queue: []
-      actions: [Send(0,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })
-                Send(2,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })
-                Send(3,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })] |}] ;
-  let lec1 = LE.make 0 [c1] in
-  let recv_c1 =
-    Recv
-      ( { term= 0
-        ; vval_seg= Segment{segment_start= 0; segment_entries= [lec1]}
-        ; vterm= 0
-        ; commit_index= -1 }
-      , 1 )
+      t: { rep =
+           { state =
+             { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+               };
+             store =
+             { ctree =
+               [(0:[0,0,0,0], Root):
+                (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
+               };
+             change_flag = false;
+             remotes =
+             [(0, { expected = <opaque> }): (2, { expected = <opaque> }):
+              (3, { expected = <opaque> })]
+             };
+           other_nodes =
+           [(0,
+             { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+               }):
+            (2,
+             { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+               }):
+            (3,
+             { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+               })];
+           failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
+           command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+      actions: [Send(0,(CTreeUpdate
+                          { Conspire_command_tree.CommandTree.new_head =
+                            0:[0,1,0,0];
+                            extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+                Send(2,(CTreeUpdate
+                          { Conspire_command_tree.CommandTree.new_head =
+                            0:[0,1,0,0];
+                            extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+                Send(3,(CTreeUpdate
+                          { Conspire_command_tree.CommandTree.new_head =
+                            0:[0,1,0,0];
+                            extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+                Broadcast((ConsUpdate
+                             { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
+                               commit_index = 0:[0,0,0,0] }))] |}] ;
+  let update =
+    CTreeUpdate
+      { new_head= make_clock 0 [0; 1; 0; 0]
+      ; extension= [(1, make_clock 0 [0; 0; 0; 0], [c1])] }
   in
-  let t2, actions = Impl.advance t2 recv_c1 in
+  let t2, actions = Impl.advance t2 (Recv (update, 1)) in
   print t2 actions ;
   [%expect
     {|
-      t: config:
-          node_id: 2
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (1: 2); (3: 2)]
-         local_state:
-          { Conspire.GlobalTypes.vval =
-            [[hist: 711483029
-              parent_hist: 0
-              value: [Command(Read c1, 1)]]];
-            vterm = 0; term = 0; commit_index = -1 }
-         state_cache:
-          [(0:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })
-           (1:
-            { Conspire.GlobalTypes.vval =
-              [[hist: 711483029
-                parent_hist: 0
-                value: [Command(Read c1, 1)]]];
-              vterm = 0; term = 0; commit_index = -1 })
-           (3:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })]
-         cdmmand_queue: []
-      actions: [Send(0,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })
-                Send(1,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })
-                Send(3,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })] |}] ;
-  let t3, actions = Impl.advance t3 recv_c1 in
-  print t3 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 3
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (1: 2); (2: 2)]
-         local_state:
-          { Conspire.GlobalTypes.vval =
-            [[hist: 711483029
-              parent_hist: 0
-              value: [Command(Read c1, 1)]]];
-            vterm = 0; term = 0; commit_index = -1 }
-         state_cache:
-          [(0:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })
-           (1:
-            { Conspire.GlobalTypes.vval =
-              [[hist: 711483029
-                parent_hist: 0
-                value: [Command(Read c1, 1)]]];
-              vterm = 0; term = 0; commit_index = -1 })
-           (2:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })]
-         cdmmand_queue: []
-      actions: [Send(0,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })
-                Send(1,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })
-                Send(2,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {
-                           segment_entries =
-                           [[hist: 711483029
-                             parent_hist: 0
-                             value: [Command(Read c1, 1)]]];
-                           segment_start = 0};
-                         vterm = 0; commit_index = -1 })] |}] ;
-  let recv i =
-    Recv
-      ( { term= 0
-        ; commit_index= -1
-        ; vval_seg= Ack {idx=0;node_hash=711483029}
-        ; vterm= 0 }
-      , i )
+    t: { rep =
+         { state =
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(0, { expected = <opaque> }): (1, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(0,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (1,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {1: 2, 3: 2, 0: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+    actions: [] |}] ;
+  let t1_vote =
+    ConsUpdate
+      { term= 0
+      ; vterm= 0
+      ; vval= make_clock 0 [0; 1; 0; 0]
+      ; commit_index= make_clock 0 [0; 0; 0; 0] }
   in
-  let t1, actions = Impl.advance t1 (recv 2) in
+  let t2, actions = Impl.advance t2 (Recv (t1_vote, 1)) in
+  print t2 actions ;
+  [%expect
+    {|
+    t: { rep =
+         { state =
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(0, { expected = <opaque> }): (1, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(0,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (1,
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {1: 2, 3: 2, 0: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+    actions: [Send(0,(CTreeUpdate
+                        { Conspire_command_tree.CommandTree.new_head =
+                          0:[0,1,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+              Send(3,(CTreeUpdate
+                        { Conspire_command_tree.CommandTree.new_head =
+                          0:[0,1,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+              Broadcast((ConsUpdate
+                           { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
+                             commit_index = 0:[0,0,0,0] }))] |}] ;
+  let t1, actions = Impl.advance t1 (Recv (t1_vote, 2)) in
   print t1 actions ;
   [%expect
     {|
-      +(0, 0) (711483029, 711483029)
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state:
-          { Conspire.GlobalTypes.vval =
-            [[hist: 711483029
-              parent_hist: 0
-              value: [Command(Read c1, 1)]]];
-            vterm = 0; term = 0; commit_index = -1 }
-         state_cache:
-          [(0:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })
-           (2:
-            { Conspire.GlobalTypes.vval =
-              [[hist: 711483029
-                parent_hist: 0
-                value: [Command(Read c1, 1)]]];
-              vterm = 0; term = 0; commit_index = -1 })
-           (3:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })]
-         cdmmand_queue: []
-      actions: [] |}] ;
-  let t1, actions = Impl.advance t1 (recv 3) in
+    t: { rep =
+         { state =
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(0, { expected = <opaque> }): (2, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(0,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (2,
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+    actions: [] |}] ;
+  let t1, actions = Impl.advance t1 (Recv (t1_vote, 3)) in
   print t1 actions ;
   [%expect
     {|
-      +(0, 0) (711483029, 711483029)
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state:
-          { Conspire.GlobalTypes.vval =
-            [[hist: 711483029
-              parent_hist: 0
-              value: [Command(Read c1, 1)]]];
-            vterm = 0; term = 0; commit_index = 0 }
-         state_cache:
-          [(0:
-            { Conspire.GlobalTypes.vval = []; vterm = 0; term = 0;
-              commit_index = -1 })
-           (2:
-            { Conspire.GlobalTypes.vval =
-              [[hist: 711483029
-                parent_hist: 0
-                value: [Command(Read c1, 1)]]];
-              vterm = 0; term = 0; commit_index = -1 })
-           (3:
-            { Conspire.GlobalTypes.vval =
-              [[hist: 711483029
-                parent_hist: 0
-                value: [Command(Read c1, 1)]]];
-              vterm = 0; term = 0; commit_index = -1 })]
-         cdmmand_queue: []
-      actions: [CommitCommands(Command(Read c1, 1))
-                Send(0,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {segment_entries = [];
-                           segment_start = 1};
-                         vterm = 0; commit_index = 0 })
-                Send(2,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {segment_entries = [];
-                           segment_start = 1};
-                         vterm = 0; commit_index = 0 })
-                Send(3,{ Conspire.GlobalTypes.term = 0;
-                         vval_seg =
-                         Conspire.GlobalTypes.Segment {segment_entries = [];
-                           segment_start = 1};
-                         vterm = 0; commit_index = 0 })] |}]
+    t: { rep =
+         { state =
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,1,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(0, { expected = <opaque> }): (2, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(0,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (2,
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>;
+         commit_log = [[Command(Read c1, 1)]] }
+    actions: [CommitCommands(Command(Read c1, 1))] |}] ;
+  ignore (t1, t2, t3)
 
-(*
-let%expect_test "e2e conflict re-propose" =
+let%expect_test "e2e conflict resolution" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
-  let t1 = create (c4 1) in
-  let t2 = create (c4 2) in
-  let t3 = create (c4 3) in
+  let t0 = create (c4 0) in
+  let _t1 = create (c4 1) in
+  let c0 = make_command (Read "c0") in
   let c1 = make_command (Read "c1") in
-  let lec1 = LE.make 0 [c1] in
+  let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c0])) in
+  print t0 actions ;
+  [%expect
+    {|
+    t: { rep =
+         { state =
+           { vval = 0:[1,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(1,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (2,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+    actions: [Send(1,(CTreeUpdate
+                        { Conspire_command_tree.CommandTree.new_head =
+                          0:[1,0,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c0, 1)])] }))
+              Send(2,(CTreeUpdate
+                        { Conspire_command_tree.CommandTree.new_head =
+                          0:[1,0,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c0, 1)])] }))
+              Send(3,(CTreeUpdate
+                        { Conspire_command_tree.CommandTree.new_head =
+                          0:[1,0,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c0, 1)])] }))
+              Broadcast((ConsUpdate
+                           { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
+                             commit_index = 0:[0,0,0,0] }))] |}] ;
+  (*
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
   print t1 actions ;
   [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)] |}] ;
-  let t1, _ = Impl.advance t1 Tick in
-  let t1, actions = Impl.advance t1 Tick in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 0); (2: 0); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
-  let c2 = make_command (Read "c2") in
-  let lec2 = LE.make 0 [c2] in
-  let t2, actions = Impl.advance t2 (Commands (Iter.of_list [c2])) in
-  print t2 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 2
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (1: 2); (3: 2)]
-         local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 496806312
-                  parent_hist: 0
-                  value: [Command(Read c2, 2)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 496806312
-                           parent_hist: 0
-                           value: [Command(Read c2, 2)]]]
-                       vterm: 0)
-                Send(1,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 496806312
-                           parent_hist: 0
-                           value: [Command(Read c2, 2)]]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 496806312
-                           parent_hist: 0
-                           value: [Command(Read c2, 2)]]]
-                       vterm: 0)] |}] ;
-  let recv cs i =
-    Recv
-      ( { term= 0
-        ; commit_index= -1
-        ; vval_seg= Segment{segment_start= 0; segment_entries= cs}
-        ; vterm= 0 }
-      , i )
+    {||}] ;
+                             *)
+  let root_clock = make_clock 0 [0; 0; 0; 0] in
+  let c0_node = (1, make_clock 0 [0; 0; 0; 0], [c0]) in
+  let c0_clock = make_clock 0 [1; 0; 0; 0] in
+  let c1_node = (1, make_clock 0 [0; 0; 0; 0], [c1]) in
+  let c1_clock = make_clock 0 [0; 1; 0; 0] in
+  (* ---- Replicate tree ---- *)
+  let t0, actions =
+    Impl.advance t0
+      (Recv (CTreeUpdate {new_head= c1_clock; extension= [c1_node]}, 1))
   in
-  let t3, actions = Impl.advance t3 (recv [lec1] 1) in
-  print t3 actions ;
+  print t0 actions ;
   [%expect
     {|
-      t: config:
-          node_id: 3
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (1: 2); (2: 2)]
-         local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (1:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval: Ack(idx: 0
-                                 hash: 711483029)
-                       vterm: 0)
-                Send(0,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)] |}] ;
-  (* Conflict from t1 *)
-  let t2, actions = Impl.advance t2 (recv [lec1] 1) in
-  print t2 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 2
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (1: 2); (3: 2)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 496806312
-                  parent_hist: 0
-                  value: [Command(Read c2, 2)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (1:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(1,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
-  (* Conflict from t2 *)
-  let t1, actions = Impl.advance t1 (recv [lec2] 2) in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 0); (2: 2); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 496806312
-                    parent_hist: 0
-                    value: [Command(Read c2, 2)]]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
-  let t3, actions = Impl.advance t3 (recv [lec2] 2) in
-  print t3 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 3
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (1: 2); (2: 2)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (1:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])
-           (2:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 496806312
-                    parent_hist: 0
-                    value: [Command(Read c2, 2)]]])]
-         command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(1,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
-  (* Conflict result *)
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { term= 1
-           ; vterm= 0
-           ; vval_seg= Ack{idx=0; node_hash= 711483029}
-           ; commit_index= -1 }
-         , 3 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 0); (2: 2); (3: 2)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 496806312
-                    parent_hist: 0
-                    value: [Command(Read c2, 2)]]])
-           (3:
-            commit_index: -1
-            term: 1
-            vterm: 0
-            vval: [[hist: 711483029
-                    parent_hist: 0
-                    value: [Command(Read c1, 1)]]])]
-         command_queue: []
-      actions: [] |}] ;
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { term= 1
-           ; vterm= 0
-           ; vval_seg= Segment{segment_start= 0; segment_entries= [lec2]}
-           ; commit_index= -1 }
-         , 2 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-    t: config:
-        node_id: 1
-        quorum_size: 3
-        fd_timeout: 2
-        invrs: Ok
-        replica_ids: [0, 1, 2, 3]
-       failure_detector: state: [(0: 0); (2: 2); (3: 2)]
-       local_state:
-        commit_index: -1
-        term: 1
-        vterm: 1
-        vval: [[hist: 711483029
-                parent_hist: 0
-                value: [Command(Read c1, 1)]]]
-       state_cache:
-        [(0: commit_index: -1
-             term: 0
-             vterm: 0
-             vval: [])
-         (2:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 496806312
-                  parent_hist: 0
-                  value: [Command(Read c2, 2)]]])
-         (3:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]])]
-       command_queue: []
-    actions: [Send(0,term: 1
-                     commit_index: -1
-                     vval: start: 1
-                           entries: []
-                     vterm: 1)
-              Send(2,term: 1
-                     commit_index: -1
-                     vval: start: 1
-                           entries: []
-                     vterm: 1)
-              Send(3,term: 1
-                     commit_index: -1
-                     vval: start: 1
-                           entries: []
-                     vterm: 1)] |}] ;
-  ignore (t1, t2, t3)
-
-  (*
-let%expect_test "commit other" =
-  Imp.set_is_test true ;
-  reset_make_command_state () ;
-  let t1 = create (c4 1) in
-  let c1 = make_command (Read "c1") in
-  let t1, _ = Impl.advance t1 (Commands (Iter.of_list [c1])) in
-  let t1, _ = Impl.advance t1 Tick in
-  let t1, actions = Impl.advance t1 Tick in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 0); (2: 0); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
-  let c2 = make_command (Read "c2") in
-  let lec2 = LE.make 0 [c2] in
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= Segment{segment_start= 0; segment_entries= [lec2]} }
-         , 0 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 0); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 496806312
-                    parent_hist: 0
-                    value: [Command(Read c2, 2)]]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(0,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= Segment{segment_start= 0; segment_entries= [lec2]} }
-         , 2 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(0:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 496806312
-                    parent_hist: 0
-                    value: [Command(Read c2, 2)]]])
-           (2:
-            commit_index: -1
-            term: 0
-            vterm: 0
-            vval: [[hist: 496806312
-                    parent_hist: 0
-                    value: [Command(Read c2, 2)]]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [] |}] ;
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= Segment{segment_start= 0; segment_entries= [lec2]} }
-         , 3 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-    t: config:
-        node_id: 1
-        quorum_size: 3
-        fd_timeout: 2
-        invrs: Ok
-        replica_ids: [0, 1, 2, 3]
-       failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-       local_state:
-        commit_index: -1
-        term: 1
-        vterm: 0
-        vval: [[hist: 711483029
-                parent_hist: 0
-                value: [Command(Read c1, 1)]]]
-       state_cache:
-        [(0:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 496806312
-                  parent_hist: 0
-                  value: [Command(Read c2, 2)]]])
-         (2:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 496806312
-                  parent_hist: 0
-                  value: [Command(Read c2, 2)]]])
-         (3:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 496806312
-                  parent_hist: 0
-                  value: [Command(Read c2, 2)]]])]
-       command_queue: []
+    t: { rep =
+         { state =
+           { vval = 0:[1,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
+              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(1,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (2,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
     actions: [] |}] ;
-  ignore t1
-  *)
-
-let%expect_test "Remote commit not cause local" =
-  Imp.set_is_test true ;
-  reset_make_command_state () ;
-  let t0 = create (c4 0) in
-  let c1 = make_command (Read "c1") in
-  let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(1,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(2,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)
-                Send(3,term: 0
-                       commit_index: -1
-                       vval:
-                        start: 0
-                        entries:
-                         [[hist: 711483029
-                           parent_hist: 0
-                           value: [Command(Read c1, 1)]]]
-                       vterm: 0)] |}] ;
-  let c2 = make_command (Read "c2") in
-  let lec2 = LE.make 0 [c2] in
-  (* Recv remote commit of other command *)
-  let t0, actions =
+  (* ---- Votes for values ---- *)
+  let t0, _ =
     Impl.advance t0
       (Recv
-         ( { commit_index= 0
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= Segment{segment_start= 0; segment_entries= [lec2]} }
-         , 1 ) )
-  in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval: [[hist: 711483029
-                  parent_hist: 0
-                  value: [Command(Read c1, 1)]]]
-         state_cache:
-          [(1:
-            commit_index: 0
-            term: 0
-            vterm: 0
-            vval: [[hist: 496806312
-                    parent_hist: 0
-                    value: [Command(Read c2, 2)]]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Send(1,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(2,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)
-                Send(3,term: 1
-                       commit_index: -1
-                       vval: start: 1
-                             entries: []
-                       vterm: 0)] |}] ;
-  ignore t0
-
-  (*
-let%expect_test "conflict merge recovery" =
-  Imp.set_is_test true ;
-  reset_make_command_state () ;
-  let t0 = create (c4 0) in
-  let c1 = make_command (Read "c1") in
-  let lec1 = LE.make 0 [c1] in
-  let c2 = make_command (Read "c2") in
-  let c3 = make_command (Read "c3") in
-  let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 0
-                          commit_index: -1
-                          vval: start: 0
-                                entries: [[Command(Read c1, 1)]]
-                          vterm: 0)] |}] ;
-  let t0, actions =
-    Impl.advance t0
-      (Recv
-         ( { commit_index= -1
-           ; term= 1
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2]]} }
-         , 1 ) )
-  in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 1
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 1
-               vterm: 0
-               vval: [[Command(Read c2, 2)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 1
-                          commit_index: -1
-                          vval: start: 1
-                                entries: []
-                          vterm: 0)] |}] ;
-  let t0, actions =
-    Impl.advance t0
-      (Recv
-         ( { commit_index= -1
-           ; term= 1
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c3]]} }
+         ( ConsUpdate
+             {vval= c0_clock; vterm= 0; term= 0; commit_index= root_clock}
          , 2 ) )
   in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 1
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 1
-               vterm: 0
-               vval: [[Command(Read c2, 2)]])
-           (2: commit_index: -1
-               term: 1
-               vterm: 0
-               vval: [[Command(Read c3, 3)]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [] |}] ;
   let t0, actions =
     Impl.advance t0
       (Recv
-         ( { commit_index= -1
-           ; term= 1
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2; c3]]} }
-         , 3 ) )
-  in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 1
-          vval: [[Command(Read c1, 1), Command(Read c2, 2), Command(Read c3, 3)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 1
-               vterm: 0
-               vval: [[Command(Read c2, 2)]])
-           (2: commit_index: -1
-               term: 1
-               vterm: 0
-               vval: [[Command(Read c3, 3)]])
-           (3:
-            commit_index: -1
-            term: 1
-            vterm: 0
-            vval: [[Command(Read c2, 2), Command(Read c3, 3)]])]
-         command_queue: []
-      actions: [Broadcast(term: 1
-                          commit_index: -1
-                          vval:
-                           start: 0
-                           entries:
-                            [[Command(Read c1, 1), Command(Read c2, 2),
-                              Command(Read c3, 3)]]
-                          vterm: 1)] |}]
-  *)
-
-  (*
-let%expect_test "conflict o4&merge" =
-  Imp.set_is_test true ;
-  reset_make_command_state () ;
-  let t0 = create (c4 0) in
-  let c1 = make_command (Read "c1") in
-  let c2 = make_command (Read "c2") in
-  let c3 = make_command (Read "c3") in
-  let c4 = make_command (Read "c4") in
-  let c5 = make_command (Read "c5") in
-  let c6 = make_command (Read "c6") in
-  let t0, _ = Impl.advance t0 Tick in
-  let t0, _ = Impl.advance t0 Tick in
-  let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1; c2; c5])) in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 0); (2: 0); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 0
-          vterm: 0
-          vval:
-           [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c5, 5)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 0
-                          commit_index: -1
-                          vval:
-                           start: 0
-                           entries:
-                            [[Command(Read c1, 1)]; [Command(Read c2, 2)];
-                             [Command(Read c5, 5)]]
-                          vterm: 0)] |}] ;
-  let t0, actions =
-    Impl.advance t0
-      (Recv
-         ( { commit_index= -1
-           ; term= 1
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]; [c3]; [c5]]}
-           }
+         ( ConsUpdate
+             {vval= c1_clock; vterm= 0; term= 0; commit_index= root_clock}
          , 1 ) )
   in
+  (* NOTE does not replicate c1 branch of ctree since it is not in vval *)
   print t0 actions ;
   [%expect
     {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 0); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval:
-           [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c5, 5)]]
-         state_cache:
-          [(1:
-            commit_index: -1
-            term: 1
-            vterm: 0
-            vval:
-             [[Command(Read c1, 1)], [Command(Read c3, 3)], [Command(Read c5, 5)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 1
-                          commit_index: -1
-                          vval: start: 3
-                                entries: []
-                          vterm: 0)] |}] ;
-  let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c6])) in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 0); (3: 0)]
-         local_state:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval:
-           [[Command(Read c1, 1)], [Command(Read c2, 2)], [Command(Read c5, 5)]]
-         state_cache:
-          [(1:
-            commit_index: -1
-            term: 1
-            vterm: 0
-            vval:
-             [[Command(Read c1, 1)], [Command(Read c3, 3)], [Command(Read c5, 5)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: [Command(Read c6, 6)]
-      actions: [] |}] ;
-  ignore c6 ;
-  let t0, actions =
+    t: { rep =
+         { state =
+           { vval = 0:[1,0,0,0]; vterm = 0; term = 1; commit_index = 0:[0,0,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
+              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(1,
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (2,
+           { vval = 0:[1,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+    actions: [Broadcast((ConsUpdate
+                           { vval = 0:[1,0,0,0]; vterm = 0; term = 1;
+                             commit_index = 0:[0,0,0,0] }))] |}] ;
+  (* conflict term responses *)
+  let t0, _ =
     Impl.advance t0
       (Recv
-         ( { commit_index= -1
-           ; term= 1
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c2]; [c4]; [c4]]}
-           }
+         ( ConsUpdate
+             {vval= c0_clock; vterm= 0; term= 1; commit_index= root_clock}
          , 2 ) )
   in
-  print t0 actions ;
-  [%expect
-    {|
-    t: config:
-        node_id: 0
-        quorum_size: 3
-        fd_timeout: 2
-        invrs: Ok
-        replica_ids: [0, 1, 2, 3]
-       failure_detector: state: [(1: 2); (2: 2); (3: 0)]
-       local_state:
-        commit_index: -1
-        term: 1
-        vterm: 1
-        vval:
-         [[Command(Read c1, 1)],
-          [Command(Read c2, 2), Command(Read c3, 3), Command(Read c4, 4)],
-          [Command(Read c4, 4), Command(Read c5, 5)], [Command(Read c6, 6)]]
-       state_cache:
-        [(1:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval:
-           [[Command(Read c1, 1)], [Command(Read c3, 3)], [Command(Read c5, 5)]])
-         (2:
-          commit_index: -1
-          term: 1
-          vterm: 0
-          vval:
-           [[Command(Read c2, 2)], [Command(Read c4, 4)], [Command(Read c4, 4)]])
-         (3: commit_index: -1
-             term: 0
-             vterm: 0
-             vval: [])]
-       command_queue: []
-    actions: [Broadcast(term: 1
-                        commit_index: -1
-                        vval:
-                         start: 1
-                         entries:
-                          [[Command(Read c2, 2), Command(Read c3, 3),
-                            Command(Read c4, 4)];
-                           [Command(Read c4, 4), Command(Read c5, 5)];
-                           [Command(Read c6, 6)]]
-                        vterm: 1)] |}] ;
-  ignore t0
-  *)
-
-
-  (*
-let%expect_test "4th vote bug" =
-  Imp.set_is_test true ;
-  reset_make_command_state () ;
-  let t0 = create (c4 0) in
-  let c1 = make_command (Read "c1") in
-  let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 0
-                          commit_index: -1
-                          vval: start: 0
-                                entries: [[Command(Read c1, 1)]]
-                          vterm: 0)] |}] ;
+  let t0, _ =
+    Impl.advance t0
+      (Recv
+         ( ConsUpdate
+             {vval= c1_clock; vterm= 0; term= 1; commit_index= root_clock}
+         , 3 ) )
+  in
   let t0, actions =
     Impl.advance t0
       (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
+         ( ConsUpdate
+             {vval= c1_clock; vterm= 0; term= 1; commit_index= root_clock}
          , 1 ) )
   in
+  (* ---- Now sufficient conflicts to recover *)
   print t0 actions ;
   [%expect
     {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [] |}] ;
-  let t0, actions =
-    Impl.advance t0
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
-         , 2 ) )
-  in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: 0
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [CommitCommands(Command(Read c1, 1))
-                Broadcast(term: 0
-                          commit_index: 0
-                          vval: start: 1
-                                entries: []
-                          vterm: 0)] |}] ;
-  let t0, actions =
-    Impl.advance t0
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
-         , 3 ) )
-  in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: 0
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])]
-         command_queue: []
-      actions: [] |}]
-
-let%expect_test "Commit acceptor_increment race condition" =
-  Imp.set_is_test true ;
-  reset_make_command_state () ;
-  let t0 = create (c4 0) in
-  let t1 = create (c4 1) in
-  let c0, c1 = (make_command (Read "c0"), make_command (Read "c1")) in
-  let t0, actions = Impl.advance t0 (Commands (Iter.singleton c0)) in
-  print t0 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 0
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c0, 2)]]
-         state_cache:
-          [(1: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 0
-                          commit_index: -1
-                          vval: start: 0
-                                entries: [[Command(Read c0, 2)]]
-                          vterm: 0)] |}] ;
-  let t1, actions = Impl.advance t1 (Commands (Iter.singleton c1)) in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 0
-                          commit_index: -1
-                          vval: start: 0
-                                entries: [[Command(Read c1, 1)]]
-                          vterm: 0)] |}] ;
-  (* Vote for c1 from 2 *)
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
-         , 2 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 0
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [] |}] ;
-  (* conflict from t0 *)
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c0]]} }
-         , 0 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state: commit_index: -1
-                      term: 1
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c0, 2)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [])]
-         command_queue: []
-      actions: [Broadcast(term: 1
-                          commit_index: -1
-                          vval: start: 1
-                                entries: []
-                          vterm: 0)] |}] ;
-  (* Vote for c1 from 3 *)
-  let t1, actions =
-    Impl.advance t1
-      (Recv
-         ( { commit_index= -1
-           ; term= 0
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
-         , 3 ) )
-  in
-  print t1 actions ;
-  [%expect
-    {|
-      t: config:
-          node_id: 1
-          quorum_size: 3
-          fd_timeout: 2
-          invrs: Ok
-          replica_ids: [0, 1, 2, 3]
-         failure_detector: state: [(0: 2); (2: 2); (3: 2)]
-         local_state: commit_index: 0
-                      term: 1
-                      vterm: 0
-                      vval: [[Command(Read c1, 1)]]
-         state_cache:
-          [(0: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c0, 2)]])
-           (2: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])
-           (3: commit_index: -1
-               term: 0
-               vterm: 0
-               vval: [[Command(Read c1, 1)]])]
-         command_queue: []
-      actions: [CommitCommands(Command(Read c1, 1))
-                Broadcast(term: 1
-                          commit_index: 0
-                          vval: start: 1
-                                entries: []
-                          vterm: 0)] |}] ;
-  (* Commit c1, but be on term 1 from conflict from t0 *)
-  (* TODO check that this cannot occur *)
-  let t0, actions =
-    Impl.advance t0
-      (Recv
-         ( { commit_index= 0
-           ; term= 1
-           ; vterm= 0
-           ; vval_seg= {segment_start= 0; segment_entries= [[c1]]} }
-         , 3 ) )
-  in
-  print t0 actions ;
-  [%expect
-    {|
-    t: config:
-        node_id: 0
-        quorum_size: 3
-        fd_timeout: 2
-        invrs: Ok
-        replica_ids: [0, 1, 2, 3]
-       failure_detector: state: [(1: 2); (2: 2); (3: 2)]
-       local_state: commit_index: -1
-                    term: 1
-                    vterm: 0
-                    vval: [[Command(Read c0, 2)]]
-       state_cache:
-        [(1: commit_index: -1
-             term: 0
-             vterm: 0
-             vval: [])
-         (2: commit_index: -1
-             term: 0
-             vterm: 0
-             vval: [])
-         (3: commit_index: 0
-             term: 1
-             vterm: 0
-             vval: [[Command(Read c1, 1)]])]
-       command_queue: []
-    actions: [Broadcast(term: 1
-                        commit_index: -1
-                        vval: start: 1
-                              entries: []
-                        vterm: 0)] |}]
-  *)
-  *)
+    t: { rep =
+         { state =
+           { vval = 0:[1,0,0,0]; vterm = 1; term = 1; commit_index = 0:[0,0,0,0]
+             };
+           store =
+           { ctree =
+             [(0:[0,0,0,0], Root):
+              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
+              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
+             };
+           change_flag = false;
+           remotes =
+           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
+            (3, { expected = <opaque> })]
+           };
+         other_nodes =
+         [(1,
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 1; commit_index = 0:[0,0,0,0]
+             }):
+          (2,
+           { vval = 0:[1,0,0,0]; vterm = 0; term = 1; commit_index = 0:[0,0,0,0]
+             }):
+          (3,
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 1; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+    actions: [Broadcast((ConsUpdate
+                           { vval = 0:[1,0,0,0]; vterm = 1; term = 1;
+                             commit_index = 0:[0,0,0,0] }))] |}] ;
+  ignore (t0, _t1, c0_node, c1_node)

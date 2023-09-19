@@ -15,26 +15,17 @@ let set_pp pp : _ Set.t Fmt.t =
 
 module VectorClock = struct
   module T = struct
-    let clock_pp ppf v =
-      Fmt.pf ppf "%a"
-        Fmt.(brackets @@ list ~sep:comma @@ int)
-        (Map.to_alist v |> List.map ~f:snd)
-
     type t = {term: int; clock: int Map.M(Int).t}
     [@@deriving sexp, bin_io, compare, hash]
 
-    let pp =
+    let pp ppf t =
       let open Fmt in
-      braces
-      @@ record
-           [ field "term" (fun t -> t.term) int
-           ; field "clock" (fun t -> t.clock) clock_pp ]
+      pf ppf "%d:%a" t.term (brackets @@ list ~sep:(any ",") @@ int) (Map.data t.clock)
 
-    let empty nnodes term =
+    let empty nodes term =
       { term
       ; clock=
-          Map.of_alist_exn (module Int) (List.init nnodes ~f:(fun n -> (n, 0)))
-      }
+          Map.of_alist_exn (module Int) (List.map nodes ~f:(fun n -> (n, 0))) }
 
     let succ t ?(term = t.term) nid =
       if term < t.term then
@@ -91,15 +82,18 @@ module CommandTree (Value : Value) = struct
     { ctree: parent_clock_node option Map.M(VectorClock).t
           [@printer
             map_pp VectorClock.pp
-              (Fmt.option ~none:(Fmt.any "Root") pp_parent_clock_node)]
-    }
-  [@@deriving show]
+              (Fmt.option ~none:(Fmt.any "Root") pp_parent_clock_node)] }
+  [@@deriving show{with_path=false}]
 
   let get_idx t clk =
     match Map.find_exn t.ctree clk with None -> 0 | Some (idx, _, _) -> idx
 
   let get_value t clk =
-    match Map.find_exn t.ctree clk with None -> None | Some (_,_,v) -> Some v
+    match Map.find_exn t.ctree clk with
+    | None ->
+        None
+    | Some (_, _, v) ->
+        Some v
 
   let get_parent t clock =
     match Map.find_exn t.ctree clock with
@@ -107,7 +101,6 @@ module CommandTree (Value : Value) = struct
         clock
     | Some (_, parent, _) ->
         parent
-
 
   let rec get_prev_term_clock t clock =
     match Map.find_exn t.ctree clock with
@@ -161,7 +154,7 @@ module CommandTree (Value : Value) = struct
           (idx, clk, (idx, parent, v) :: extension) )
     in
     let update = {new_head; extension= List.rev rev_extension} in
-    apply_update t update, new_head
+    (apply_update t update, new_head)
 
   let make_update t target_node (other : t) =
     let rec aux curr acc =
@@ -175,12 +168,11 @@ module CommandTree (Value : Value) = struct
     in
     {new_head= target_node; extension= aux target_node []}
 
-  let create nnodes t0 =
+  let create nodes t0 =
     let root_clock : VectorClock.t =
       { term= t0
       ; clock=
-          Map.of_alist_exn (module Int) (List.init nnodes ~f:(fun n -> (n, 0)))
-      }
+          Map.of_alist_exn (module Int) (List.map nodes ~f:(fun n -> (n, 0))) }
     in
     let ctree =
       Map.empty (module VectorClock) |> Map.set ~key:root_clock ~data:None
@@ -215,14 +207,16 @@ module CommandTree (Value : Value) = struct
 
   let mem t vc = Map.mem t.ctree vc
 
-  let path_between t rt hd : VectorClock.t list = 
-      let rec aux vc acc =
-        match get_parent t vc with
-        | _ when [%equal: VectorClock.t] vc rt ->
-            vc :: acc
-        | par when [%equal: VectorClock.t] par vc ->
-            Fmt.failwith "%a not on path to %a" VectorClock.pp rt VectorClock.pp vc
-        | par ->
-            aux par (vc :: acc)
-      in aux hd []
+  let path_between t rt hd : VectorClock.t list =
+    let rec aux vc acc =
+      match get_parent t vc with
+      | _ when [%equal: VectorClock.t] vc rt ->
+          vc :: acc
+      | par when [%equal: VectorClock.t] par vc ->
+          Fmt.failwith "%a not on path to %a" VectorClock.pp rt VectorClock.pp
+            vc
+      | par ->
+          aux par (vc :: acc)
+    in
+    aux hd []
 end
