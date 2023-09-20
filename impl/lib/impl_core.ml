@@ -171,7 +171,7 @@ module Conspire = struct
 
   let create_node _ = create
 
-  let available_space_for_commands _ = 1024
+  let available_space_for_commands _ = 65536
 
   let should_ack_clients _ = true
 

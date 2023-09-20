@@ -92,7 +92,7 @@ module InternalReporter = struct
     let pp =
       [ field name
           (fun p -> Core.Float.(Int.(to_float state.v' - to_float state.v) / p))
-          float ]
+          (float_dfrac 3) ]
     in
     let running = ref false in
     let update () = if !running then state.v' <- state.v' + 1 in
@@ -133,11 +133,11 @@ module InternalReporter = struct
           |> Core.Option.value ~default:Float.nan
         in
         record
-          [ field "avg" (fun s -> s.sum /. Float.of_int s.count) float
+          [ field "avg" (fun s -> s.sum /. Float.of_int s.count) (float_dfrac 3)
           ; field "#" (fun s -> s.count) int
-          ; field "50%" (fun s -> percentile s 0.5) float
-          ; field "99%" (fun s -> percentile s 0.99) float
-          ; field "max" (fun s -> s.max) float ]
+          ; field "50%" (fun s -> percentile s 0.5) (float_dfrac 3)
+          ; field "99%" (fun s -> percentile s 0.99) (float_dfrac 3)
+          ; field "max" (fun s -> s.max) (float_dfrac 3) ]
       in
       pf ppf "%a" pp s
     in

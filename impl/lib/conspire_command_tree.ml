@@ -20,7 +20,9 @@ module VectorClock = struct
 
     let pp ppf t =
       let open Fmt in
-      pf ppf "%d:%a" t.term (brackets @@ list ~sep:(any ",") @@ int) (Map.data t.clock)
+      pf ppf "%d:%a" t.term
+        (brackets @@ list ~sep:(any ",") @@ int)
+        (Map.data t.clock)
 
     let empty nodes term =
       { term
@@ -39,6 +41,7 @@ module VectorClock = struct
                   Fmt.invalid_arg "Invalid nid %d not in %a" nid pp t
               | Some i ->
                   i + 1 ) }
+
   end
 
   include T
@@ -55,6 +58,23 @@ module VectorClock = struct
     comparable a b
     && Map.for_alli a.clock ~f:(fun ~key:nid ~data:clock ->
            clock <= Map.find_exn b.clock nid )
+
+  let compare_clock_po a b =
+    assert(a.term = b.term);
+    let lt = ref false in
+    let gt = ref false in
+    Map.iteri a.clock ~f:(fun ~key ~data:da ->
+      let db = Map.find_exn b.clock key in
+      match () with
+      | _ when da < db -> lt := true
+      | _ when da > db -> gt := true
+      | _ -> ()
+    );
+    match !lt, !gt with
+    | true, true -> None
+    | false, false -> Some (0)
+    | false, true -> Some (1)
+    | true, false -> Some (-1)
 
   include Core.Comparable.Make (T)
 end
@@ -83,7 +103,7 @@ module CommandTree (Value : Value) = struct
           [@printer
             map_pp VectorClock.pp
               (Fmt.option ~none:(Fmt.any "Root") pp_parent_clock_node)] }
-  [@@deriving show{with_path=false}]
+  [@@deriving show {with_path= false}]
 
   let get_idx t clk =
     match Map.find_exn t.ctree clk with None -> 0 | Some (idx, _, _) -> idx
@@ -121,6 +141,16 @@ module CommandTree (Value : Value) = struct
         assert (c1.term < c2.term) ;
         let c2' = get_prev_term_clock t c2 in
         Option.value_map c2' ~f:(fun c2' -> prefix t c1 c2') ~default:false
+
+  let compare t (c1 : VectorClock.t) (c2 : VectorClock.t) =
+    match () with
+    | _ when c1.term < c2.term ->
+        Option.some_if (prefix t c1 c2) (-1)
+    | _ when c1.term > c2.term ->
+        Option.some_if (prefix t c2 c1) (1)
+    | _ ->
+        assert(c1.term = c2.term);
+        VectorClock.compare_clock_po c1 c2
 
   type update = {new_head: VectorClock.t; extension: parent_clock_node list}
   [@@deriving show, bin_io]

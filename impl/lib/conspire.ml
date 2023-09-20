@@ -7,6 +7,12 @@ open Ocons_core.Consensus_intf
 module IdMap = Iter.Map.Make (Int)
 open Conspire_command_tree
 
+let commands_enqueued, run_ce =
+  Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands_enqueued"
+
+let commands_applied, run_ca =
+  Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands_applied"
+
 module Value = struct
   let pp_command = Command.pp
 
@@ -164,7 +170,7 @@ module Types = struct
     let message_pp = pp_message
 
     let t_pp = pp
-    
+
     let config_pp = pp_config
   end
 end
@@ -207,18 +213,28 @@ struct
         local.vval <- remote.vval ;
         t.rep.change_flag <- true
     (* extends local *)
-    | true
-      when msg_term = local.vterm
-           && CTree.prefix t.rep.store local.vval remote.vval ->
-        if not ([%equal: VectorClock.t] remote.vval local.vval) then (
+    | true when msg_term = local.vterm -> (
+      match CTree.compare t.rep.store local.vval remote.vval with
+      | None ->
+          (* conflict *)
+          dtraceln "CONFLICT from %d" src ;
+          dtraceln "local %a does not prefix of remote %a" VectorClock.pp
+            local.vval VectorClock.pp remote.vval ;
+          local.term <- msg_term + 1 ;
+          t.rep.change_flag <- true
+      | Some 0 ->
+          (* equal *)
+          ()
+      | Some i when i > 0 ->
+          (* local > remote *)
+          ()
+      | Some i ->
+          (* local < remote *)
+          assert (i < 0) ;
           local.vval <- remote.vval ;
           t.rep.change_flag <- true )
-    (* conflict with local => increment *)
-    | true when msg_term = local.vterm ->
-        local.term <- msg_term + 1 ;
-        t.rep.change_flag <- true
     | _ ->
-        ()
+        assert (msg_term < local.term || msg_term < local.vterm)
 
   let check_commit t =
     let vterm_votes =
@@ -298,6 +314,7 @@ struct
         (* ensure commands re-replicated *)
         let command_iter : Value.t Iter.t =
          fun f ->
+          let f v = commands_applied () ; f v in
           Queue.iter t.command_queue ~f ;
           Queue.clear t.command_queue
         in
@@ -312,6 +329,8 @@ struct
         ()
 
   let handle_event t (event : message event) =
+    run_ce := true ;
+    run_ca := true ;
     failure_detector_update t event ;
     match event with
     | Tick ->
@@ -322,10 +341,12 @@ struct
     | Commands ci when not (t.rep.state.term = t.rep.state.vterm) ->
         ci
         |> Iter.map (fun v -> [v])
-        |> Iter.iter (Queue.enqueue t.command_queue)
+        |> Iter.iter (fun v ->
+               commands_enqueued () ;
+               Queue.enqueue t.command_queue v )
     | Commands ci ->
         R.add_commands t.rep ~node:t.config.node_id
-          (ci |> Iter.map (fun v -> [v])) ;
+          (ci |> Iter.map (fun v -> commands_applied () ; [v])) ;
         check_commit t ;
         replication t
     | Recv (m, src) -> (
