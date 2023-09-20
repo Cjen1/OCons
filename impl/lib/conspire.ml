@@ -156,7 +156,7 @@ module Types = struct
     ; other_nodes: state Map.M(Int).t [@printer map_pp Fmt.int pp_state]
     ; failure_detector: fd_sm
     ; config: config [@opaque]
-    ; command_queue: Value.t Queue.t [@opaque]
+    ; command_queue: Command.t Queue.t [@opaque]
     ; stall_checker: StallChecker.t [@opaque]
     ; commit_log: Value.t Log.t }
   [@@deriving show {with_path= false}]
@@ -312,13 +312,14 @@ struct
         t.rep.state.vterm <- max_term ;
         t.rep.state.vval <- max_length_o4_vote.vval ;
         (* ensure commands re-replicated *)
-        let command_iter : Value.t Iter.t =
+        let command_iter : Command.t Iter.t =
          fun f ->
           let f v = commands_applied () ; f v in
           Queue.iter t.command_queue ~f ;
           Queue.clear t.command_queue
         in
-        R.add_commands t.rep ~node:t.config.node_id command_iter ;
+        R.add_commands t.rep ~node:t.config.node_id
+          (command_iter |> Iter.to_list |> Iter.singleton) ;
         t.rep.change_flag <- true )
 
   let failure_detector_update t (event : message event) =
@@ -340,13 +341,14 @@ struct
         stall_check t
     | Commands ci when not (t.rep.state.term = t.rep.state.vterm) ->
         ci
-        |> Iter.map (fun v -> [v])
         |> Iter.iter (fun v ->
                commands_enqueued () ;
                Queue.enqueue t.command_queue v )
     | Commands ci ->
         R.add_commands t.rep ~node:t.config.node_id
-          (ci |> Iter.map (fun v -> commands_applied () ; [v])) ;
+          ( ci
+          |> Iter.map (fun v -> commands_applied () ; v)
+          |> Iter.to_list |> Iter.singleton ) ;
         check_commit t ;
         replication t
     | Recv (m, src) -> (
