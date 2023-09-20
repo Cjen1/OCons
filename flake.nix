@@ -10,15 +10,40 @@
       url = "github:tweag/opam-nix";
       inputs.opam-repository.follows = "opam-repository";
     };
+    magic-trace-src = {
+      url = "https://github.com/janestreet/magic-trace/releases/download/v1.1.0/magic-trace";
+      flake = false;
+    };
     #eio = {
     #  url = "github:ocaml-multicore/eio";
     #  flake = false;
     #};
   };
-  outputs = { self, flake-utils, opam-nix, nixpkgs, opam-repository}:
+  outputs = { self, flake-utils, opam-nix, nixpkgs, opam-repository, magic-trace-src}:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        magic-trace = pkgs.stdenv.mkDerivation {
+          name = "magic-trace";
+          src = magic-trace-src;
+          dontUnpack = true;
+
+          buildInputs = [pkgs.makeWrapper];
+
+          installPhase = ''
+            mkdir -p $out/bin
+            cp $src $out/bin/magic-trace
+          '';
+
+          postFixup = ''
+          wrapProgram $out/bin/magic-trace \
+            --set PATH ${pkgs.lib.makeBinPath [
+              pkgs.fzf
+              pkgs.linuxPackages_latest.perf
+            ]}
+          '';
+        };
+
         on = opam-nix.lib.${system};
         devPackagesQuery = {
           ocaml-lsp-server = "*";
@@ -42,7 +67,7 @@
           inputsFrom = [scope.ocons];
           buildInputs = devPackages ++ [
             pkgs.linuxPackages_latest.perf
-            pkgs.fzf
+            magic-trace
           ];
         };
       });
