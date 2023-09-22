@@ -22,8 +22,6 @@ module Value = struct
   let pp : t Fmt.t =
     let open Fmt in
     brackets @@ list ~sep:comma Command.pp
-
-  let empty = []
 end
 
 module CTree = CommandTree (Value)

@@ -292,3 +292,9 @@ let assert_equal pp equal a b =
     Fmt.failwith "inequal: @[<1>%a@]"
       Fmt.(pair ~sep:semi (braces pp) (braces pp))
       (a, b)
+
+let pp_hashtbl ppk ppv ppf v =
+  let open Core.Hashtbl in
+  Fmt.pf ppf "%a"
+    Fmt.(brackets @@ list @@ parens @@ pair ppk ~sep:(any ":@ ") ppv)
+    (v |> to_alist)
