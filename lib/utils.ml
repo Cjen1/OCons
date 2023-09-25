@@ -64,7 +64,11 @@ module InternalReporter = struct
       pps |> List.map (fun pp -> (pp, reset, running)) |> List.append !reporters
 
   let run_report period =
-    let pp_reporters = !reporters |> List.filter (fun (_,_,running) -> !running) |> List.map (fun (v, _, _) -> v) in
+    let pp_reporters =
+      !reporters
+      |> List.filter (fun (_, _, running) -> !running)
+      |> List.map (fun (v, _, _) -> v)
+    in
     Eio.traceln "---- Report ----" ;
     Eio.traceln "%a" (Fmt.record pp_reporters) period ;
     List.iter (fun (_, r, running) -> if !running then r ()) !reporters
@@ -85,17 +89,17 @@ module InternalReporter = struct
 
   type 'a reporter = 'a -> unit
 
-  let rate_reporter init name : unit reporter * bool ref =
-    let state = {v= init; v'= init} in
-    let reset () = state.v <- state.v' in
+  let rate_reporter name : unit reporter * bool ref =
+    let state = ref 0 in
+    let reset () = state := 0 in
     let open Fmt in
     let pp =
       [ field name
-          (fun p -> Core.Float.(Int.(to_float state.v' - to_float state.v) / p))
+          (fun p -> Core.Float.(Int.(to_float !state) / p))
           (float_dfrac 3) ]
     in
     let running = ref false in
-    let update () = if !running then state.v' <- state.v' + 1 in
+    let update () = if !running then incr state in
     register_reporter pp reset running ;
     (update, running)
 
@@ -141,18 +145,19 @@ module InternalReporter = struct
       in
       pf ppf "%a" pp s
     in
-    let pp = [field name (fun _ -> state) pp_stats] in
-    let running = ref false in
+    let print_enabled = ref false in
+    let pp = [field name (fun _ -> print_enabled := true; state) pp_stats] in
+    let run_enabled = ref false in
     let update x =
-      if !running then (
+      if !run_enabled && !print_enabled then (
         let dp = conv x in
         state.max <- max dp state.max ;
         state.tdigest <- Tdigest.add ~data:dp state.tdigest ;
         state.count <- state.count + 1 ;
         state.sum <- state.sum +. dp )
     in
-    register_reporter pp reset running ;
-    (update, running)
+    register_reporter pp reset run_enabled ;
+    (update, run_enabled)
 
   let trace_reporter : string -> time reporter * bool ref =
    fun name ->
@@ -170,11 +175,13 @@ end
 
 module TRACE = struct
   (* External_infra.accept_handler *)
-  let cli_ex, run_cli_ex = InternalReporter.command_trace_reporter "TRACE:cli->ex"
+  let cli_ex, run_cli_ex =
+    InternalReporter.command_trace_reporter "TRACE:cli->ex"
 
   let ex_in, run_ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
 
-  let commit, run_commit= InternalReporter.command_trace_reporter "TRACE:commit "
+  let commit, run_commit =
+    InternalReporter.command_trace_reporter "TRACE:commit "
 
   let in_ex, run_in_ex = InternalReporter.trace_reporter "TRACE:in->ex "
 

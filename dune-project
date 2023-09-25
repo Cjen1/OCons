@@ -30,4 +30,5 @@
     tdigest
     irmin
     irmin-containers
+    core_bench
     ))

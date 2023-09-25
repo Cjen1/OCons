@@ -41,7 +41,6 @@ module VectorClock = struct
                   Fmt.invalid_arg "Invalid nid %d not in %a" nid pp t
               | Some i ->
                   i + 1 ) }
-
   end
 
   include T
@@ -60,21 +59,27 @@ module VectorClock = struct
            clock <= Map.find_exn b.clock nid )
 
   let compare_clock_po a b =
-    assert(a.term = b.term);
+    assert (a.term = b.term) ;
     let lt = ref false in
     let gt = ref false in
     Map.iteri a.clock ~f:(fun ~key ~data:da ->
-      let db = Map.find_exn b.clock key in
-      match () with
-      | _ when da < db -> lt := true
-      | _ when da > db -> gt := true
-      | _ -> ()
-    );
-    match !lt, !gt with
-    | true, true -> None
-    | false, false -> Some (0)
-    | false, true -> Some (1)
-    | true, false -> Some (-1)
+        let db = Map.find_exn b.clock key in
+        match () with
+        | _ when da < db ->
+            lt := true
+        | _ when da > db ->
+            gt := true
+        | _ ->
+            () ) ;
+    match (!lt, !gt) with
+    | true, true ->
+        None
+    | false, false ->
+        Some 0
+    | false, true ->
+        Some 1
+    | true, false ->
+        Some (-1)
 
   include Core.Comparable.Make (T)
 end
@@ -147,32 +152,44 @@ module CommandTree (Value : Value) = struct
     | _ when c1.term < c2.term ->
         Option.some_if (prefix t c1 c2) (-1)
     | _ when c1.term > c2.term ->
-        Option.some_if (prefix t c2 c1) (1)
+        Option.some_if (prefix t c2 c1) 1
     | _ ->
-        assert(c1.term = c2.term);
+        assert (c1.term = c2.term) ;
         VectorClock.compare_clock_po c1 c2
 
   type update = {new_head: VectorClock.t; extension: parent_clock_node list}
-  [@@deriving show, bin_io]
+  [@@deriving show {with_path= false}, bin_io]
 
   let apply_update t update =
     match () with
     | _ when Map.mem t.ctree update.new_head ->
+        Ok t
+    | _ -> (
+      match update.extension with
+      | [] ->
+          Fmt.failwith "All updates should be non-empty"
+      | (_, par, _) :: _ when not (Map.mem t.ctree par) ->
+          Fmt.error_msg "Missing %a" VectorClock.pp par
+      | extension ->
+          let rec aux ctree (extension : parent_clock_node list) =
+            match extension with
+            | [] ->
+                ctree
+            | [a] ->
+                Map.set ctree ~key:update.new_head ~data:(Some a)
+            | a :: ((_, clk, _) :: _ as rem) ->
+                let ctree = Map.set ctree ~key:clk ~data:(Some a) in
+                aux ctree rem
+          in
+          let ctree = aux t.ctree extension in
+          Ok {ctree} )
+
+  let apply_update_exn t update =
+    match apply_update t update with
+    | Ok t ->
         t
-    | _ ->
-        assert (not @@ List.is_empty update.extension) ;
-        let rec aux ctree (extension : parent_clock_node list) =
-          match extension with
-          | [] ->
-              ctree
-          | [a] ->
-              Map.set ctree ~key:update.new_head ~data:(Some a)
-          | a :: ((_, clk, _) :: _ as rem) ->
-              let ctree = Map.set ctree ~key:clk ~data:(Some a) in
-              aux ctree rem
-        in
-        let ctree = aux t.ctree update.extension in
-        {ctree}
+    | Error (`Msg s) ->
+        Fmt.failwith "%s" s
 
   let addv t ~node ~(parent : VectorClock.t) ?(term = parent.term) vi =
     let idx0 = get_idx t parent in
@@ -184,7 +201,7 @@ module CommandTree (Value : Value) = struct
           (idx, clk, (idx, parent, v) :: extension) )
     in
     let update = {new_head; extension= List.rev rev_extension} in
-    (apply_update t update, new_head)
+    (apply_update_exn t update, new_head)
 
   let make_update t target_node (other : t) =
     let rec aux curr acc =
@@ -197,6 +214,17 @@ module CommandTree (Value : Value) = struct
           aux c (v :: acc)
     in
     {new_head= target_node; extension= aux target_node []}
+
+  let rec copy_update src dst upto =
+    match Map.find_exn src.ctree upto with
+    | _ when Map.mem dst.ctree upto ->
+        dst
+    | None ->
+        (* root already there *)
+        dst
+    | Some (_, par, _) as v ->
+        let dctree' = Map.set dst.ctree ~key:upto ~data:v in
+        copy_update src {ctree= dctree'} par
 
   let create nodes t0 =
     let root_clock : VectorClock.t =
@@ -249,4 +277,36 @@ module CommandTree (Value : Value) = struct
           aux par (vc :: acc)
     in
     aux hd []
+
+  let just_path_to t tar =
+    let rec aux c acc =
+      match Map.find_exn t.ctree c with
+      | None ->
+          (c, None) :: acc
+      | Some (_, par, _) as n ->
+          aux par ((c, n) :: acc)
+    in
+    let path = aux tar [] in
+    {ctree= Map.of_alist_exn (module VectorClock) path}
+
+  let tree_invariant t =
+    let rec path_to_root t c acc =
+      let par = get_parent t c in
+      match () with
+      | _ when VectorClock.equal par c ->
+          Set.add acc c
+      | _ when Set.mem acc par ->
+          Fmt.failwith "Loop detected around %a" VectorClock.pp c
+      | _ ->
+          path_to_root t par (Set.add acc c)
+    in
+    Map.key_set t.ctree
+    |> Set.fold
+         ~init:(Set.empty (module VectorClock))
+         ~f:(fun visited vc ->
+           if Set.mem visited vc then visited
+           else
+             Set.union visited
+               (path_to_root t vc (Set.empty (module VectorClock))) )
+    |> ignore
 end

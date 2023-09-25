@@ -33,19 +33,34 @@ module Make (Value : Value) = struct
     ; vval= VectorClock.empty nodes 0
     ; commit_index= VectorClock.empty nodes 0 }
 
+  let set_state t tar =
+    t.vval <- tar.vval ;
+    t.vterm <- tar.vterm ;
+    t.term <- tar.term ;
+    t.commit_index <- tar.commit_index
+
   module Rep = struct
     type remote_view =
-      {mutable expected_tree: CTree.t [@opaque]; mutable expected_state: state}
+      { mutable known_tree: CTree.t
+      ; mutable expected_tree: CTree.t
+      ; mutable expected_state: state }
     [@@deriving show {with_path= false}]
 
     type rep =
       { state: state
       ; mutable store: CTree.t
-      ; remotes: remote_view Map.M(Int).t
-            [@printer Conspire_command_tree.map_pp Fmt.int pp_remote_view] }
+      ; remotes: remote_view Map.M(Int).t [@opaque] }
     [@@deriving show {with_path= false}]
 
-    type message = {ctree: CTree.update option; cons: state option}
+    type success = {ctree: CTree.update option; cons: state option}
+    [@@deriving show {with_path= false}, bin_io]
+
+    type failure = {commit: VectorClock.t}
+    [@@deriving show {with_path= false}, bin_io]
+
+    type message =
+      ((success, failure) Result.t
+      [@printer Fmt.result ~ok:pp_success ~error:pp_failure] )
     [@@deriving show {with_path= false}, bin_io]
 
     let get_update rep dst =
@@ -65,16 +80,31 @@ module Make (Value : Value) = struct
       in
       {ctree; cons}
 
-    let apply_ctree_update rep src update =
-      rep.store <- CTree.apply_update rep.store update ;
+    let valid_update rep update =
+      match update.CTree.extension with
+      | [] ->
+          false
+      | (_, par, _) :: _ ->
+          CTree.mem rep.store par
+
+    let recv_update rep src update =
+      let%map.Result new_tree = CTree.apply_update rep.store update in
+      rep.store <- new_tree ;
       let remote = Map.find_exn rep.remotes src in
-      remote.expected_tree <- CTree.apply_update remote.expected_tree update
+      remote.known_tree <-
+        CTree.copy_update rep.store remote.known_tree update.new_head ;
+      remote.expected_tree <-
+        CTree.copy_update rep.store remote.expected_tree update.new_head
 
     let get_update_to_send rep dst =
       let update = get_update rep dst in
-      Option.iter update.ctree ~f:(apply_ctree_update rep dst) ;
+      let remote = Map.find_exn rep.remotes dst in
+      Option.iter update.ctree ~f:(fun update ->
+          remote.expected_tree <-
+            CTree.apply_update remote.expected_tree update
+            |> Result.ok |> Option.value_exn ) ;
       Option.iter update.cons ~f:(fun s ->
-          (Map.find_exn rep.remotes dst).expected_state <- s ) ;
+          set_state (Map.find_exn rep.remotes dst).expected_state s ) ;
       update
 
     let add_commands rep ~node vals =
@@ -92,7 +122,10 @@ module Make (Value : Value) = struct
       ; store= empty_tree
       ; remotes=
           List.map other_nodes ~f:(fun i ->
-              (i, {expected_tree= empty_tree; expected_state= init_state nodes}) )
+              ( i
+              , { known_tree= empty_tree
+                ; expected_tree= empty_tree
+                ; expected_state= init_state nodes } ) )
           |> Map.of_alist_exn (module Int) }
   end
 
@@ -209,20 +242,52 @@ module Make (Value : Value) = struct
         t.rep.state.vval <- max_length_o4_vote.vval )
 
   let add_commands t (ci : Value.t Iter.t) =
-    Rep.add_commands t.rep ~node:t.config.node_id ci;
+    Rep.add_commands t.rep ~node:t.config.node_id ci ;
     check_commit t
 
-  let handle_message t src (msg : Rep.message) =
-    Option.iter msg.ctree ~f:(Rep.apply_ctree_update t.rep src) ;
+  let path_invariant ctree v =
+    let rec valid_value curr =
+      match CTree.get_parent ctree curr with
+      | par when [%equal: Conspire_command_tree.VectorClock.t] par curr ->
+          true
+      | par ->
+          valid_value par
+    in
+    valid_value v
+
+  let handle_steady_state t src (msg : Rep.success) =
+    let option_bind o ~f = Option.value_map o ~default:(Ok ()) ~f in
+    let%bind.Result () = option_bind msg.ctree ~f:(Rep.recv_update t.rep src) in
+    let%bind.Result () =
+      option_bind msg.cons ~f:(fun s ->
+          CTree.mem t.rep.store s.vval
+          |> Result.ok_if_true ~error:(`Msg "Invalid vval") )
+    in
+    let%bind.Result () =
+      option_bind msg.cons ~f:(fun s ->
+          CTree.mem t.rep.store s.commit_index
+          |> Result.ok_if_true ~error:(`Msg "Invalid commit index") )
+    in
     Option.iter msg.cons ~f:(fun new_state ->
         let remote = Map.find_exn t.other_nodes_state src in
-        remote.term <- new_state.term ;
-        remote.vterm <- new_state.vterm ;
-        remote.vval <- new_state.vval ;
-        remote.commit_index <- new_state.commit_index ;
+        set_state remote new_state ;
         acceptor_reply t src ;
         check_commit t ;
-        check_conflict_recovery t )
+        check_conflict_recovery t ) ;
+    Result.return ()
+
+  let handle_message t src (msg : Rep.message) :
+      (unit, [`MustAck | `MustNack]) result =
+    match msg with
+    | Ok msg ->
+        handle_steady_state t src msg
+        |> Result.map_error ~f:(function `Msg _ -> `MustNack)
+    | Error _ ->
+        (* reset expected state to commit index and initial state *)
+        let remote = Map.find_exn t.rep.remotes src in
+        (* commit guaranteed to exist locally otherwise rejected update :) *)
+        remote.expected_tree <- remote.known_tree ;
+        Error `MustAck
 
   let create (config : config) =
     let rep = Rep.create config.replica_ids config.other_replica_ids in

@@ -171,10 +171,10 @@ module Make (C : Consensus_intf.S) = struct
       { command_length_reporter=
           InternalReporter.avg_reporter Int.to_float "cmd_len" |> run
       ; no_commands_reporter=
-          InternalReporter.rate_reporter 0 "no-commands" |> run
-      ; request_reporter= InternalReporter.rate_reporter 0 "request" |> run
-      ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space" |> run
-      ; commit_reporter= InternalReporter.rate_reporter 0 "commit" |> run
+          InternalReporter.rate_reporter "no-commands" |> run
+      ; request_reporter= InternalReporter.rate_reporter "request" |> run
+      ; no_space_reporter= InternalReporter.rate_reporter "no_space" |> run
+      ; commit_reporter= InternalReporter.rate_reporter "commit" |> run
       ; main_loop_length_reporter=
           InternalReporter.avg_reporter Fun.id "main_loop_delay" |> run
       ; clock= (clock :> Eio.Time.clock) }

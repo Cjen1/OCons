@@ -44,11 +44,12 @@ end
 
 module FailureDetector = struct
   type t =
-    { state: (node_id, int) Hashtbl.t [@printer Utils.pp_hashtbl Fmt.int Fmt.int]
+    { state: (node_id, int) Hashtbl.t
+          [@printer Utils.pp_hashtbl [%compare: int * int] Fmt.int Fmt.int]
     ; timeout: int }
   [@@deriving show]
 
-  let tick t = Hashtbl.map_inplace t.state ~f:(fun i -> i - 1)
+  let tick t = Hashtbl.map_inplace t.state ~f:Int.pred
 
   let is_live (t : t) nid =
     Hashtbl.find t.state nid
@@ -117,8 +118,8 @@ module Make
              with type t = Types.t
               and type message = Types.message) =
 struct
-  open Conspire
-  open Types
+  include Conspire
+  include Types
 
   let current_leader t =
     let leader_idx =
@@ -126,17 +127,31 @@ struct
     in
     List.nth_exn t.config.conspire.replica_ids leader_idx
 
+  let leader_dead_trace, ld_run =
+    Ocons_core.Utils.InternalReporter.rate_reporter "leader_dead"
+
   let can_apply_requests t =
+    ld_run := true ;
     let current = current_leader t in
-    t.conspire.rep.state.vterm = t.conspire.rep.state.term
-    && ( current = t.config.conspire.node_id
-       || not (FailureDetector.is_live t.failure_detector current) )
+    let term_valid = t.conspire.rep.state.vterm = t.conspire.rep.state.term in
+    let is_leader = current = t.config.conspire.node_id in
+    let leader_dead =
+      not @@ FailureDetector.is_live t.failure_detector current
+    in
+    if leader_dead then leader_dead_trace () ;
+    term_valid && (is_leader || leader_dead)
+
+  let available_space_for_commands t =
+    if can_apply_requests t then t.config.max_outstanding else 0
 
   let send ?(force = false) t dst =
-    let open Conspire.Rep in
+    let open Rep in
     let update = get_update_to_send t.conspire.rep dst in
     if force || Option.is_some update.ctree || Option.is_some update.cons then
-      Act.send dst update
+      Act.send dst (Ok update)
+
+  let nack t dst =
+    Act.send dst (Error {commit= t.conspire.rep.state.commit_index})
 
   let broadcast ?(force = false) t =
     List.iter t.config.other_replica_ids ~f:(fun nid -> send ~force t nid)
@@ -147,26 +162,56 @@ struct
         Fmt.pf ppf "Stalled on %d at %a@." t.config.conspire.node_id
           Conspire_command_tree.VectorClock.pp problem_idx )
 
+  let nack_counter, run_nc =
+    Ocons_core.Utils.InternalReporter.rate_reporter "nacks"
+
+  let ack_counter, run_ac =
+    Ocons_core.Utils.InternalReporter.rate_reporter "acks"
+
+  let term_tracker, run_tt =
+    Ocons_core.Utils.InternalReporter.avg_reporter Float.of_int "term"
+
+  let value_length, run_vl =
+    Ocons_core.Utils.InternalReporter.avg_reporter Float.of_int "value_length"
+
   let handle_event t (event : message Ocons_core.Consensus_intf.event) =
+    run_nc := true ;
+    run_ac := true ;
+    run_tt := true ;
+    run_vl := true ;
     match event with
     | Tick ->
         stall_check t ;
+        term_tracker t.conspire.rep.state.term ;
         FailureDetector.tick t.failure_detector ;
         broadcast t ~force:true
     | Commands ci when can_apply_requests t ->
-        Conspire.add_commands t.conspire (ci |> Iter.to_list |> Iter.singleton) ;
+        let commands = Iter.to_list ci in
+        value_length (List.length commands) ;
+        Conspire.add_commands t.conspire (commands |> Iter.singleton) ;
         broadcast t
     | Commands _ ->
         Fmt.invalid_arg "Commands cannot yet be applied"
-    | Recv (m, src) ->
-        let recovery_started =
-          t.conspire.rep.state.term > t.conspire.rep.state.vterm
+    | Recv (m, src) -> (
+        FailureDetector.reset t.failure_detector src ;
+        let recovery_started, prev_ci =
+          ( t.conspire.rep.state.term > t.conspire.rep.state.vterm
+          , get_commit_index t )
         in
-        Conspire.handle_message t.conspire src m ;
-        let now_steady_state =
-          t.conspire.rep.state.term = t.conspire.rep.state.vterm
+        let msg_result = Conspire.handle_message t.conspire src m in
+        let now_steady_state, committed =
+          ( t.conspire.rep.state.term = t.conspire.rep.state.vterm
+          , get_commit_index t > prev_ci )
         in
-        if recovery_started && now_steady_state then broadcast t else send t src
+        match (msg_result, recovery_started && now_steady_state, committed) with
+        | Error `MustAck, _, _ ->
+            ack_counter () ; send t src
+        | Error `MustNack, _, _ ->
+            nack_counter () ; nack t src
+        | Ok _, true, _ | Ok _, _, true ->
+            broadcast t
+        | _ ->
+            send t src )
 
   let advance t e =
     Act.run_side_effects

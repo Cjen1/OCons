@@ -110,8 +110,7 @@ let%expect_test "make_update" =
   Fmt.pr "%a@." CTree.pp_update update ;
   [%expect
     {|
-  { Conspire_command_tree.CommandTree.new_head = 1:[1,2,0];
-    extension = [(2, 0:[1,0,0], 3); (3, 0:[1,1,0], 4)] } |}]
+  { new_head = 1:[1,2,0]; extension = [(2, 0:[1,0,0], 3); (3, 0:[1,1,0], 4)] } |}]
 
 let%expect_test "sufficient_prefix" =
   let ct = CTree.create [0;1;2] 0 in

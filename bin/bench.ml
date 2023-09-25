@@ -13,7 +13,7 @@ let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
     |> Mtime.Span.of_float_ns |> Option.get
   in
   let req_reporter, should_run =
-    O.Utils.InternalReporter.rate_reporter 0 "req_dispatch"
+    O.Utils.InternalReporter.rate_reporter "req_dispatch"
   in
   should_run := true ;
   let rec aux = function

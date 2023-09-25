@@ -293,8 +293,8 @@ let assert_equal pp equal a b =
       Fmt.(pair ~sep:semi (braces pp) (braces pp))
       (a, b)
 
-let pp_hashtbl ppk ppv ppf v =
-  let open Core.Hashtbl in
+let pp_hashtbl comp ppk ppv ppf v =
+  let open Core in
   Fmt.pf ppf "%a"
     Fmt.(brackets @@ list @@ parens @@ pair ppk ~sep:(any ":@ ") ppv)
-    (v |> to_alist)
+    Core.(v |> Hashtbl.to_alist |> List.sort ~compare:comp)

@@ -93,7 +93,7 @@ let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
   TRACE.run_in_ex := true;
   Switch.run
   @@ fun sw ->
-  let req_reporter, should_run = InternalReporter.rate_reporter 0 "cli_req" in
+  let req_reporter, should_run = InternalReporter.rate_reporter "cli_req" in
   should_run := true;
   let t =
     { conn_tbl= Hashtbl.create 16

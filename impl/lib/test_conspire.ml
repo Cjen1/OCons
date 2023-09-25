@@ -62,22 +62,21 @@ let%expect_test "local_commit" =
   [%expect
     {|
       t: { rep =
-           { state = { vval = 0:[3]; vterm = 0; term = 0; commit_index = 0:[3] };
+           { state = { vval = 0:[2]; vterm = 0; term = 0; commit_index = 0:[2] };
              store =
              { ctree =
                [(0:[0], Root): (0:[1], (1, 0:[0], [Command(Read c1, 1)])):
-                (0:[2], (2, 0:[1], [Command(Read c2, 3)])):
-                (0:[3], (3, 0:[2], [Command(Read c3, 2)]))]
+                (0:[2], (2, 0:[1], [Command(Read c2, 3), Command(Read c3, 2)]))]
                };
              change_flag = false; remotes = [] };
            other_nodes = []; failure_detector = {}; config = <opaque>;
            command_queue = <opaque>; stall_checker = <opaque>;
            commit_log =
-           [[Command(Read c1, 1)][Command(Read c2, 3)][Command(Read c3, 2)]] }
+           [[Command(Read c1, 1)][Command(Read c2, 3), Command(Read c3, 2)]] }
       actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))
                 Broadcast((ConsUpdate
-                             { vval = 0:[3]; vterm = 0; term = 0;
-                               commit_index = 0:[3] }))] |}]
+                             { vval = 0:[2]; vterm = 0; term = 0;
+                               commit_index = 0:[2] }))] |}]
 
 let%expect_test "e2e commit" =
   Imp.set_is_test true ;
@@ -117,16 +116,13 @@ let%expect_test "e2e commit" =
            failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
            command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
       actions: [Send(0,(CTreeUpdate
-                          { Conspire_command_tree.CommandTree.new_head =
-                            0:[0,1,0,0];
+                          { new_head = 0:[0,1,0,0];
                             extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
                 Send(2,(CTreeUpdate
-                          { Conspire_command_tree.CommandTree.new_head =
-                            0:[0,1,0,0];
+                          { new_head = 0:[0,1,0,0];
                             extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
                 Send(3,(CTreeUpdate
-                          { Conspire_command_tree.CommandTree.new_head =
-                            0:[0,1,0,0];
+                          { new_head = 0:[0,1,0,0];
                             extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
                 Broadcast((ConsUpdate
                              { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
@@ -205,12 +201,10 @@ let%expect_test "e2e commit" =
          failure_detector = {1: 2, 3: 2, 0: 2}; config = <opaque>;
          command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
     actions: [Send(0,(CTreeUpdate
-                        { Conspire_command_tree.CommandTree.new_head =
-                          0:[0,1,0,0];
+                        { new_head = 0:[0,1,0,0];
                           extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
               Send(3,(CTreeUpdate
-                        { Conspire_command_tree.CommandTree.new_head =
-                          0:[0,1,0,0];
+                        { new_head = 0:[0,1,0,0];
                           extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
               Broadcast((ConsUpdate
                            { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
@@ -318,16 +312,13 @@ let%expect_test "e2e conflict resolution" =
          failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
          command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
     actions: [Send(1,(CTreeUpdate
-                        { Conspire_command_tree.CommandTree.new_head =
-                          0:[1,0,0,0];
+                        { new_head = 0:[1,0,0,0];
                           extension = [(1, 0:[0,0,0,0], [Command(Read c0, 1)])] }))
               Send(2,(CTreeUpdate
-                        { Conspire_command_tree.CommandTree.new_head =
-                          0:[1,0,0,0];
+                        { new_head = 0:[1,0,0,0];
                           extension = [(1, 0:[0,0,0,0], [Command(Read c0, 1)])] }))
               Send(3,(CTreeUpdate
-                        { Conspire_command_tree.CommandTree.new_head =
-                          0:[1,0,0,0];
+                        { new_head = 0:[1,0,0,0];
                           extension = [(1, 0:[0,0,0,0], [Command(Read c0, 1)])] }))
               Broadcast((ConsUpdate
                            { vval = 0:[1,0,0,0]; vterm = 0; term = 0;

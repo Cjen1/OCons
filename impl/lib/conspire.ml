@@ -8,10 +8,10 @@ module IdMap = Iter.Map.Make (Int)
 open Conspire_command_tree
 
 let commands_enqueued, run_ce =
-  Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands_enqueued"
+  Ocons_core.Utils.InternalReporter.rate_reporter "commands_enqueued"
 
 let commands_applied, run_ca =
-  Ocons_core.Utils.InternalReporter.rate_reporter 0 "commands_applied"
+  Ocons_core.Utils.InternalReporter.rate_reporter "commands_applied"
 
 module Value = struct
   let pp_command = Command.pp
@@ -59,9 +59,9 @@ module Replication = struct
   [@@deriving show {with_path= false}]
 
   let recv_update t src update =
-    t.store <- CTree.apply_update t.store update ;
+    t.store <- CTree.apply_update t.store update |> Result.ok |> Option.value_exn ;
     let remote = Map.find_exn t.remotes src in
-    remote.expected <- CTree.apply_update remote.expected update
+    remote.expected <- CTree.apply_update remote.expected update|> Result.ok |> Option.value_exn 
 
   let get_ctree_msg t dst =
     let remote = Map.find_exn t.remotes dst in
@@ -184,7 +184,7 @@ struct
         let update = R.get_ctree_msg t.rep dst in
         Option.iter update ~f:(fun update ->
             let remote = Map.find_exn t.rep.remotes dst in
-            remote.expected <- CTree.apply_update remote.expected update ;
+            remote.expected <- CTree.apply_update remote.expected update |> Result.ok |> Option.value_exn ;
             Act.send dst (GlobalTypes.CTreeUpdate update) ) ) ;
     Option.iter (R.get_cons_update ~force t.rep) ~f:(fun up ->
         Act.broadcast (ConsUpdate up) ) ;
@@ -317,7 +317,7 @@ struct
           Queue.clear t.command_queue
         in
         R.add_commands t.rep ~node:t.config.node_id
-          (command_iter |> Iter.to_list |> Iter.singleton) ;
+          (command_iter |> Iter.to_list |> function [] -> Iter.empty | ls -> Iter.singleton ls) ;
         t.rep.change_flag <- true )
 
   let failure_detector_update t (event : message event) =
