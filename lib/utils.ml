@@ -187,3 +187,52 @@ module TRACE = struct
 
   let ex_cli, run_ex_cli = InternalReporter.trace_reporter "TRACE:ex->cli"
 end
+
+module MockSource = struct
+  type t = {q: Cstruct.t Eio.Stream.t; mutable left_over: Cstruct.t option}
+
+  let create q = {left_over= None; q}
+
+  let single_read t buf =
+    let copy_and_assign_rem data buf =
+      match (Cstruct.length data, Cstruct.length buf) with
+      | ld, lb when ld <= lb ->
+          Cstruct.blit data 0 buf 0 ld ;
+          ld
+      | ld, lb ->
+          Cstruct.blit data 0 buf 0 lb ;
+          let rem = Cstruct.take ~min:(ld - lb) data in
+          t.left_over <- Some rem ;
+          lb
+    in
+    match t.left_over with
+    | Some data ->
+        copy_and_assign_rem data buf
+    | None ->
+        copy_and_assign_rem (Eio.Stream.take t.q) buf
+
+  let read_methods = []
+end
+
+let make_source =
+  let ops = Eio.Flow.Pi.source (module MockSource) in
+  fun q -> Eio.Resource.T (MockSource.create q, ops)
+
+module MockSink = struct
+  type t = Cstruct.t Eio.Stream.t
+
+  let single_write (t : t) bufs =
+    List.iter (fun buf -> Eio.Stream.add t buf) bufs ;
+    Core.List.sum (module Core.Int) bufs ~f:Cstruct.length
+
+  let copy t ~src = Eio.Flow.Pi.simple_copy ~single_write t ~src
+end
+
+let make_sink =
+  let ops = Eio.Flow.Pi.sink (module MockSink) in
+  fun q -> Eio.Resource.T (q, ops)
+
+let mock_flow () =
+  let q = Eio.Stream.create 8 in
+  (make_source q, make_sink q)
+

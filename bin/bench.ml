@@ -127,7 +127,7 @@ let run sockaddrs id n rate outfile debug =
       sockaddrs
       |> List.mapi (fun idx addr ->
              ( idx
-             , fun sw -> (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way)
+             , fun sw -> (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way_ty Eio.Flow.two_way)
              ) )
     in
     traceln "Creating conns to: %a"

@@ -11,7 +11,7 @@
   (name ocons)
   (synopsis "The infrastructure for pluggable consensus implementations")
   (depends 
-    (ocaml (= 5.0.0))
+    (ocaml (= 5.1.0))
     cmdliner
     iter
     accessor

@@ -13,7 +13,7 @@ let run op sockaddrs id retry_timeout =
     sockaddrs
     |> List.mapi (fun idx addr ->
            ( idx
-           , fun sw -> (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way) ) )
+           , fun sw -> (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way_ty Eio.Flow.two_way) ) )
   in
   Eio.traceln "Creating conns to: %a"
     Fmt.(braces @@ list ~sep:comma Eio.Net.Sockaddr.pp)

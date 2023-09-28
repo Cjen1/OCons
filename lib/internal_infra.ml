@@ -5,7 +5,10 @@ open Utils
 open Consensus_intf
 
 module Ticker = struct
-  type t = {mutable next_tick: float; period: float; clock: Eio.Time.clock}
+  type t =
+    { mutable next_tick: float
+    ; period: float
+    ; clock: float Eio.Time.clock_ty Eio.Resource.t }
 
   let create clock period =
     {next_tick= Core.Float.(Eio.Time.now clock + period); period; clock}
@@ -25,7 +28,7 @@ module Make (C : Consensus_intf.S) = struct
     ; no_space_reporter: unit InternalReporter.reporter
     ; commit_reporter: unit InternalReporter.reporter
     ; main_loop_length_reporter: float InternalReporter.reporter
-    ; clock: Eio.Time.clock }
+    ; clock: float Eio.Time.clock_ty Eio.Resource.t }
 
   type t =
     { c_rx: command Eio.Stream.t
@@ -123,7 +126,7 @@ module Make (C : Consensus_intf.S) = struct
           t.cons <- tcons ;
           handle_actions t actions )
 
-  let ensure_sent t =
+  let ensure_sent _t =
     (* We should flush here to ensure queueus aren't building up.
        However in practise that results in about a 2x drop in highest throughput
        So we just yield to the scheduler. This should cause writes to still be
@@ -133,7 +136,8 @@ module Make (C : Consensus_intf.S) = struct
 
        Expected outcome at system capacity is for queuing on outbound network capacity
     *)
-    CMgr.flush_all t.cmgr ; Fiber.yield ()
+    (*CMgr.flush_all t.cmgr ;*)
+    Fiber.yield ()
 
   let tick t () =
     dtraceln "Tick" ;
@@ -154,15 +158,15 @@ module Make (C : Consensus_intf.S) = struct
     if dur > 100. then Magic_trace.take_snapshot () ;
     ()
 
-  let run_inter ~sw (clock : #Eio.Time.clock) node_id config period resolvers
-      client_msgs client_resps internal_streams =
+  let run_inter ~sw env node_id config period resolvers client_msgs client_resps
+      internal_streams =
     let cmgr =
       Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
-          Eio.Time.sleep clock 1. )
+          Eio.Time.sleep env 1. )
     in
     let cons = C.create_node node_id config in
     let state_machine = Core.Hashtbl.create (module Core.String) in
-    let ticker = Ticker.create (clock :> Eio.Time.clock) period in
+    let ticker = Ticker.create (env :> float Eio.Time.clock_ty r) period in
     let run (rep, should_run) =
       should_run := true ;
       rep
@@ -177,7 +181,7 @@ module Make (C : Consensus_intf.S) = struct
       ; commit_reporter= InternalReporter.rate_reporter "commit" |> run
       ; main_loop_length_reporter=
           InternalReporter.avg_reporter Fun.id "main_loop_delay" |> run
-      ; clock= (clock :> Eio.Time.clock) }
+      ; clock= (env :> float Eio.Time.clock_ty r) }
     in
     let t =
       { c_tx= client_resps
@@ -194,8 +198,7 @@ module Make (C : Consensus_intf.S) = struct
     done ;
     Ocons_conn_mgr.close t.cmgr
 
-  let accept_handler internal_streams : Eio.Net.connection_handler =
-   fun sock addr ->
+  let accept_handler internal_streams sock addr =
     Utils.set_nodelay sock ;
     try
       let parse =
@@ -223,16 +226,7 @@ module Make (C : Consensus_intf.S) = struct
     in
     List.map (fun (id, r) -> (id, handshake r)) resolvers
 
-  type 'a env =
-    < clock: #Eio.Time.clock
-    ; net: #Eio.Net.t
-    ; mono_clock: #Eio.Time.Mono.t
-    ; domain_mgr: #Eio.Domain_manager.t
-    ; .. >
-    as
-    'a
-
-  let run ~sw (env : _ env) node_id config period resolvers client_msgs
+  let run ~sw env node_id config period resolvers client_msgs
       client_resps port =
     TRACE.run_commit := true ;
     TRACE.run_ex_in := true ;
@@ -243,14 +237,14 @@ module Make (C : Consensus_intf.S) = struct
             @@ fun sw ->
             let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
             let sock =
-              Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw env#net addr
+              Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw (Eio.Stdenv.net env) addr
             in
             traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
             Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
               (accept_handler internal_streams) ) ) ;
     let resolvers = resolver_handshake node_id resolvers in
-    run_inter ~sw env#clock node_id config period resolvers client_msgs
-      client_resps internal_streams
+    run_inter ~sw (Eio.Stdenv.clock env) node_id config period resolvers client_msgs client_resps
+      internal_streams
 end
 
 module Test = struct

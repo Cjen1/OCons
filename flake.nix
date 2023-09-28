@@ -49,12 +49,13 @@
           ocaml-lsp-server = "*";
           ocamlformat = "0.25.1";
           utop = "*";
+          memtrace = "*";
         };
         repos = [
           opam-repository
         ];
         query = devPackagesQuery // {
-          ocaml-base-compiler = "5.0.0";
+          ocaml-base-compiler = "5.1.0";
           ocamlfind = "1.9.5";
         };
         scope = on.buildDuneProject { inherit repos; } "ocons" ./. query;

@@ -1,6 +1,6 @@
 type t
 
-type resolver = Eio.Switch.t -> Eio.Flow.two_way
+type resolver = Eio.Switch.t -> Eio.Flow.two_way_ty Eio.Flow.two_way
 
 val is_open : t -> bool
 

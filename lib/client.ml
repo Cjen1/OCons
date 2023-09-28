@@ -39,7 +39,7 @@ type request_state =
 
 type t =
   { cmgr: cmgr
-  ; clock: Eio.Time.clock
+  ; clock: float Eio.Time.clock_ty r
   ; request_state: (command_id, request_state) Hashtbl.t
   ; next_id: unit -> command_id }
 
