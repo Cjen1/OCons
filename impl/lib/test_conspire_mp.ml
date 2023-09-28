@@ -10,10 +10,12 @@ open MP.Types
 let action_pp = Ocons_core.Consensus_intf.action_pp ~pp_msg:pp_message
 
 let make_clock term clocks =
+  (*
   let clock =
     Map.of_alist_exn (module Int) (List.mapi clocks ~f:(fun idx v -> (idx, v)))
   in
-  Conspire_command_tree.VectorClock.{term; clock}
+  *)
+  Conspire_command_tree.VectorClock.{term; clock= clocks}
 
 let c1 = make_config ~node_id:0 ~replica_ids:[0] ~fd_timeout:2 ()
 
@@ -101,7 +103,8 @@ let%expect_test "e2e commit" =
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -165,7 +168,8 @@ let%expect_test "e2e commit" =
   in
   let t1, actions = Impl.advance t1 (Recv (Ok update, 0)) in
   print t1 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -208,7 +212,8 @@ let%expect_test "e2e commit" =
   in
   let t1, actions = Impl.advance t1 (Recv (Ok t0_vote, 0)) in
   print t1 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -245,7 +250,8 @@ let%expect_test "e2e commit" =
                        })] |}] ;
   let t0, actions = Impl.advance t0 (Recv (Ok t0_vote, 1)) in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -278,7 +284,8 @@ let%expect_test "e2e commit" =
     actions: [] |}] ;
   let t0, actions = Impl.advance t0 (Recv (Ok t0_vote, 2)) in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -335,7 +342,8 @@ let%expect_test "e2e conflict resolution" =
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c0])) in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -411,7 +419,8 @@ let%expect_test "e2e conflict resolution" =
          , 1 ) )
   in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -476,7 +485,8 @@ let%expect_test "e2e conflict resolution" =
   in
   (* NOTE does not replicate c1 branch of ctree since it is not in vval *)
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -545,7 +555,8 @@ let%expect_test "e2e conflict resolution" =
   in
   (* ---- Now sufficient conflicts to recover *)
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -605,7 +616,8 @@ let%expect_test "message loss" =
   (* this message is lost *)
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c0])) in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -690,7 +702,8 @@ let%expect_test "message loss" =
          , 3 ) )
   in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -738,7 +751,8 @@ let%expect_test "message loss" =
                        })] |}] ;
   let t0, actions = Impl.advance t0 (Commands (c1 |> Iter.singleton)) in
   print t0 actions ;
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -795,24 +809,25 @@ let%expect_test "message loss" =
                        (Some { vval = 0:[2,0,0,0]; vterm = 0; term = 0;
                                commit_index = 0:[1,0,0,0] })
                        })] |}] ;
-  let c1_clock = make_clock 0 [2;0;0;0] in
+  let c1_clock = make_clock 0 [2; 0; 0; 0] in
   let update =
     Ok
-    MP.Conspire.Rep.
-      { ctree=
-          Some
-            { new_head= make_clock 0 [0; 1; 0; 0]
-            ; extension= [(1, make_clock 0 [1; 0; 0; 0], [c1])] }
-      ; cons=
-          Some
-            { term= 0
-            ; vterm= 0
-            ; vval= c1_clock
-            ; commit_index= make_clock 0 [0; 0; 0; 0] } }
+      MP.Conspire.Rep.
+        { ctree=
+            Some
+              { new_head= make_clock 0 [0; 1; 0; 0]
+              ; extension= [(1, make_clock 0 [1; 0; 0; 0], [c1])] }
+        ; cons=
+            Some
+              { term= 0
+              ; vterm= 0
+              ; vval= c1_clock
+              ; commit_index= make_clock 0 [0; 0; 0; 0] } }
   in
   let t1, actions = Impl.advance t1 (Recv (update, 0)) in
-  print t1 actions;
-  [%expect{|
+  print t1 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -836,11 +851,14 @@ let%expect_test "message loss" =
          { Conspire_mp.FailureDetector.state = [(0: 2)(2: 2)(3: 2)]; timeout = 2
            };
          stall_checker = <opaque> }
-    actions: [Send(0,{ commit = 0:[0,0,0,0] })] |}];
-    let t0, actions = Impl.advance t0 (Recv (Error MP.Conspire.Rep.{commit = root_clock}, 1)) in
-  print t0 actions;
+    actions: [Send(0,{ commit = 0:[0,0,0,0] })] |}] ;
+  let t0, actions =
+    Impl.advance t0 (Recv (Error MP.Conspire.Rep.{commit= root_clock}, 1))
+  in
+  print t0 actions ;
   (* note extension goes from the erroneous commit index *)
-  [%expect{|
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =

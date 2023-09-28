@@ -10,10 +10,12 @@ let nnodes = 3
 let print_tree = Fmt.pr "%a" CTree.pp
 
 let make_clock term clocks =
+  (*
   let clock =
     Map.of_alist_exn (module Int) (List.mapi clocks ~f:(fun idx v -> (idx, v)))
   in
-  VectorClock.{term; clock}
+  *)
+  VectorClock.{term; clock= clocks}
 
 let%expect_test "create_and_add" =
   let ct = CTree.create [0; 1; 2] 0 in
