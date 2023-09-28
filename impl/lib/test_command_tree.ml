@@ -16,11 +16,10 @@ let make_clock term clocks =
   VectorClock.{term; clock}
 
 let%expect_test "create_and_add" =
-  let ct = CTree.create [0;1;2] 0 in
+  let ct = CTree.create [0; 1; 2] 0 in
   print_tree ct ;
-  [%expect
-    {|
-    { ctree = [(0:[0,0,0], Root)] } |}] ;
+  [%expect {|
+    { ctree = [(0:[0,0,0]: Root)]; root = 0:[0,0,0] } |}] ;
   let ct, _ =
     CTree.addv ct ~node:0 ~parent:(make_clock 0 [0; 0; 0]) (Iter.of_list [1; 2])
   in
@@ -28,13 +27,16 @@ let%expect_test "create_and_add" =
   [%expect
     {|
   { ctree =
-    [(0:[0,0,0], Root): (0:[1,0,0], (1, 0:[0,0,0], 1)):
-     (0:[2,0,0], (2, 0:[1,0,0], 2))]
-    } |}] ;
-  let ct , _=
+    [(0:[0,0,0]: Root);
+     (0:[1,0,0]:
+      { node = (1, 0:[0,0,0], 1); parent = <opaque>; vc = 0:[1,0,0] });
+     (0:[2,0,0]:
+      { node = (2, 0:[1,0,0], 2); parent = <opaque>; vc = 0:[2,0,0] })];
+    root = 0:[0,0,0] } |}] ;
+  let ct, _ =
     CTree.addv ct ~node:1 ~parent:(make_clock 0 [1; 0; 0]) (Iter.of_list [3])
   in
-  let ct, _=
+  let ct, _ =
     CTree.addv ct ~node:1
       ~parent:(make_clock 0 [1; 1; 0])
       (Iter.of_list [4]) ~term:1
@@ -47,13 +49,19 @@ let%expect_test "create_and_add" =
   [%expect
     {|
   { ctree =
-    [(0:[0,0,0], Root): (0:[1,0,0], (1, 0:[0,0,0], 1)):
-     (0:[1,1,0], (2, 0:[1,0,0], 3)): (0:[2,0,0], (2, 0:[1,0,0], 2)):
-     (1:[1,2,0], (3, 0:[1,1,0], 4))]
-    } |}]
+    [(0:[0,0,0]: Root);
+     (0:[1,0,0]:
+      { node = (1, 0:[0,0,0], 1); parent = <opaque>; vc = 0:[1,0,0] });
+     (0:[1,1,0]:
+      { node = (2, 0:[1,0,0], 3); parent = <opaque>; vc = 0:[1,1,0] });
+     (0:[2,0,0]:
+      { node = (2, 0:[1,0,0], 2); parent = <opaque>; vc = 0:[2,0,0] });
+     (1:[1,2,0]:
+      { node = (3, 0:[1,1,0], 4); parent = <opaque>; vc = 1:[1,2,0] })];
+    root = 0:[0,0,0] } |}]
 
 let%expect_test "prefix" =
-  let ct = CTree.create [0;1;2] 0 in
+  let ct = CTree.create [0; 1; 2] 0 in
   let ct, _ =
     CTree.addv ct ~node:0 ~parent:(make_clock 0 [0; 0; 0]) (Iter.of_list [1; 2])
   in
@@ -85,14 +93,15 @@ let%expect_test "prefix" =
     0,200 < 1,120 false |}]
 
 let%expect_test "make_update" =
-  let ct = CTree.create [0;1;2] 0 in
+  let ct = CTree.create [0; 1; 2] 0 in
   let ct, _ =
     CTree.addv ct ~node:0 ~parent:(make_clock 0 [0; 0; 0]) (Iter.of_list [1; 2])
   in
   let partial_tree = ct in
-  Fmt.pr "%a@." (Conspire_command_tree.set_pp VectorClock.pp) (Map.key_set ct.ctree) ;
-  [%expect
-    {|
+  Fmt.pr "%a@."
+    (Conspire_command_tree.set_pp VectorClock.pp)
+    (Map.key_set ct.ctree) ;
+  [%expect {|
     [0:[0,0,0], 0:[1,0,0], 0:[2,0,0]] |}] ;
   let ct, _ =
     CTree.addv ct ~node:1 ~parent:(make_clock 0 [1; 0; 0]) (Iter.of_list [3])
@@ -113,7 +122,7 @@ let%expect_test "make_update" =
   { new_head = 1:[1,2,0]; extension = [(2, 0:[1,0,0], 3); (3, 0:[1,1,0], 4)] } |}]
 
 let%expect_test "sufficient_prefix" =
-  let ct = CTree.create [0;1;2] 0 in
+  let ct = CTree.create [0; 1; 2] 0 in
   let ct, _ =
     CTree.addv ct ~node:0 ~parent:(make_clock 0 [0; 0; 0]) (Iter.of_list [1; 2])
   in
@@ -134,17 +143,15 @@ let%expect_test "sufficient_prefix" =
    * 0,000 - 0,100 - 0,200
    *               - 0,110 - 1,120
    *                       - 0,111
-  *)
-  let clks = [
-    make_clock 0 [2;0;0];
-    make_clock 1 [1;2;0];
-    make_clock 0 [1;1;1];
-  ] in
+   *)
+  let clks =
+    [make_clock 0 [2; 0; 0]; make_clock 1 [1; 2; 0]; make_clock 0 [1; 1; 1]]
+  in
   let x = CTree.greatest_sufficiently_common_prefix ct clks 2 in
-  Fmt.pr "%a@." VectorClock.pp x;
-  [%expect{|
-    0:[1,1,0] |}];
+  Fmt.pr "%a@." (Fmt.option ~none:(Fmt.any "none") VectorClock.pp) x ;
+  [%expect {|
+    0:[1,1,0] |}] ;
   let x = CTree.greatest_sufficiently_common_prefix ct clks 3 in
-  Fmt.pr "%a@." VectorClock.pp x;
-  [%expect{|
-    0:[1,0,0] |}];
+  Fmt.pr "%a@." (Fmt.option ~none:(Fmt.any "none") VectorClock.pp) x ;
+  [%expect {|
+    0:[1,0,0] |}]

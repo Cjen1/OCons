@@ -59,9 +59,11 @@ module Replication = struct
   [@@deriving show {with_path= false}]
 
   let recv_update t src update =
-    t.store <- CTree.apply_update t.store update |> Result.ok |> Option.value_exn ;
+    t.store <-
+      CTree.apply_update t.store update |> Result.ok |> Option.value_exn ;
     let remote = Map.find_exn t.remotes src in
-    remote.expected <- CTree.apply_update remote.expected update|> Result.ok |> Option.value_exn 
+    remote.expected <-
+      CTree.apply_update remote.expected update |> Result.ok |> Option.value_exn
 
   let get_ctree_msg t dst =
     let remote = Map.find_exn t.remotes dst in
@@ -184,7 +186,9 @@ struct
         let update = R.get_ctree_msg t.rep dst in
         Option.iter update ~f:(fun update ->
             let remote = Map.find_exn t.rep.remotes dst in
-            remote.expected <- CTree.apply_update remote.expected update |> Result.ok |> Option.value_exn ;
+            remote.expected <-
+              CTree.apply_update remote.expected update
+              |> Result.ok |> Option.value_exn ;
             Act.send dst (GlobalTypes.CTreeUpdate update) ) ) ;
     Option.iter (R.get_cons_update ~force t.rep) ~f:(fun up ->
         Act.broadcast (ConsUpdate up) ) ;
@@ -235,24 +239,26 @@ struct
         assert (msg_term < local.term || msg_term < local.vterm)
 
   let check_commit t =
+    let old_ci = t.rep.state.commit_index in
     let vterm_votes =
-      List.filter_map t.config.other_replica_ids ~f:(fun nid ->
-          let s = Map.find_exn t.other_nodes nid in
-          if s.vterm = t.rep.state.vterm then Some s else None )
+      List.filter_map t.config.replica_ids ~f:(fun nid ->
+          if nid = t.config.node_id then Some t.rep.state.vval
+          else
+            let s = Map.find_exn t.other_nodes nid in
+            if s.vterm = t.rep.state.vterm then Some s.vval else None )
     in
-    let voted_path =
-      CTree.path_between t.rep.store t.rep.state.commit_index t.rep.state.vval
-      |> List.tl_exn
+    let new_commit =
+      CTree.greatest_sufficiently_common_prefix t.rep.store vterm_votes
+        t.config.quorum_size
     in
-    List.iter voted_path ~f:(fun vc ->
-        let votes =
-          List.count vterm_votes ~f:(fun s ->
-              CTree.prefix t.rep.store vc s.vval )
-        in
-        if votes + 1 >= t.config.quorum_size then (
-          t.rep.state.commit_index <- vc ;
-          Option.iter (CTree.get_value t.rep.store vc) ~f:(Log.add t.commit_log)
-          ) )
+    match new_commit with
+    | None ->
+        ()
+    | Some ci ->
+        (* can update since once committed, never overwritten *)
+        t.rep.state.commit_index <- ci ;
+        let cis = CTree.path_between t.rep.store old_ci ci in
+        List.iter cis ~f:(fun (_, _, v) -> Log.add t.commit_log v)
 
   let check_conflict_recovery t =
     let votes =
@@ -301,7 +307,9 @@ struct
         in
         let max_length_o4_vote =
           vterm_votes
-          |> Iter.filter (fun s -> CTree.prefix t.rep.store o4_prefix s.vval)
+          |> Iter.filter (fun s ->
+                 Option.value_map o4_prefix ~default:true ~f:(fun o4_prefix ->
+                     CTree.prefix t.rep.store o4_prefix s.vval ) )
           |> Iter.max_exn ~lt:(fun a b ->
                  CTree.get_idx t.rep.store a.vval
                  < CTree.get_idx t.rep.store b.vval )
@@ -317,7 +325,8 @@ struct
           Queue.clear t.command_queue
         in
         R.add_commands t.rep ~node:t.config.node_id
-          (command_iter |> Iter.to_list |> function [] -> Iter.empty | ls -> Iter.singleton ls) ;
+          ( command_iter |> Iter.to_list
+          |> function [] -> Iter.empty | ls -> Iter.singleton ls ) ;
         t.rep.change_flag <- true )
 
   let failure_detector_update t (event : message event) =

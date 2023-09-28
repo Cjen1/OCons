@@ -25,6 +25,7 @@ depends: [
   "tdigest"
   "irmin"
   "irmin-containers"
+  "core_bench"
   "odoc" {with-doc}
 ]
 build: [

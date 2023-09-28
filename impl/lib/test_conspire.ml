@@ -33,8 +33,8 @@ let%expect_test "local_commit" =
     {|
       t: { rep =
            { state = { vval = 0:[0]; vterm = 0; term = 0; commit_index = 0:[0] };
-             store = { ctree = [(0:[0], Root)] }; change_flag = false; remotes = []
-             };
+             store = { ctree = [(0:[0]: Root)]; root = 0:[0] };
+             change_flag = false; remotes = [] };
            other_nodes = []; failure_detector = {}; config = <opaque>;
            command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
       actions: [] |}] ;
@@ -46,8 +46,12 @@ let%expect_test "local_commit" =
       t: { rep =
            { state = { vval = 0:[1]; vterm = 0; term = 0; commit_index = 0:[1] };
              store =
-             { ctree = [(0:[0], Root): (0:[1], (1, 0:[0], [Command(Read c1, 1)]))]
-               };
+             { ctree =
+               [(0:[0]: Root);
+                (0:[1]:
+                 { node = (1, 0:[0], [Command(Read c1, 1)]); parent = <opaque>;
+                   vc = 0:[1] })];
+               root = 0:[0] };
              change_flag = false; remotes = [] };
            other_nodes = []; failure_detector = {}; config = <opaque>;
            command_queue = <opaque>; stall_checker = <opaque>;
@@ -65,9 +69,14 @@ let%expect_test "local_commit" =
            { state = { vval = 0:[2]; vterm = 0; term = 0; commit_index = 0:[2] };
              store =
              { ctree =
-               [(0:[0], Root): (0:[1], (1, 0:[0], [Command(Read c1, 1)])):
-                (0:[2], (2, 0:[1], [Command(Read c2, 3), Command(Read c3, 2)]))]
-               };
+               [(0:[0]: Root);
+                (0:[1]:
+                 { node = (1, 0:[0], [Command(Read c1, 1)]); parent = <opaque>;
+                   vc = 0:[1] });
+                (0:[2]:
+                 { node = (2, 0:[1], [Command(Read c2, 3), Command(Read c3, 2)]);
+                   parent = <opaque>; vc = 0:[2] })];
+               root = 0:[0] };
              change_flag = false; remotes = [] };
            other_nodes = []; failure_detector = {}; config = <opaque>;
            command_queue = <opaque>; stall_checker = <opaque>;
@@ -89,44 +98,46 @@ let%expect_test "e2e commit" =
   print t1 actions ;
   [%expect
     {|
-      t: { rep =
-           { state =
-             { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-               };
-             store =
-             { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-               };
-             change_flag = false;
-             remotes =
-             [(0, { expected = <opaque> }): (2, { expected = <opaque> }):
-              (3, { expected = <opaque> })]
+    t: { rep =
+         { state =
+           { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              };
-           other_nodes =
-           [(0,
-             { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-               }):
-            (2,
-             { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-               }):
-            (3,
-             { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-               })];
-           failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
-           command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
-      actions: [Send(0,(CTreeUpdate
-                          { new_head = 0:[0,1,0,0];
-                            extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
-                Send(2,(CTreeUpdate
-                          { new_head = 0:[0,1,0,0];
-                            extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
-                Send(3,(CTreeUpdate
-                          { new_head = 0:[0,1,0,0];
-                            extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
-                Broadcast((ConsUpdate
-                             { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
-                               commit_index = 0:[0,0,0,0] }))] |}] ;
+           store =
+           { ctree =
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] })];
+             root = 0:[0,0,0,0] };
+           change_flag = false;
+           remotes =
+           [(0: { expected = <opaque> }); (2: { expected = <opaque> });
+            (3: { expected = <opaque> })]
+           };
+         other_nodes =
+         [(0:
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             });
+          (2:
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             });
+          (3:
+           { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
+             })];
+         failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
+         command_queue = <opaque>; stall_checker = <opaque>; commit_log = [] }
+    actions: [Send(0,(CTreeUpdate
+                        { new_head = 0:[0,1,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+              Send(2,(CTreeUpdate
+                        { new_head = 0:[0,1,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+              Send(3,(CTreeUpdate
+                        { new_head = 0:[0,1,0,0];
+                          extension = [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] }))
+              Broadcast((ConsUpdate
+                           { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
+                             commit_index = 0:[0,0,0,0] }))] |}] ;
   let update =
     CTreeUpdate
       { new_head= make_clock 0 [0; 1; 0; 0]
@@ -142,22 +153,24 @@ let%expect_test "e2e commit" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(0, { expected = <opaque> }): (1, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(0: { expected = <opaque> }); (1: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(0,
+         [(0:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (1,
+             });
+          (1:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {1: 2, 3: 2, 0: 2}; config = <opaque>;
@@ -180,22 +193,24 @@ let%expect_test "e2e commit" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(0, { expected = <opaque> }): (1, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(0: { expected = <opaque> }); (1: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(0,
+         [(0:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (1,
+             });
+          (1:
            { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {1: 2, 3: 2, 0: 2}; config = <opaque>;
@@ -219,22 +234,24 @@ let%expect_test "e2e commit" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(0, { expected = <opaque> }): (2, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(0: { expected = <opaque> }); (2: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(0,
+         [(0:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (2,
+             });
+          (2:
            { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
@@ -250,22 +267,24 @@ let%expect_test "e2e commit" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(0, { expected = <opaque> }): (2, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(0: { expected = <opaque> }); (2: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(0,
+         [(0:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (2,
+             });
+          (2:
            { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {3: 2, 2: 2, 0: 2}; config = <opaque>;
@@ -291,22 +310,24 @@ let%expect_test "e2e conflict resolution" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[1,0,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                 parent = <opaque>; vc = 0:[1,0,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(1: { expected = <opaque> }); (2: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(1,
+         [(1:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (2,
+             });
+          (2:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
@@ -348,23 +369,27 @@ let%expect_test "e2e conflict resolution" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
-              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 2)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] });
+              (0:[1,0,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                 parent = <opaque>; vc = 0:[1,0,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(1: { expected = <opaque> }); (2: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(1,
+         [(1:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (2,
+             });
+          (2:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
@@ -395,23 +420,27 @@ let%expect_test "e2e conflict resolution" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
-              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 2)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] });
+              (0:[1,0,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                 parent = <opaque>; vc = 0:[1,0,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(1: { expected = <opaque> }); (2: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(1,
+         [(1:
            { vval = 0:[0,1,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (2,
+             });
+          (2:
            { vval = 0:[1,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,0,0,0]; vterm = 0; term = 0; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;
@@ -451,23 +480,27 @@ let%expect_test "e2e conflict resolution" =
              };
            store =
            { ctree =
-             [(0:[0,0,0,0], Root):
-              (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
-              (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-             };
+             [(0:[0,0,0,0]: Root);
+              (0:[0,1,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c1, 2)]);
+                 parent = <opaque>; vc = 0:[0,1,0,0] });
+              (0:[1,0,0,0]:
+               { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                 parent = <opaque>; vc = 0:[1,0,0,0] })];
+             root = 0:[0,0,0,0] };
            change_flag = false;
            remotes =
-           [(1, { expected = <opaque> }): (2, { expected = <opaque> }):
-            (3, { expected = <opaque> })]
+           [(1: { expected = <opaque> }); (2: { expected = <opaque> });
+            (3: { expected = <opaque> })]
            };
          other_nodes =
-         [(1,
+         [(1:
            { vval = 0:[0,1,0,0]; vterm = 0; term = 1; commit_index = 0:[0,0,0,0]
-             }):
-          (2,
+             });
+          (2:
            { vval = 0:[1,0,0,0]; vterm = 0; term = 1; commit_index = 0:[0,0,0,0]
-             }):
-          (3,
+             });
+          (3:
            { vval = 0:[0,1,0,0]; vterm = 0; term = 1; commit_index = 0:[0,0,0,0]
              })];
          failure_detector = {1: 2, 3: 2, 2: 2}; config = <opaque>;

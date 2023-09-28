@@ -171,32 +171,26 @@ module Make (Value : Value) = struct
         assert (msg_term < local.term || msg_term < local.vterm)
 
   let check_commit t =
+    let old_ci = t.rep.state.commit_index in
     let vterm_votes =
-      List.filter_map t.config.other_replica_ids ~f:(fun nid ->
-          let s = Map.find_exn t.other_nodes_state nid in
-          if s.vterm = t.rep.state.vterm then Some s else None )
+      List.filter_map t.config.replica_ids ~f:(fun nid ->
+          if nid = t.config.node_id then Some t.rep.state.vval
+          else
+            let s = Map.find_exn t.other_nodes_state nid in
+            if s.vterm = t.rep.state.vterm then Some s.vval else None )
     in
-    let voted_path =
-      CTree.path_between t.rep.store t.rep.state.commit_index t.rep.state.vval
-      |> List.tl_exn
+    let new_commit =
+      CTree.greatest_sufficiently_common_prefix t.rep.store vterm_votes
+        (t.config.quorum_size)
     in
-    let rec aux vp =
-      match vp with
-      | [] ->
-          ()
-      | vc :: vp ->
-          let votes =
-            List.count vterm_votes ~f:(fun s ->
-                CTree.prefix t.rep.store vc s.vval )
-          in
-          if votes + 1 >= t.config.quorum_size then (
-            t.rep.state.commit_index <- vc ;
-            Option.iter
-              (CTree.get_value t.rep.store vc)
-              ~f:(Log.add t.commit_log) ;
-            aux vp )
-    in
-    aux voted_path
+    match new_commit with
+    | None ->
+        ()
+    | Some ci ->
+        (* can update since once committed, never overwritten *)
+        t.rep.state.commit_index <- ci ;
+        let cis = CTree.path_between t.rep.store old_ci ci in
+        List.iter cis ~f:(fun (_, _, v) -> Log.add t.commit_log v)
 
   let check_conflict_recovery t =
     let votes =
@@ -232,7 +226,9 @@ module Make (Value : Value) = struct
         in
         let max_length_o4_vote =
           vterm_votes
-          |> Iter.filter (fun s -> CTree.prefix t.rep.store o4_prefix s.vval)
+          |> Iter.filter (fun s ->
+                 Option.value_map o4_prefix ~default:true ~f:(fun o4_prefix ->
+                     CTree.prefix t.rep.store o4_prefix s.vval ) )
           |> Iter.max_exn ~lt:(fun a b ->
                  CTree.get_idx t.rep.store a.vval
                  < CTree.get_idx t.rep.store b.vval )
@@ -244,16 +240,6 @@ module Make (Value : Value) = struct
   let add_commands t (ci : Value.t Iter.t) =
     Rep.add_commands t.rep ~node:t.config.node_id ci ;
     check_commit t
-
-  let path_invariant ctree v =
-    let rec valid_value curr =
-      match CTree.get_parent ctree curr with
-      | par when [%equal: Conspire_command_tree.VectorClock.t] par curr ->
-          true
-      | par ->
-          valid_value par
-    in
-    valid_value v
 
   let handle_steady_state t src (msg : Rep.success) =
     let option_bind o ~f = Option.value_map o ~default:(Ok ()) ~f in

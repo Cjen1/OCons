@@ -1,14 +1,3 @@
-(*
-open! Core
-open! Types
-open! Utils
-open! Actions_f
-module Imp = ImperativeActions (Conspire.Types)
-module Impl = Conspire.Make (Imp)
-open! Conspire.Types
-open! Impl
-open! Conspire.GlobalTypes
-*)
 open! Core
 module MP = Conspire_mp
 module Imp = Actions_f.ImperativeActions (MP.Types)
@@ -45,7 +34,8 @@ let%expect_test "local_commit" =
            conspire =
            { rep =
              { state = { vval = 0:[0]; vterm = 0; term = 0; commit_index = 0:[0] };
-               store = { ctree = [(0:[0], Root)] }; remotes = <opaque> };
+               store = { ctree = [(0:[0]: Root)]; root = 0:[0] };
+               remotes = <opaque> };
              other_nodes_state = []; config = <opaque>; commit_log = [] };
            failure_detector =
            { Conspire_mp.FailureDetector.state = []; timeout = 2 };
@@ -62,7 +52,11 @@ let%expect_test "local_commit" =
              { state = { vval = 0:[1]; vterm = 0; term = 0; commit_index = 0:[1] };
                store =
                { ctree =
-                 [(0:[0], Root): (0:[1], (1, 0:[0], [Command(Read c1, 1)]))] };
+                 [(0:[0]: Root);
+                  (0:[1]:
+                   { node = (1, 0:[0], [Command(Read c1, 1)]); parent = <opaque>;
+                     vc = 0:[1] })];
+                 root = 0:[0] };
                remotes = <opaque> };
              other_nodes_state = []; config = <opaque>;
              commit_log = [[Command(Read c1, 1)]] };
@@ -81,9 +75,14 @@ let%expect_test "local_commit" =
              { state = { vval = 0:[2]; vterm = 0; term = 0; commit_index = 0:[2] };
                store =
                { ctree =
-                 [(0:[0], Root): (0:[1], (1, 0:[0], [Command(Read c1, 1)])):
-                  (0:[2], (2, 0:[1], [Command(Read c2, 3); Command(Read c3, 2)]))]
-                 };
+                 [(0:[0]: Root);
+                  (0:[1]:
+                   { node = (1, 0:[0], [Command(Read c1, 1)]); parent = <opaque>;
+                     vc = 0:[1] });
+                  (0:[2]:
+                   { node = (2, 0:[1], [Command(Read c2, 3); Command(Read c3, 2)]);
+                     parent = <opaque>; vc = 0:[2] })];
+                 root = 0:[0] };
                remotes = <opaque> };
              other_nodes_state = []; config = <opaque>;
              commit_log =
@@ -102,59 +101,60 @@ let%expect_test "e2e commit" =
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
   print t0 actions ;
-  [%expect
-    {|
-      t: { config = <opaque>;
-           conspire =
-           { rep =
-             { state =
-               { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-                 commit_index = 0:[0,0,0,0] };
-               store =
-               { ctree =
-                 [(0:[0,0,0,0], Root):
-                  (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-                 };
-               remotes = <opaque> };
-             other_nodes_state =
-             [(1,
-               { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-                 commit_index = 0:[0,0,0,0] }):
-              (2,
-               { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-                 commit_index = 0:[0,0,0,0] }):
-              (3,
-               { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-                 commit_index = 0:[0,0,0,0] })];
-             config = <opaque>; commit_log = [] };
-           failure_detector =
-           { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-             };
-           stall_checker = <opaque> }
-      actions: [Send(1,{ ctree =
-                         (Some { new_head = 0:[1,0,0,0];
-                                 extension =
-                                 [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] });
-                         cons =
-                         (Some { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-                                 commit_index = 0:[0,0,0,0] })
-                         })
-                Send(2,{ ctree =
-                         (Some { new_head = 0:[1,0,0,0];
-                                 extension =
-                                 [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] });
-                         cons =
-                         (Some { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-                                 commit_index = 0:[0,0,0,0] })
-                         })
-                Send(3,{ ctree =
-                         (Some { new_head = 0:[1,0,0,0];
-                                 extension =
-                                 [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] });
-                         cons =
-                         (Some { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-                                 commit_index = 0:[0,0,0,0] })
-                         })] |}] ;
+  [%expect{|
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
+               commit_index = 0:[0,0,0,0] };
+             store =
+             { ctree =
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
+             remotes = <opaque> };
+           other_nodes_state =
+           [(1:
+             { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
+               commit_index = 0:[0,0,0,0] });
+            (2:
+             { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
+               commit_index = 0:[0,0,0,0] });
+            (3:
+             { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
+               commit_index = 0:[0,0,0,0] })];
+           config = <opaque>; commit_log = [] };
+         failure_detector =
+         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
+           };
+         stall_checker = <opaque> }
+    actions: [Send(1,{ ctree =
+                       (Some { new_head = 0:[1,0,0,0];
+                               extension =
+                               [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] });
+                       cons =
+                       (Some { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
+                               commit_index = 0:[0,0,0,0] })
+                       })
+              Send(2,{ ctree =
+                       (Some { new_head = 0:[1,0,0,0];
+                               extension =
+                               [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] });
+                       cons =
+                       (Some { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
+                               commit_index = 0:[0,0,0,0] })
+                       })
+              Send(3,{ ctree =
+                       (Some { new_head = 0:[1,0,0,0];
+                               extension =
+                               [(1, 0:[0,0,0,0], [Command(Read c1, 1)])] });
+                       cons =
+                       (Some { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
+                               commit_index = 0:[0,0,0,0] })
+                       })] |}] ;
   let update =
     MP.Conspire.Rep.
       { ctree=
@@ -165,8 +165,7 @@ let%expect_test "e2e commit" =
   in
   let t1, actions = Impl.advance t1 (Recv (Ok update, 0)) in
   print t1 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -175,18 +174,20 @@ let%expect_test "e2e commit" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(0,
+           [(0:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -207,8 +208,7 @@ let%expect_test "e2e commit" =
   in
   let t1, actions = Impl.advance t1 (Recv (Ok t0_vote, 0)) in
   print t1 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -217,18 +217,20 @@ let%expect_test "e2e commit" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(0,
+           [(0:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -243,8 +245,7 @@ let%expect_test "e2e commit" =
                        })] |}] ;
   let t0, actions = Impl.advance t0 (Recv (Ok t0_vote, 1)) in
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -253,18 +254,20 @@ let%expect_test "e2e commit" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -275,8 +278,7 @@ let%expect_test "e2e commit" =
     actions: [] |}] ;
   let t0, actions = Impl.advance t0 (Recv (Ok t0_vote, 2)) in
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -285,18 +287,20 @@ let%expect_test "e2e commit" =
                commit_index = 0:[1,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [[Command(Read c1, 1)]] };
@@ -331,8 +335,7 @@ let%expect_test "e2e conflict resolution" =
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c0])) in
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -341,18 +344,20 @@ let%expect_test "e2e conflict resolution" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -406,8 +411,7 @@ let%expect_test "e2e conflict resolution" =
          , 1 ) )
   in
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -416,19 +420,23 @@ let%expect_test "e2e conflict resolution" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[0,1,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 2)]);
+                   parent = <opaque>; vc = 0:[0,1,0,0] });
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -468,8 +476,7 @@ let%expect_test "e2e conflict resolution" =
   in
   (* NOTE does not replicate c1 branch of ctree since it is not in vval *)
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -478,19 +485,23 @@ let%expect_test "e2e conflict resolution" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[0,1,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 2)]);
+                   parent = <opaque>; vc = 0:[0,1,0,0] });
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -534,8 +545,7 @@ let%expect_test "e2e conflict resolution" =
   in
   (* ---- Now sufficient conflicts to recover *)
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -544,19 +554,23 @@ let%expect_test "e2e conflict resolution" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[0,1,0,0], (1, 0:[0,0,0,0], [Command(Read c1, 2)])):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[0,1,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c1, 2)]);
+                   parent = <opaque>; vc = 0:[0,1,0,0] });
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,1,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 1;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,1,0,0]; vterm = 0; term = 1;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -591,8 +605,7 @@ let%expect_test "message loss" =
   (* this message is lost *)
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c0])) in
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -601,18 +614,20 @@ let%expect_test "message loss" =
                commit_index = 0:[0,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -675,8 +690,7 @@ let%expect_test "message loss" =
          , 3 ) )
   in
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -685,18 +699,20 @@ let%expect_test "message loss" =
                commit_index = 0:[1,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
@@ -722,8 +738,7 @@ let%expect_test "message loss" =
                        })] |}] ;
   let t0, actions = Impl.advance t0 (Commands (c1 |> Iter.singleton)) in
   print t0 actions ;
-  [%expect
-    {|
+  [%expect{|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -732,19 +747,23 @@ let%expect_test "message loss" =
                commit_index = 0:[1,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)])):
-                (0:[2,0,0,0], (2, 0:[1,0,0,0], [Command(Read c1, 2)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] });
+                (0:[2,0,0,0]:
+                 { node = (2, 0:[1,0,0,0], [Command(Read c1, 2)]);
+                   parent = <opaque>; vc = 0:[2,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
@@ -800,15 +819,16 @@ let%expect_test "message loss" =
            { state =
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] };
-             store = { ctree = [(0:[0,0,0,0], Root)] }; remotes = <opaque> };
+             store = { ctree = [(0:[0,0,0,0]: Root)]; root = 0:[0,0,0,0] };
+             remotes = <opaque> };
            other_nodes_state =
-           [(0,
+           [(0:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [] };
@@ -829,19 +849,23 @@ let%expect_test "message loss" =
                commit_index = 0:[1,0,0,0] };
              store =
              { ctree =
-               [(0:[0,0,0,0], Root):
-                (0:[1,0,0,0], (1, 0:[0,0,0,0], [Command(Read c0, 1)])):
-                (0:[2,0,0,0], (2, 0:[1,0,0,0], [Command(Read c1, 2)]))]
-               };
+               [(0:[0,0,0,0]: Root);
+                (0:[1,0,0,0]:
+                 { node = (1, 0:[0,0,0,0], [Command(Read c0, 1)]);
+                   parent = <opaque>; vc = 0:[1,0,0,0] });
+                (0:[2,0,0,0]:
+                 { node = (2, 0:[1,0,0,0], [Command(Read c1, 2)]);
+                   parent = <opaque>; vc = 0:[2,0,0,0] })];
+               root = 0:[0,0,0,0] };
              remotes = <opaque> };
            other_nodes_state =
-           [(1,
+           [(1:
              { vval = 0:[0,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (2,
+               commit_index = 0:[0,0,0,0] });
+            (2:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
-               commit_index = 0:[0,0,0,0] }):
-            (3,
+               commit_index = 0:[0,0,0,0] });
+            (3:
              { vval = 0:[1,0,0,0]; vterm = 0; term = 0;
                commit_index = 0:[0,0,0,0] })];
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };

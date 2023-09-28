@@ -6,7 +6,8 @@ let map_pp kpp vpp : _ Map.t Fmt.t =
  fun ppf v ->
   Fmt.pf ppf "%a"
     Fmt.(
-      brackets @@ list ~sep:(Fmt.any ":@ ") @@ parens @@ pair ~sep:comma kpp vpp )
+      brackets @@ list ~sep:Fmt.semi @@ parens
+      @@ pair ~sep:(Fmt.any ":@ ") kpp vpp )
     (Map.to_alist v)
 
 let set_pp pp : _ Set.t Fmt.t =
@@ -97,43 +98,48 @@ module CommandTree (Value : Value) = struct
        Extensions to heads
   *)
 
-  (*  *)
-
   type node = int * VectorClock.t * Value.t [@@deriving show, bin_io]
 
-  type parent_clock_node = node [@@deriving show, bin_io]
-
-  type t =
-    { ctree: parent_clock_node option Map.M(VectorClock).t
-          [@printer
-            map_pp VectorClock.pp
-              (Fmt.option ~none:(Fmt.any "Root") pp_parent_clock_node)] }
+  type parent_ref_node =
+    {node: node; parent: parent_ref_node option [@opaque]; vc: VectorClock.t}
   [@@deriving show {with_path= false}]
 
-  let get_idx t clk =
-    match Map.find_exn t.ctree clk with None -> 0 | Some (idx, _, _) -> idx
+  type t =
+    { ctree: parent_ref_node option Map.M(VectorClock).t
+          [@printer
+            map_pp VectorClock.pp
+              (Fmt.option ~none:(Fmt.any "Root") pp_parent_ref_node)]
+    ; root: VectorClock.t }
+  [@@deriving show {with_path= false}]
+
+  let get_idx_of_node node =
+    match node with None -> 0 | Some {node= idx, _, _; _} -> idx
+
+  let get_idx t clk = Map.find_exn t.ctree clk |> get_idx_of_node
 
   let get_value t clk =
     match Map.find_exn t.ctree clk with
     | None ->
         None
-    | Some (_, _, v) ->
+    | Some {node= _, _, v; _} ->
         Some v
 
-  let get_parent t clock =
+  let get_parent_vc t clock =
     match Map.find_exn t.ctree clock with
     | None ->
         clock
-    | Some (_, parent, _) ->
+    | Some {node= _, parent, _; _} ->
         parent
+
+  let get t clock = Map.find_exn t.ctree clock
 
   let rec get_prev_term_clock t clock =
     match Map.find_exn t.ctree clock with
     | None ->
         None
-    | Some (_, parent, _) when parent.term < clock.term ->
+    | Some {node= _, parent, _; _} when parent.term < clock.term ->
         Some parent
-    | Some (_, parent, _) ->
+    | Some {node= _, parent, _; _} ->
         get_prev_term_clock t parent
 
   let rec prefix t (c1 : VectorClock.t) (c2 : VectorClock.t) =
@@ -157,7 +163,7 @@ module CommandTree (Value : Value) = struct
         assert (c1.term = c2.term) ;
         VectorClock.compare_clock_po c1 c2
 
-  type update = {new_head: VectorClock.t; extension: parent_clock_node list}
+  type update = {new_head: VectorClock.t; extension: node list}
   [@@deriving show {with_path= false}, bin_io]
 
   let apply_update t update =
@@ -170,19 +176,22 @@ module CommandTree (Value : Value) = struct
           Fmt.failwith "All updates should be non-empty"
       | (_, par, _) :: _ when not (Map.mem t.ctree par) ->
           Fmt.error_msg "Missing %a" VectorClock.pp par
-      | extension ->
-          let rec aux ctree (extension : parent_clock_node list) =
+      | (_, par, _) :: _ as extension ->
+          let rec aux (ctree : parent_ref_node option Map.M(VectorClock).t)
+              (extension : node list) parent =
             match extension with
             | [] ->
                 ctree
             | [a] ->
-                Map.set ctree ~key:update.new_head ~data:(Some a)
+                Map.set ctree ~key:update.new_head
+                  ~data:(Some {node= a; parent; vc= update.new_head})
             | a :: ((_, clk, _) :: _ as rem) ->
-                let ctree = Map.set ctree ~key:clk ~data:(Some a) in
-                aux ctree rem
+                let node = Some {node= a; parent; vc= clk} in
+                let ctree = Map.set ctree ~key:clk ~data:node in
+                aux ctree rem node
           in
-          let ctree = aux t.ctree extension in
-          Ok {ctree} )
+          let ctree = aux t.ctree extension (get t par) in
+          Ok {t with ctree} )
 
   let apply_update_exn t update =
     match apply_update t update with
@@ -205,26 +214,28 @@ module CommandTree (Value : Value) = struct
 
   let make_update t target_node (other : t) =
     let rec aux curr acc =
-      match Map.find_exn t.ctree curr with
+      match curr with
       | None ->
           acc
-      | Some ((_, c, _) as v) when Map.mem other.ctree c ->
-          v :: acc
-      | Some ((_, c, _) as v) ->
-          aux c (v :: acc)
+      | Some {vc; _} when Map.mem other.ctree vc ->
+          acc
+      | Some {parent; node; _} ->
+          aux parent (node :: acc)
     in
-    {new_head= target_node; extension= aux target_node []}
+    {new_head= target_node; extension= aux (get t target_node) []}
 
-  let rec copy_update src dst upto =
-    match Map.find_exn src.ctree upto with
-    | _ when Map.mem dst.ctree upto ->
-        dst
-    | None ->
-        (* root already there *)
-        dst
-    | Some (_, par, _) as v ->
-        let dctree' = Map.set dst.ctree ~key:upto ~data:v in
-        copy_update src {ctree= dctree'} par
+  let copy_update src dst (upto : VectorClock.t) =
+    let rec aux dsttree curr =
+      match curr with
+      | None ->
+          dsttree
+      | Some {vc; _} when Map.mem dst.ctree vc ->
+          dsttree
+      | Some {node= _; parent; vc} ->
+          let dctree' = Map.set dsttree ~key:vc ~data:curr in
+          aux dctree' parent
+    in
+    {dst with ctree= aux dst.ctree (get src upto)}
 
   let create nodes t0 =
     let root_clock : VectorClock.t =
@@ -235,63 +246,77 @@ module CommandTree (Value : Value) = struct
     let ctree =
       Map.empty (module VectorClock) |> Map.set ~key:root_clock ~data:None
     in
-    {ctree}
+    {ctree; root= root_clock}
 
+  (* finds the highest index where >= [threshold] of [clks] are the same *)
   let greatest_sufficiently_common_prefix t clks threshold =
-    (* reduces the maximum index by one *)
-    let prev clks =
-      let longest_idx =
-        List.fold clks ~init:(-1) ~f:(fun longest clk ->
-            max longest @@ get_idx t clk )
+    let hds = clks |> List.map ~f:(get t) in
+    let%map.Option maximum_possible_idx =
+      (* [4,3,2,1,0]. idx which ensure 3 exists geq = List.nth ls 2 *)
+      let hds =
+        hds
+        |> List.map ~f:get_idx_of_node
+        |> List.sort ~compare:(fun a b -> Int.neg @@ Int.compare a b)
       in
-      List.map clks ~f:(fun clk ->
-          if get_idx t clk >= longest_idx then get_parent t clk else clk )
+      List.nth hds (threshold - 1)
     in
-    let rec aux clks =
-      let sorted_clks = List.sort clks ~compare:[%compare: VectorClock.t] in
-      let max, count, _, _ =
-        List.fold sorted_clks
-          ~init:(List.hd_exn sorted_clks, 0, List.hd_exn sorted_clks, 0)
-          ~f:(fun (mv, mc, x, count) v ->
-            let x, count =
-              if [%equal: VectorClock.t] x v then (x, count + 1) else (v, 1)
-            in
-            let mv, mc = if count > mc then (x, count) else (mv, mc) in
-            (mv, mc, x, count) )
+    let filter_to_leq_idx idx node =
+      let rec aux node idx =
+        match node with
+        | None ->
+            None
+        | Some {parent; node= nidx, _, _; _} when nidx > idx ->
+            aux parent idx
+        | Some _ as node ->
+            node
       in
-      if count >= threshold then max else aux (prev clks)
+      aux node idx
     in
-    aux clks
+    let hds = Array.of_list hds in
+    let counts = Hashtbl.create ~size:(Array.length hds) (module VectorClock) in
+    let rec aux idx =
+      Hashtbl.clear counts ;
+      Array.map_inplace hds ~f:(filter_to_leq_idx idx) ;
+      Array.iter hds ~f:(function
+        | None ->
+            Hashtbl.incr counts t.root
+        | Some {vc; _} ->
+            Hashtbl.incr counts vc ) ;
+      let res =
+        Hashtbl.fold counts ~init:None ~f:(fun ~key ~data acc ->
+            match acc with
+            | Some _ ->
+                acc
+            | None when data >= threshold ->
+                Some key
+            | None ->
+                None )
+      in
+      match res with Some key -> key | None -> aux (idx - 1)
+    in
+    aux maximum_possible_idx
 
-  let mem t vc = Map.mem t.ctree vc
-
-  let path_between t rt hd : VectorClock.t list =
-    let rec aux vc acc =
-      match get_parent t vc with
-      | _ when [%equal: VectorClock.t] vc rt ->
-          vc :: acc
-      | par when [%equal: VectorClock.t] par vc ->
-          Fmt.failwith "%a not on path to %a" VectorClock.pp rt VectorClock.pp
-            vc
-      | par ->
-          aux par (vc :: acc)
+  let path_between t rt_vc hd_vc =
+    let rt, hd = (get t rt_vc, get t hd_vc) in
+    let rec aux curr acc : node list =
+      match (curr, rt) with
+      | None, Some _ ->
+          Fmt.invalid_arg "%a not on path to %a" VectorClock.pp rt_vc
+            VectorClock.pp hd_vc
+      | None, None ->
+          acc
+      | Some curr, Some rt when [%equal: VectorClock.t] curr.vc rt.vc ->
+          acc
+      | Some curr, _ ->
+          aux curr.parent (curr.node :: acc)
     in
     aux hd []
 
-  let just_path_to t tar =
-    let rec aux c acc =
-      match Map.find_exn t.ctree c with
-      | None ->
-          (c, None) :: acc
-      | Some (_, par, _) as n ->
-          aux par ((c, n) :: acc)
-    in
-    let path = aux tar [] in
-    {ctree= Map.of_alist_exn (module VectorClock) path}
+  let mem t vc = Map.mem t.ctree vc
 
   let tree_invariant t =
     let rec path_to_root t c acc =
-      let par = get_parent t c in
+      let par = get_parent_vc t c in
       match () with
       | _ when VectorClock.equal par c ->
           Set.add acc c
