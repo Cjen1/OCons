@@ -15,9 +15,64 @@ let set_pp pp : _ Set.t Fmt.t =
   Fmt.pf ppf "%a" Fmt.(brackets @@ list ~sep:comma @@ pp) (Set.to_list v)
 
 module VectorClock = struct
-  module T = struct
+  module T_list = struct
+    type t = {term: int; clock: int list}
+    [@@deriving sexp, bin_io, hash, compare]
+
+    let pp ppf t =
+      let open Fmt in
+      pf ppf "%d:%a" t.term (brackets @@ list ~sep:(any ",") @@ int) t.clock
+
+    let empty nodes term =
+      assert (
+        [%equal: int list]
+          (List.sort nodes ~compare:[%compare: int])
+          (List.init (List.length nodes) ~f:Fun.id) ) ;
+      {term; clock= List.map nodes ~f:(fun _ -> 0)}
+
+    let succ t ?(term = t.term) nid =
+      if term < t.term then
+        Fmt.invalid_arg "Term should monotonically increase but %d < %d" term
+          t.term
+      else
+        let clock =
+          List.mapi t.clock ~f:(fun id c -> if id = nid then c + 1 else c)
+        in
+        {term; clock}
+
+    let comparable a b =
+      let g, l =
+        List.fold2_exn a.clock b.clock ~init:(false, false)
+          ~f:(fun (g, l) a b -> (g || a > b, l || a < b))
+      in
+      a.term = b.term && not (g && l)
+
+    let leq a b =
+      a.term = b.term
+      && List.for_all2_exn a.clock b.clock ~f:(fun a b -> a <= b)
+
+    let compare_clock_po a b =
+      assert (a.term = b.term) ;
+      let gt, lt =
+        List.fold2_exn a.clock b.clock ~init:(false, false)
+          ~f:(fun (g, l) a b -> (g || a > b, l || a < b))
+      in
+      match (lt, gt) with
+      | true, true ->
+          None
+      | false, false ->
+          Some 0
+      | false, true ->
+          Some 1
+      | true, false ->
+          Some (-1)
+
+    let test_make_clock term clocks = {term; clock= clocks}
+  end
+
+  module T_map = struct
     type t = {term: int; clock: int Map.M(Int).t}
-    [@@deriving sexp, bin_io, compare, hash]
+    [@@deriving sexp, bin_io, hash, compare]
 
     let pp ppf t =
       let open Fmt in
@@ -42,46 +97,54 @@ module VectorClock = struct
                   Fmt.invalid_arg "Invalid nid %d not in %a" nid pp t
               | Some i ->
                   i + 1 ) }
+
+    let comparable a b =
+      a.term = b.term
+      && not
+           ( Map.existsi a.clock ~f:(fun ~key:nid ~data:clock ->
+                 clock < Map.find_exn b.clock nid )
+           && Map.existsi b.clock ~f:(fun ~key:nid ~data:clock ->
+                  clock < Map.find_exn a.clock nid ) )
+
+    let leq a b =
+      comparable a b
+      && Map.for_alli a.clock ~f:(fun ~key:nid ~data:clock ->
+             clock <= Map.find_exn b.clock nid )
+
+    let compare_clock_po a b =
+      assert (a.term = b.term) ;
+      let lt = ref false in
+      let gt = ref false in
+      Map.iteri a.clock ~f:(fun ~key ~data:da ->
+          let db = Map.find_exn b.clock key in
+          match () with
+          | _ when da < db ->
+              lt := true
+          | _ when da > db ->
+              gt := true
+          | _ ->
+              () ) ;
+      match (!lt, !gt) with
+      | true, true ->
+          None
+      | false, false ->
+          Some 0
+      | false, true ->
+          Some 1
+      | true, false ->
+          Some (-1)
+
+    let test_make_clock term clocks =
+      let clock =
+        Map.of_alist_exn
+          (module Int)
+          (List.mapi clocks ~f:(fun idx v -> (idx, v)))
+      in
+      {term; clock}
   end
 
+  module T = T_map
   include T
-
-  let comparable a b =
-    a.term = b.term
-    && not
-         ( Map.existsi a.clock ~f:(fun ~key:nid ~data:clock ->
-               clock < Map.find_exn b.clock nid )
-         && Map.existsi b.clock ~f:(fun ~key:nid ~data:clock ->
-                clock < Map.find_exn a.clock nid ) )
-
-  let leq a b =
-    comparable a b
-    && Map.for_alli a.clock ~f:(fun ~key:nid ~data:clock ->
-           clock <= Map.find_exn b.clock nid )
-
-  let compare_clock_po a b =
-    assert (a.term = b.term) ;
-    let lt = ref false in
-    let gt = ref false in
-    Map.iteri a.clock ~f:(fun ~key ~data:da ->
-        let db = Map.find_exn b.clock key in
-        match () with
-        | _ when da < db ->
-            lt := true
-        | _ when da > db ->
-            gt := true
-        | _ ->
-            () ) ;
-    match (!lt, !gt) with
-    | true, true ->
-        None
-    | false, false ->
-        Some 0
-    | false, true ->
-        Some 1
-    | true, false ->
-        Some (-1)
-
   include Core.Comparable.Make (T)
 end
 
@@ -238,11 +301,7 @@ module CommandTree (Value : Value) = struct
     {dst with ctree= aux dst.ctree (get src upto)}
 
   let create nodes t0 =
-    let root_clock : VectorClock.t =
-      { term= t0
-      ; clock=
-          Map.of_alist_exn (module Int) (List.map nodes ~f:(fun n -> (n, 0))) }
-    in
+    let root_clock = VectorClock.empty nodes t0 in
     let ctree =
       Map.empty (module VectorClock) |> Map.set ~key:root_clock ~data:None
     in

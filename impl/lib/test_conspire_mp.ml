@@ -9,13 +9,7 @@ open MP.Types
 
 let action_pp = Ocons_core.Consensus_intf.action_pp ~pp_msg:pp_message
 
-let make_clock term clocks =
-  (*
-  let clock =
-    Map.of_alist_exn (module Int) (List.mapi clocks ~f:(fun idx v -> (idx, v)))
-  in
-  *)
-  Conspire_command_tree.VectorClock.{term; clock= clocks}
+let make_clock term clocks = Conspire_command_tree.VectorClock.test_make_clock term clocks
 
 let c1 = make_config ~node_id:0 ~replica_ids:[0] ~fd_timeout:2 ()
 
