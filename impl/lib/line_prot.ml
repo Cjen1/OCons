@@ -358,12 +358,3 @@ module ConspireSS = struct
 
   let parse r = bin_io_read bin_read_message r
 end
-
-module Conspire = struct
-  open! Core
-  open Conspire.Types
-
-  let serialise m w = bin_io_write w bin_write_message bin_size_message m
-
-  let parse r = bin_io_read bin_read_message r
-end

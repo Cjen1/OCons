@@ -165,21 +165,6 @@ module ConspireSS = struct
   let serialise = Line_prot.ConspireSS.serialise
 end
 
-module Conspire = struct
-  include Conspire.Types
-  include Conspire.Impl
-
-  let create_node _ = create
-
-  let available_space_for_commands _ = 65536
-
-  let should_ack_clients _ = true
-
-  let parse = Line_prot.Conspire.parse
-
-  let serialise = Line_prot.Conspire.serialise
-end
-
 module ConspireMP = struct
   include Conspire_mp.Types
   include Conspire_mp.Impl

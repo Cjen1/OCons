@@ -21,17 +21,15 @@ module Make (Value : Value) = struct
   module CTree = CommandTree (Value)
 
   type state =
-    { mutable vval: VectorClock.t
+    { mutable vval: CTree.key
     ; mutable vterm: term
     ; mutable term: term
-    ; mutable commit_index: VectorClock.t }
+    ; mutable commit_index: CTree.key }
   [@@deriving show {with_path= false}, bin_io, equal]
 
-  let init_state nodes =
-    { term= 0
-    ; vterm= 0
-    ; vval= VectorClock.empty nodes 0
-    ; commit_index= VectorClock.empty nodes 0 }
+  let init_state ctree =
+    let open CTree in
+    {term= 0; vterm= 0; vval= ctree.root; commit_index= ctree.root}
 
   let set_state t tar =
     t.vval <- tar.vval ;
@@ -55,7 +53,7 @@ module Make (Value : Value) = struct
     type success = {ctree: CTree.update option; cons: state option}
     [@@deriving show {with_path= false}, bin_io]
 
-    type failure = {commit: VectorClock.t}
+    type failure = {commit: CTree.key}
     [@@deriving show {with_path= false}, bin_io]
 
     type message =
@@ -109,23 +107,20 @@ module Make (Value : Value) = struct
 
     let add_commands rep ~node vals =
       assert (rep.state.term = rep.state.vterm) ;
-      let ctree, hd =
-        CTree.addv rep.store ~node ~parent:rep.state.vval ~term:rep.state.term
-          vals
-      in
+      let ctree, hd = CTree.addv rep.store ~node ~parent:rep.state.vval vals in
       rep.state.vval <- hd ;
       rep.store <- ctree
 
-    let create nodes other_nodes =
-      let empty_tree = CTree.create nodes 0 in
-      { state= init_state nodes
+    let create other_nodes =
+      let empty_tree = CTree.empty in
+      { state= init_state empty_tree
       ; store= empty_tree
       ; remotes=
           List.map other_nodes ~f:(fun i ->
               ( i
               , { known_tree= empty_tree
                 ; expected_tree= empty_tree
-                ; expected_state= init_state nodes } ) )
+                ; expected_state= init_state empty_tree } ) )
           |> Map.of_alist_exn (module Int) }
   end
 
@@ -150,23 +145,26 @@ module Make (Value : Value) = struct
         local.vval <- remote.vval
     (* extends local *)
     | true when msg_term = local.vterm -> (
-      match CTree.compare t.rep.store local.vval remote.vval with
-      | None ->
-          (* conflict *)
-          Utils.dtraceln "CONFLICT from %d" src ;
-          Utils.dtraceln "local %a does not prefix of remote %a" VectorClock.pp
-            local.vval VectorClock.pp remote.vval ;
-          local.term <- msg_term + 1
-      | Some 0 ->
-          (* equal *)
-          ()
-      | Some i when i > 0 ->
-          (* local > remote *)
-          ()
-      | Some i ->
-          (* local < remote *)
-          assert (i < 0) ;
-          local.vval <- remote.vval )
+        let res = CTree.compare_keys t.rep.store local.vval remote.vval in
+        match res with
+        | None ->
+            (* conflict *)
+            Utils.dtraceln "CONFLICT from %d" src ;
+            Utils.dtraceln "local %a does not prefix of remote %a"
+              (Fmt.option CTree.pp_parent_ref_node)
+              (CTree.get t.rep.store local.vval)
+              (Fmt.option CTree.pp_parent_ref_node)
+              (CTree.get t.rep.store remote.vval) ;
+            local.term <- msg_term + 1
+        | Some EQ ->
+            (* equal *)
+            ()
+        | Some GT ->
+            (* local > remote *)
+            ()
+        | Some LT ->
+            (* local < remote *)
+            local.vval <- remote.vval )
     | _ ->
         assert (msg_term < local.term || msg_term < local.vterm)
 
@@ -181,7 +179,7 @@ module Make (Value : Value) = struct
     in
     let new_commit =
       CTree.greatest_sufficiently_common_prefix t.rep.store vterm_votes
-        (t.config.quorum_size)
+        t.config.quorum_size
     in
     match new_commit with
     | None ->
@@ -276,10 +274,9 @@ module Make (Value : Value) = struct
         Error `MustAck
 
   let create (config : config) =
-    let rep = Rep.create config.replica_ids config.other_replica_ids in
+    let rep = Rep.create config.other_replica_ids in
     let other_nodes_state =
-      List.map config.other_replica_ids ~f:(fun i ->
-          (i, init_state config.replica_ids) )
+      List.map config.other_replica_ids ~f:(fun i -> (i, init_state rep.store))
       |> Map.of_alist_exn (module Int)
     in
     {rep; other_nodes_state; config; commit_log= Log.create Value.empty}

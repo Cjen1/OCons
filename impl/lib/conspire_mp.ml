@@ -9,7 +9,7 @@ module Value = struct
   let empty = []
 end
 
-module Conspire = Conspire_f_hash.Make (Value)
+module Conspire = Conspire_f.Make (Value)
 
 (* Actions
    - Command when leader => broadcast
@@ -68,7 +68,8 @@ end
 
 module Types = struct
   type config =
-    { conspire: Conspire_f_hash.config
+    { conspire: Conspire_f.config
+    ; higher_replica_ids: node_id list
     ; other_replica_ids: node_id list
     ; fd_timeout: int
     ; max_outstanding: int }
@@ -83,11 +84,18 @@ module Types = struct
     let other_replica_ids =
       List.filter replica_ids ~f:(fun i -> not (i = node_id))
     in
+    let higher_replica_ids =
+      List.take_while replica_ids ~f:(fun id -> id <> node_id)
+    in
     let conspire =
-      Conspire_f_hash.
+      Conspire_f.
         {node_id; replica_ids; other_replica_ids; replica_count; quorum_size}
     in
-    {conspire; other_replica_ids; fd_timeout; max_outstanding}
+    { conspire
+    ; other_replica_ids
+    ; higher_replica_ids
+    ; fd_timeout
+    ; max_outstanding }
 
   type message = Conspire.message [@@deriving show, bin_io]
 
@@ -121,25 +129,13 @@ struct
   include Conspire
   include Types
 
-  let current_leader t =
-    let leader_idx =
-      t.conspire.rep.state.term % t.config.conspire.replica_count
-    in
-    List.nth_exn t.config.conspire.replica_ids leader_idx
-
-  let leader_dead_trace, ld_run =
-    Ocons_core.Utils.InternalReporter.rate_reporter "leader_dead"
+  let is_leader t =
+    List.for_all t.config.higher_replica_ids ~f:(fun nid ->
+        not @@ FailureDetector.is_live t.failure_detector nid )
 
   let can_apply_requests t =
-    ld_run := true ;
-    let current = current_leader t in
     let term_valid = t.conspire.rep.state.vterm = t.conspire.rep.state.term in
-    let is_leader = current = t.config.conspire.node_id in
-    let leader_dead =
-      not @@ FailureDetector.is_live t.failure_detector current
-    in
-    if leader_dead then leader_dead_trace () ;
-    term_valid && (is_leader || leader_dead)
+    term_valid && is_leader t
 
   let available_space_for_commands t =
     if can_apply_requests t then t.config.max_outstanding else 0

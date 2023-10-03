@@ -9,9 +9,6 @@ open MP.Types
 
 let action_pp = Ocons_core.Consensus_intf.action_pp ~pp_msg:pp_message
 
-let make_clock term clocks =
-  Impl_core__Conspire_command_tree.VectorClock.test_make_clock term clocks
-
 let c1 = make_config ~node_id:0 ~replica_ids:[0] ~fd_timeout:2 ()
 
 let c4 node_id = make_config ~node_id ~replica_ids:[0; 1; 2; 3] ~fd_timeout:2 ()
