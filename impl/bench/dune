@@ -1,0 +1,6 @@
+(executable
+  (name ctree_bench)
+  (modules ctree_bench)
+  (libraries impl_core core_bench.inline_benchmarks)
+  (preprocess (pps ppx_jane ppx_deriving.show))
+  )

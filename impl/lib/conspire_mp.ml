@@ -9,7 +9,7 @@ module Value = struct
   let empty = []
 end
 
-module Conspire = Conspire_f.Make (Value)
+module Conspire = Conspire_f_hash.Make (Value)
 
 (* Actions
    - Command when leader => broadcast
@@ -68,7 +68,7 @@ end
 
 module Types = struct
   type config =
-    { conspire: Conspire_f.config
+    { conspire: Conspire_f_hash.config
     ; other_replica_ids: node_id list
     ; fd_timeout: int
     ; max_outstanding: int }
@@ -84,7 +84,7 @@ module Types = struct
       List.filter replica_ids ~f:(fun i -> not (i = node_id))
     in
     let conspire =
-      Conspire_f.
+      Conspire_f_hash.
         {node_id; replica_ids; other_replica_ids; replica_count; quorum_size}
     in
     {conspire; other_replica_ids; fd_timeout; max_outstanding}
@@ -160,7 +160,8 @@ struct
     StallChecker.check t.stall_checker ~pp:(fun ppf () ->
         let problem_idx = t.conspire.rep.state.commit_index in
         Fmt.pf ppf "Stalled on %d at %a@." t.config.conspire.node_id
-          Conspire_command_tree.VectorClock.pp problem_idx )
+          (Fmt.option Conspire.CTree.pp_parent_ref_node)
+          (Conspire.CTree.get t.conspire.rep.store problem_idx) )
 
   let nack_counter, run_nc =
     Ocons_core.Utils.InternalReporter.rate_reporter "nacks"

@@ -1,9 +1,9 @@
-open! Types
-open! Utils
-open! Actions_f
-module Imp = ImperativeActions (Conspire_single_shot.Types)
-module Impl = Conspire_single_shot.Make (Imp)
-open! Conspire_single_shot.Types
+open! Impl_core__Types
+open! Impl_core__Utils
+open! Impl_core__Actions_f
+module Imp = ImperativeActions (Impl_core__Conspire_single_shot.Types)
+module Impl = Impl_core__Conspire_single_shot.Make (Imp)
+open! Impl_core__Conspire_single_shot.Types
 open! Impl
 open Ocons_core.Consensus_intf
 

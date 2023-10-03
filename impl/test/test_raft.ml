@@ -1,9 +1,9 @@
-open! Types
-open! Utils
-open! Actions_f
-module Imp = ImperativeActions (Raft.Types)
-module Impl = Raft.Make (Imp)
-open! Raft.Types
+open! Impl_core__Types
+open! Impl_core__Utils
+open! Impl_core__Actions_f
+module Imp = ImperativeActions (Impl_core__Raft.Types)
+module Impl = Impl_core__Raft.Make (Imp)
+open! Impl_core__Raft.Types
 open! Impl
 open Ocons_core.Consensus_intf
 

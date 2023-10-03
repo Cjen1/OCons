@@ -1,5 +1,5 @@
 open! Core
-open! Conspire_command_tree
+open! Impl_core__Conspire_command_tree
 
 module CTree = CommandTree (struct
   type t = int [@@deriving compare, show, bin_io]
@@ -9,7 +9,7 @@ let nnodes = 3
 
 let print_tree = Fmt.pr "%a" CTree.pp
 
-let make_clock term clocks = Conspire_command_tree.VectorClock.test_make_clock term clocks
+let make_clock term clocks = VectorClock.test_make_clock term clocks
 
 let%expect_test "create_and_add" =
   let ct = CTree.create [0; 1; 2] 0 in
@@ -95,7 +95,7 @@ let%expect_test "make_update" =
   in
   let partial_tree = ct in
   Fmt.pr "%a@."
-    (Conspire_command_tree.set_pp VectorClock.pp)
+    (set_pp VectorClock.pp)
     (Map.key_set ct.ctree) ;
   [%expect {|
     [0:[0,0,0], 0:[1,0,0], 0:[2,0,0]] |}] ;

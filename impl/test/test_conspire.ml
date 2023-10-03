@@ -1,16 +1,16 @@
 open! Core
-open! Types
-open! Utils
-open! Actions_f
-module Imp = ImperativeActions (Conspire.Types)
-module Impl = Conspire.Make (Imp)
-open! Conspire.Types
+open! Impl_core__Types
+open! Impl_core__Utils
+open! Impl_core__Actions_f
+module Imp = ImperativeActions (Impl_core__Conspire.Types)
+module Impl = Impl_core__Conspire.Make (Imp)
+open! Impl_core__Conspire.Types
 open! Impl
-open! Conspire.GlobalTypes
+open! Impl_core__Conspire.GlobalTypes
 
 let action_pp = Ocons_core.Consensus_intf.action_pp ~pp_msg:PP.message_pp
 
-let make_clock term clocks = Conspire_command_tree.VectorClock.test_make_clock term clocks
+let make_clock term clocks = Impl_core__Conspire_command_tree.VectorClock.test_make_clock term clocks
 
 let c1 = make_config ~node_id:0 ~replica_ids:[0] ~fd_timeout:2 ()
 

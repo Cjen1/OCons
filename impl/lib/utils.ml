@@ -267,7 +267,7 @@ module Quorum = struct
       (t.elts |> IntMap.bindings |> List.map fst)
 end
 
-type comp = GT | EQ | LT
+type comp = GT | EQ | LT [@@deriving show]
 
 let comp cmp a b =
   let r = cmp a b in

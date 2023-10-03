@@ -1,0 +1,8 @@
+(library
+ (name impl_test)
+ (libraries impl_core)
+ (inline_tests)
+ (instrumentation
+  (backend bisect_ppx))
+ (preprocess
+  (pps ppx_jane ppx_log ppx_accessor ppx_deriving.show)))

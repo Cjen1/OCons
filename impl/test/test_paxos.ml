@@ -1,9 +1,9 @@
-open! Types
-open! Utils
-open! Actions_f
-module Imp = ImperativeActions (Paxos.Types)
-module Impl = Paxos.Make (Imp)
-open! Paxos.Types
+open! Impl_core__Types
+open! Impl_core__Utils
+open! Impl_core__Actions_f
+module Imp = ImperativeActions (Impl_core__Paxos.Types)
+module Impl = Impl_core__Paxos.Make (Imp)
+open! Impl_core__Paxos.Types
 open! Impl
 open Ocons_core.Consensus_intf
 
