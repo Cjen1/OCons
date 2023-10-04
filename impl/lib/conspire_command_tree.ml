@@ -2,18 +2,6 @@ open! Core
 open! Types
 open! Utils
 
-let map_pp kpp vpp : _ Map.t Fmt.t =
- fun ppf v ->
-  Fmt.pf ppf "%a"
-    Fmt.(
-      brackets @@ list ~sep:Fmt.semi @@ parens
-      @@ pair ~sep:(Fmt.any ":@ ") kpp vpp )
-    (Map.to_alist v)
-
-let set_pp pp : _ Set.t Fmt.t =
- fun ppf v ->
-  Fmt.pf ppf "%a" Fmt.(brackets @@ list ~sep:comma @@ pp) (Set.to_list v)
-
 module type Value = sig
   type t [@@deriving compare, show, bin_io, hash]
 end
@@ -50,7 +38,7 @@ module CommandTree (Value : Value) = struct
   type t =
     { ctree: parent_ref_node option Map.M(Key).t
           [@printer
-            map_pp Key.pp (Fmt.option ~none:(Fmt.any "Root") pp_parent_ref_node)]
+            pp_map Key.pp (Fmt.option ~none:(Fmt.any "Root") pp_parent_ref_node)]
     ; root: key }
   [@@deriving show {with_path= false}]
 

@@ -128,7 +128,7 @@ module Make (Value : Value) = struct
 
   type t =
     { rep: Rep.rep
-    ; other_nodes_state: state Map.M(Int).t [@printer map_pp Fmt.int pp_state]
+    ; other_nodes_state: state Map.M(Int).t [@printer Utils.pp_map Fmt.int pp_state]
     ; config: config [@opaque]
     ; commit_log: Value.t Log.t }
   [@@deriving show {with_path= false}]

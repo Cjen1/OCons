@@ -298,3 +298,18 @@ let pp_hashtbl comp ppk ppv ppf v =
   Fmt.pf ppf "%a"
     Fmt.(brackets @@ list @@ parens @@ pair ppk ~sep:(any ":@ ") ppv)
     Core.(v |> Hashtbl.to_alist |> List.sort ~compare:comp)
+
+open Core
+
+let pp_map kpp vpp : _ Map.t Fmt.t =
+ fun ppf v ->
+  Fmt.pf ppf "%a"
+    Fmt.(
+      brackets @@ list ~sep:Fmt.semi @@ parens
+      @@ pair ~sep:(Fmt.any ":@ ") kpp vpp )
+    (Map.to_alist v)
+
+let pp_set pp : _ Set.t Fmt.t =
+ fun ppf v ->
+  Fmt.pf ppf "%a" Fmt.(brackets @@ list ~sep:comma @@ pp) (Set.to_list v)
+
