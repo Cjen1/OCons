@@ -79,7 +79,7 @@ let%expect_test "make_update" =
   let hd1 = Md5.of_hex_exn "5278a244879fc58054713fb2f920f455" in
   let partial_tree = ct in
   Fmt.pr "%a@."
-    Impl_core__Conspire_command_tree.(set_pp CTree.Key.pp)
+    (Impl_core__Utils.pp_set CTree.Key.pp)
     (Map.key_set ct.ctree) ;
   [%expect
     {|

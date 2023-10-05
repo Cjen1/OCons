@@ -44,9 +44,11 @@ module DelayReorderBuffer = struct
   let ms_clamp ?(direction = `Ceil) interval f =
     match direction with
     | `Ceil ->
-        Time.next_multiple ~base:Time.epoch ~interval ~after:f ()
+        Time.next_multiple ~base:Time.epoch ~interval ~after:f
+          ~can_equal_after:true ()
     | `Floor ->
-        Time.prev_multiple ~base:Time.epoch ~interval ~before:f ()
+        Time.prev_multiple ~base:Time.epoch ~interval ~before:f
+          ~can_equal_before:true ()
 
   let get_values t current =
     (* lim is the millisecond before now *)
@@ -72,6 +74,16 @@ module DelayReorderBuffer = struct
 
   let create ~compare interval base_hwm =
     {hwm= base_hwm; interval; store= Map.empty (module Time); compare}
+end
+
+module Counter = struct
+  type t = {mutable count: int; limit: int} [@@deriving show]
+
+  let incr_counter t = t.count <- t.count + 1
+
+  let reset t = t.count <- 0
+
+  let over_lim t = t.count >= t.limit
 end
 
 module Conspire = Conspire_f.Make (Value)
@@ -114,6 +126,7 @@ module Types = struct
     ; conspire: Conspire.t
     ; command_buffer:
         Command.t DelayReorderBuffer.t (* TODO only reply to relevnat nodes *)
+    ; tick_count: Counter.t
     ; clock: float Eio.Time.clock_ty Eio.Std.r [@opaque] }
   [@@deriving show {with_path= false}]
 
@@ -171,7 +184,11 @@ struct
   let handle_event t (event : message Ocons_core.Consensus_intf.event) =
     match event with
     | Tick ->
-        gather_batch_from_buffer t ; broadcast t
+        Counter.incr_counter t.tick_count ;
+        gather_batch_from_buffer t ;
+        broadcast t ;
+        if Counter.over_lim t.tick_count then (
+          Counter.reset t.tick_count ; broadcast t ~force:true )
     | Commands ci ->
         let commands = Iter.to_list ci in
         let now = Eio.Time.now t.clock |> DelayReorderBuffer.float_to_time in
@@ -192,12 +209,16 @@ struct
           ( t.conspire.rep.state.term = t.conspire.rep.state.vterm
           , get_commit_index t > prev_ci )
         in
-        match (msg_result, recovery_started && now_steady_state, committed) with
-        | Error `MustAck, _, _ ->
+        let recovery_completed = recovery_started && now_steady_state in
+        let recovery_initiated =
+          (not recovery_started) && not now_steady_state
+        in
+        match msg_result with
+        | Error `MustAck ->
             send t src
-        | Error `MustNack, _, _ ->
+        | Error `MustNack ->
             nack t src
-        | Ok _, true, _ | Ok _, _, true ->
+        | Ok _ when recovery_completed || committed || recovery_initiated ->
             broadcast t
         | _ ->
             send t src )
@@ -214,7 +235,8 @@ struct
         config.batching_interval
         (Eio.Time.now clock |> DelayReorderBuffer.float_to_time)
     in
-    {config; conspire; command_buffer; clock}
+    let tick_count = Counter.{count= 0; limit= 10} in
+    {config; conspire; command_buffer; tick_count; clock}
 end
 
 module Impl = Make (Actions_f.ImperativeActions (Types))
