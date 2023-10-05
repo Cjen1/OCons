@@ -1,4 +1,5 @@
 open! Types
+module Utils = Utils
 module Line_prot = Line_prot
 module Types = Types
 
@@ -168,6 +169,20 @@ end
 module ConspireMP = struct
   include Conspire_mp.Types
   include Conspire_mp.Impl
+
+  let create_node _ = create
+
+  let should_ack_clients _ = true
+
+  let serialise m w =
+    Line_prot.bin_io_write w bin_write_message bin_size_message m
+
+  let parse r = Line_prot.bin_io_read bin_read_message r
+end
+
+module ConspireDC = struct
+  include Conspire_dc.Types
+  include Conspire_dc.Impl
 
   let create_node _ = create
 

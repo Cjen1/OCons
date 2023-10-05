@@ -9,6 +9,7 @@ module PRMain = Infra.Make (Impl_core.PrevoteRaft)
 module PRMain_sbn = Infra.Make (Impl_core.PrevoteRaftSBN)
 module ConspireSSMain = Infra.Make (Impl_core.ConspireSS)
 module ConspireMPMain = Infra.Make (Impl_core.ConspireMP)
+module ConspireDCMain = Infra.Make (Impl_core.ConspireDC)
 
 type kind =
   | Paxos
@@ -18,10 +19,11 @@ type kind =
   | PRaft_sbn
   | ConspireSS
   | ConspireMP
+  | ConspireDC
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length stat_report
-    rand_startup_delay =
+    rand_startup_delay delay_interval batching_interval tick_limit =
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
@@ -115,6 +117,22 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Starting Conspire" ;
       Eio.traceln "config = %a" Impl_core.ConspireMP.PP.config_pp conspire_cfg ;
       ConspireMPMain.run env cfg
+  | ConspireDC ->
+      let replica_ids =
+        List.map (fun (i, _) -> i) node_addresses
+        |> Core.List.sort ~compare:Int.compare
+      in
+      let conspire_cfg =
+        Impl_core.ConspireDC.make_config ~node_id ~replica_ids ~max_outstanding
+          (Eio.Stdenv.clock env)
+          ~delay_interval:(Time_float_unix.Span.of_sec delay_interval)
+          ~batching_interval:(Time_float_unix.Span.of_sec batching_interval)
+          ~tick_limit
+      in
+      let cfg = config conspire_cfg in
+      Eio.traceln "Starting Conspire" ;
+      Eio.traceln "config = %a" Impl_core.ConspireDC.PP.config_pp conspire_cfg ;
+      ConspireDCMain.run env cfg
 
 open Cmdliner
 
@@ -156,18 +174,17 @@ let address_a = Arg.(pair ~sep:':' int sockv4)
 let election_timeout_ot =
   let open Arg in
   let i =
-    info ~docv:"ELECTION_TICK_INTERVAL"
+    info ~docv:"ELECTION_TICK_TIMEOUT"
       ~doc:"Number of ticks before an election is triggered."
       ["election-timeout"]
   in
   opt int 10 i
 
-let election_tick_period_ot =
+let tick_period_ot =
   let open Arg in
   let i =
     info ~docv:"TICK_PERIOD"
-      ~doc:"Number of seconds before an election tick is generated."
-      ["t"; "tick-period"; "election-tick-period"]
+      ~doc:"Number of seconds before a tick is generated." ["t"; "tick-period"]
   in
   opt float 0.1 i
 
@@ -238,6 +255,36 @@ let rand_startup_delay_ot =
   in
   opt float (-1.) i
 
+let delay_interval_ot =
+  let open Arg in
+  let i =
+    info ~docv:"DELAY_INTERVAL"
+      ~doc:
+        "Delay before commands are added to log in order to allow for \
+         propogation delay"
+      ["delay"]
+  in
+  opt float (10. *. 0.001) i
+
+let batching_interval_ot =
+  let open Arg in
+  let i =
+    info ~docv:"BATCHING_INTERVAL"
+      ~doc:"Size (by time) of each batch in seconds" ["batch-interval"]
+  in
+  opt float 0.001 i
+
+let tick_limit_ot =
+  let open Arg in
+  let i =
+    info ~docv:"TICK_LIMIT"
+      ~doc:
+        "How many ticks before a message is force sent (useful for message \
+         loss)."
+      ["tick-limit"]
+  in
+  opt int 100 i
+
 let cmd =
   let kind_t =
     let kind =
@@ -248,7 +295,8 @@ let cmd =
         ; ("prevote-raft", PRaft)
         ; ("prevote-raft+sbn", PRaft_sbn)
         ; ("conspire-ss", ConspireSS)
-        ; ("conspire-mp", ConspireMP) ]
+        ; ("conspire-mp", ConspireMP)
+        ; ("conspire-dc", ConspireDC) ]
     in
     Arg.(
       required
@@ -265,10 +313,13 @@ let cmd =
     Term.(
       const run $ kind_t $ node_id_t $ node_addresses_t
       $ Arg.value internal_port_ot $ Arg.value external_port_ot
-      $ Arg.value election_tick_period_ot
+      $ Arg.value tick_period_ot
       $ Arg.value election_timeout_ot
       $ Arg.value max_outstanding_ot
       $ Arg.value stream_length_ot $ Arg.value stat_report_ot
-      $ Arg.value rand_startup_delay_ot )
+      $ Arg.value rand_startup_delay_ot
+      $ Arg.value delay_interval_ot
+      $ Arg.value batching_interval_ot
+      $ Arg.value tick_limit_ot )
 
 let () = exit Cmd.(eval cmd)

@@ -313,3 +313,7 @@ let pp_set pp : _ Set.t Fmt.t =
  fun ppf v ->
   Fmt.pf ppf "%a" Fmt.(brackets @@ list ~sep:comma @@ pp) (Set.to_list v)
 
+let float_to_time f = f |> Time_float_unix.Span.of_sec |> Time_float_unix.of_span_since_epoch
+
+let time_to_float t =
+  t |> Time_float_unix.to_span_since_epoch |> Time_float_unix.Span.to_proportional_float

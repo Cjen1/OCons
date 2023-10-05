@@ -1,4 +1,5 @@
 open! Core
+module Utils = Impl_core.Utils
 module DC = Impl_core__Conspire_dc
 module Imp = Impl_core__Actions_f.ImperativeActions (DC.Types)
 module Impl = DC.Make (Imp)
@@ -11,13 +12,13 @@ let action_pp = Ocons_core.Consensus_intf.action_pp ~pp_msg:pp_message
 
 let interval = DC.Time.Span.of_sec 1.
 
-let c1 =
+let c1 clk =
   make_config ~node_id:0 ~replica_ids:[0] ~delay_interval:interval
-    ~batching_interval:interval ()
+    ~batching_interval:interval clk ~tick_limit:100
 
-let c4 node_id =
+let c4 node_id clk =
   make_config ~node_id ~replica_ids:[0; 1; 2; 3] ~delay_interval:interval
-    ~batching_interval:interval ()
+    ~batching_interval:interval clk ~tick_limit:100
 
 let print t acts =
   Fmt.pr "t: @[<v>%a@]@." PP.t_pp t ;
@@ -35,7 +36,7 @@ let%expect_test "local_commit" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let c0, ac0 = make_clock () in
-  let t = create c1 c0 in
+  let t = create (c1 c0) in
   print t [] ;
   [%expect
     {|
@@ -53,7 +54,7 @@ let%expect_test "local_commit" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 0; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [] |}] ;
   let c0 = make_command (Read "c0") in
@@ -76,7 +77,7 @@ let%expect_test "local_commit" =
          { store = [(1.00000: [Command(Read c0, 1)])];
            hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 0; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
                            ([Command(Read c0, 1)],
@@ -107,7 +108,7 @@ let%expect_test "local_commit" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [CommitCommands(Command(Read c0, 1))] |}] ;
   let c1 = make_command (Read "c1") in
@@ -137,7 +138,7 @@ let%expect_test "local_commit" =
          { store = [(2.00000: [Command(Read c2, 3); Command(Read c1, 2)])];
            hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
                            ([Command(Read c1, 2); Command(Read c2, 3)],
@@ -175,7 +176,7 @@ let%expect_test "local_commit" =
          { store = [(2.00000: [Command(Read c1, 2)])];
            hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 2; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 2; limit = 100 };
          clock = <opaque> }
     actions: [CommitCommands(Command(Read c1, 2), Command(Read c2, 3))] |}]
 
@@ -183,9 +184,9 @@ let%expect_test "e2e commit" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let clk0, ac0 = make_clock () in
-  let t0 = create (c4 0) clk0 in
+  let t0 = create (c4 0 clk0) in
   let clk1, ac1 = make_clock () in
-  let t1 = create (c4 1) clk1 in
+  let t1 = create (c4 1 clk1) in
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
   print t0 actions;
@@ -215,14 +216,14 @@ let%expect_test "e2e commit" =
          { store = [(1.00000: [Command(Read c1, 1)])];
            hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 0; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
                            ([Command(Read c1, 1)],
                             1970-01-01 01:00:01.000000+01:00)))] |}] ;
   let t1, actions =
     Impl.advance t1
-      (Recv ((Commands ([c1], DC.DelayReorderBuffer.float_to_time 1.)), 0))
+      (Recv ((Commands ([c1], Utils.float_to_time 1.)), 0))
   in
   print t1 actions;
   [%expect {|
@@ -251,7 +252,7 @@ let%expect_test "e2e commit" =
          { store = [(1.00000: [Command(Read c1, 1)])];
            hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 0; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [] |}];
   ac0 1.; ac1 1.;
@@ -289,7 +290,7 @@ let%expect_test "e2e commit" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree =
@@ -361,7 +362,7 @@ let%expect_test "e2e commit" =
        command_buffer =
        { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
          compare = <fun> };
-       tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+       tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
        clock = <opaque> }
   actions: [Send(0,(Conspire_dc.Types.Conspire
                       { ctree =
@@ -446,7 +447,7 @@ let%expect_test "e2e commit" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [] |}];
   let t0, actions = Impl.advance t0 (Recv (replication_message, 2)) in
@@ -480,7 +481,7 @@ let%expect_test "e2e commit" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [CommitCommands(Command(Read c1, 1))
               Send(1,(Conspire_dc.Types.Conspire
@@ -512,7 +513,7 @@ let%expect_test "batching" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let clk0, ac0 = make_clock () in
-  let t0 = create (c4 0) clk0 in
+  let t0 = create (c4 0 clk0) in
   let c0 = make_command (Read "c0") in
   let t0, actions = Impl.advance t0 (Commands (Iter.singleton c0)) in
   print t0 actions; [%expect{|
@@ -541,7 +542,7 @@ let%expect_test "batching" =
          { store = [(1.00000: [Command(Read c0, 1)])];
            hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 0; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
                            ([Command(Read c0, 1)],
@@ -576,7 +577,7 @@ let%expect_test "batching" =
            [(1.00000: [Command(Read c0, 1)]); (2.10000: [Command(Read c1, 2)])];
            hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 0; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
                            ([Command(Read c1, 2)],
@@ -613,7 +614,7 @@ let%expect_test "batching" =
             (2.60000: [Command(Read c2, 3)])];
            hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
            };
-         tick_count = { Conspire_dc.Counter.count = 0; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
                            ([Command(Read c2, 3)],
@@ -651,7 +652,7 @@ let%expect_test "batching" =
          [(2.10000: [Command(Read c1, 2)]); (2.60000: [Command(Read c2, 3)])];
          hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s; compare = <fun>
          };
-       tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+       tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
        clock = <opaque> }
   actions: [Send(1,(Conspire_dc.Types.Conspire
                       { ctree =
@@ -730,7 +731,7 @@ let%expect_test "batching" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:03.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 2; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 2; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree =
@@ -777,8 +778,8 @@ let%expect_test "Conflict" =
   reset_make_command_state () ;
   let clk0, ac0 = make_clock () in
   let clk1, ac1 = make_clock () in
-  let t0 = create (c4 0) clk0 in
-  let t1 = create (c4 1) clk1 in
+  let t0 = create (c4 0 clk0) in
+  let t1 = create (c4 1 clk1) in
   (* add c0 to t0 *)
   let c0 = make_command (Read "c0") in
   let t0, _ = Impl.advance t0 (Commands (Iter.singleton c0)) in
@@ -815,7 +816,7 @@ let%expect_test "Conflict" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree =
@@ -892,7 +893,7 @@ let%expect_test "Conflict" =
        command_buffer =
        { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
          compare = <fun> };
-       tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+       tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
        clock = <opaque> }
   actions: [Send(0,(Conspire_dc.Types.Conspire
                       { ctree =
@@ -980,7 +981,7 @@ let%expect_test "Conflict" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [] |}];
   let c1_clk = Md5.of_hex_exn "620122743bc84de6b418bd632ea0cdc2" in
@@ -1033,7 +1034,7 @@ let%expect_test "Conflict" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree = None;
@@ -1094,7 +1095,7 @@ let%expect_test "Conflict" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [] |}];
   let t0,actions = Impl.advance t0 (Recv (update_t0 1, 2)) in
@@ -1132,7 +1133,7 @@ let%expect_test "Conflict" =
          command_buffer =
          { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
            compare = <fun> };
-         tick_count = { Conspire_dc.Counter.count = 1; limit = 10 };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree = None;

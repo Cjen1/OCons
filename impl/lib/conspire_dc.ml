@@ -25,13 +25,8 @@ end
 *)
 
 module DelayReorderBuffer = struct
-  let float_to_time f = f |> Time.Span.of_sec |> Time.of_span_since_epoch
-
-  let time_to_float t =
-    t |> Time.to_span_since_epoch |> Time.Span.to_proportional_float
-
   let pp_time_float_unix : Time.t Fmt.t =
-   fun ppf v -> Fmt.pf ppf "%0.5f" (time_to_float v)
+   fun ppf v -> Fmt.pf ppf "%0.5f" (Utils.time_to_float v)
 
   type 'a t =
     { mutable store: 'a list Map.M(Time).t
@@ -94,11 +89,13 @@ module Types = struct
     ; other_replica_ids: node_id list
     ; batching_interval: Time.Span.t
     ; delay_interval: Time.Span.t
-    ; max_outstanding: int }
+    ; max_outstanding: int
+    ; tick_limit: int
+    ; clock: float Eio.Time.clock_ty Eio.Time.clock [@opaque] }
   [@@deriving show {with_path= false}]
 
   let make_config ~node_id ~replica_ids ~delay_interval ~batching_interval
-      ?(max_outstanding = 8192) () : config =
+      ?(max_outstanding = 8192) ~tick_limit clock : config =
     let floor f = f |> Int.of_float in
     let replica_count = List.length replica_ids in
     let quorum_size = floor (2. *. Float.of_int replica_count /. 3.) + 1 in
@@ -114,7 +111,9 @@ module Types = struct
     ; other_replica_ids
     ; delay_interval
     ; batching_interval
-    ; max_outstanding }
+    ; max_outstanding
+    ; tick_limit
+    ; clock= (clock :> float Eio.Time.clock_ty Eio.Time.clock) }
 
   type message =
     | Commands of (Command.t list * Time.t)
@@ -176,7 +175,7 @@ struct
     List.iter t.config.other_replica_ids ~f:(fun nid -> send ~force t nid)
 
   let gather_batch_from_buffer t =
-    let time = Eio.Time.now t.clock |> DelayReorderBuffer.float_to_time in
+    let time = Eio.Time.now t.clock |> Utils.float_to_time in
     let batches = DelayReorderBuffer.get_values t.command_buffer time in
     Conspire.add_commands t.conspire
       (batches |> Sequence.iter |> Iter.from_labelled_iter)
@@ -191,7 +190,7 @@ struct
           Counter.reset t.tick_count ; broadcast t ~force:true )
     | Commands ci ->
         let commands = Iter.to_list ci in
-        let now = Eio.Time.now t.clock |> DelayReorderBuffer.float_to_time in
+        let now = Eio.Time.now t.clock |> Utils.float_to_time in
         let hedged_target = Time.add now t.config.delay_interval in
         List.iter commands ~f:(fun c ->
             DelayReorderBuffer.add_value t.command_buffer c hedged_target ) ;
@@ -228,15 +227,15 @@ struct
       (fun () -> Exn.handle_uncaught_and_exit (fun () -> handle_event t e))
       t
 
-  let create (config : config) clock =
+  let create (config : config) =
     let conspire = Conspire.create config.conspire in
     let command_buffer =
       DelayReorderBuffer.create ~compare:Command.compare
         config.batching_interval
-        (Eio.Time.now clock |> DelayReorderBuffer.float_to_time)
+        (Eio.Time.now config.clock |> Utils.float_to_time)
     in
-    let tick_count = Counter.{count= 0; limit= 10} in
-    {config; conspire; command_buffer; tick_count; clock}
+    let tick_count = Counter.{count= 0; limit= config.tick_limit} in
+    {config; conspire; command_buffer; tick_count; clock=config.clock}
 end
 
 module Impl = Make (Actions_f.ImperativeActions (Types))

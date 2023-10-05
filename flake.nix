@@ -33,6 +33,7 @@
           installPhase = ''
             mkdir -p $out/bin
             cp $src $out/bin/magic-trace
+            chmod +x $out/bin/magic-trace
           '';
 
           postFixup = ''
