@@ -5,7 +5,9 @@ module Cli = Ocons_core.Client
 module MT = Eio.Time.Mono
 open Eio.Std
 
-let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
+let primes = [|2; 3; 5; 7; 11; 13; 17; 19|]
+
+let pitcher ~sw nid mclock n rate cmgr (dispatch : (int, Mtime.t) Hashtbl.t) :
     unit Eio.Promise.t =
   let t, u = Promise.create () in
   let period =
@@ -20,11 +22,10 @@ let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
     | i, _ when i >= n ->
         ()
     | i, prev ->
+        let id = i * primes.(nid) in
         let cmd =
           Command.
-            { op= Write ("asdf", "asdf")
-            ; id= i
-            ; trace_start= Unix.gettimeofday () }
+            {op= Write ("asdf", "asdf"); id; trace_start= Unix.gettimeofday ()}
         in
         let target = Mtime.add_span prev period |> Option.get in
         if Mtime.is_later target ~than:(MT.now mclock) then
@@ -34,7 +35,7 @@ let pitcher ~sw mclock n rate cmgr (dispatch : Mtime.t array) :
             traceln "Failed to dispatch %a" Fmt.exn_backtrace
               (e, Printexc.get_raw_backtrace ()) ) ;
         req_reporter () ;
-        Array.set dispatch i (Eio.Time.Mono.now mclock) ;
+        Hashtbl.replace dispatch id (Eio.Time.Mono.now mclock) ;
         aux (i + 1, target)
   in
   Fiber.fork ~sw (fun () ->
@@ -60,12 +61,12 @@ let catcher_iter mclock requests responses =
   in
   should_run := true ;
   fun (_, (cid, _, tr)) ->
-    if Array.get responses cid |> Option.is_none then (
+    if not @@ Hashtbl.mem responses cid then (
       Ocons_core.Utils.TRACE.ex_cli tr ;
       let t = Eio.Time.Mono.now mclock in
-      let latency = Mtime.span t (Array.get requests cid) |> to_float_ms in
+      let latency = Mtime.span t (Hashtbl.find requests cid) |> to_float_ms in
       if latency > 500. then Magic_trace.take_snapshot () ;
-      Array.set responses cid (Some t) ;
+      Hashtbl.add responses cid t ;
       reporter latency )
 
 let pp_stats ppf s =
@@ -115,9 +116,8 @@ let pp_stats ppf s =
 
 let run sockaddrs id n rate outfile debug =
   Ocons_core.Utils.TRACE.run_ex_cli := true ;
-  let dispatch = Array.init n (fun _ -> Mtime.of_uint64_ns Int64.zero) in
-  let response = Array.init n (fun _ -> None) in
-  let ( / ) = Eio.Path.( / ) in
+  let dispatch = Hashtbl.create n in
+  let response = Hashtbl.create n in
   if debug then Ocons_conn_mgr.set_debug_flag () ;
   let main env =
     Switch.run
@@ -127,8 +127,9 @@ let run sockaddrs id n rate outfile debug =
       sockaddrs
       |> List.mapi (fun idx addr ->
              ( idx
-             , fun sw -> (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way_ty Eio.Flow.two_way)
-             ) )
+             , fun sw ->
+                 ( Eio.Net.connect ~sw env#net addr
+                   :> Eio.Flow.two_way_ty Eio.Flow.two_way ) ) )
     in
     traceln "Creating conns to: %a"
       Fmt.(braces @@ list ~sep:comma Eio.Net.Sockaddr.pp)
@@ -141,17 +142,15 @@ let run sockaddrs id n rate outfile debug =
         (fun () -> Eio.Time.sleep env#clock 1.)
     in
     Eio.Time.sleep env#clock 2. ;
-    let complete = pitcher ~sw env#mono_clock n rate cmgr dispatch in
+    let complete = pitcher ~sw id env#mono_clock n rate cmgr dispatch in
     Promise.await complete ;
     Eio.Time.sleep env#clock 2. ;
     traceln "Test complete" ;
     (* End of test *)
     let request_response_pairs =
-      let open Iter.Infix in
-      0 -- (n - 1)
-      |> Iter.filter (fun i -> Array.get response i |> Option.is_some)
+      response |> Hashtbl.to_seq_keys |> Iter.of_seq
       |> Iter.map (fun i ->
-             (i, (Array.get dispatch i, Array.get response i |> Option.get)) )
+             (i, (Hashtbl.find dispatch i, Hashtbl.find response i)) )
     in
     let responses =
       request_response_pairs |> Iter.to_seq_persistent |> Array.of_seq
@@ -159,6 +158,7 @@ let run sockaddrs id n rate outfile debug =
     traceln "Results: %a" pp_stats responses ;
     outfile
     |> Option.iter (fun path ->
+           let open Eio.Path in
            let path = Eio.Stdenv.cwd env / path in
            Eio.Path.with_open_out ~create:(`If_missing 0o777) path
            @@ fun out ->
@@ -180,8 +180,9 @@ let run sockaddrs id n rate outfile debug =
     Cli.Cmgr.close cmgr ;
     traceln "Closed everything, done bench"
   in
-  Eio_unix.Ctf.with_tracing "trace.ctf"
-  @@ fun () ->
+  (*Eio_unix.Ctf.with_tracing "trace.ctf"
+    @@ fun () ->
+  *)
   try Eio_main.run main
   with e -> Fmt.pr "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ())
 
@@ -225,7 +226,8 @@ let cmd =
   let id_t =
     Arg.(
       required
-      & pos 0 (some int) None (info ~docv:"ID" ~doc:"The id of the client" []) )
+      & pos 0 (some int) None
+          (info ~docv:"ID" ~doc:"The id of the client (max 5)" []) )
   in
   let sockaddrs_t =
     Arg.(
