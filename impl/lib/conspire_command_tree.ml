@@ -124,7 +124,6 @@ module CommandTree (Value : Value) = struct
       IterLabels.fold vi ~init:(ctree, parent_node, parent_key)
         ~f:(fun (ctree, parent, parent_key) value ->
           let key = make_key (get_key_of_node parent) value in
-          assert(not @@ Map.mem ctree key);
           let node =
             Some
               { node= (get_idx_of_node parent + 1, parent_key, value)

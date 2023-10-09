@@ -5,9 +5,10 @@ module Time = Time_float_unix
 module Value = struct
   let pp_command = Command.pp
 
-  type t = command list [@@deriving compare, equal, hash, bin_io, sexp, show]
+  type t = command list * Time.t
+  [@@deriving compare, equal, hash, bin_io, sexp, show]
 
-  let empty = []
+  let empty = ([], Time.epoch)
 end
 
 (* Idea is that each client sends its message to a single node
@@ -56,12 +57,16 @@ module DelayReorderBuffer = struct
     |> Sequence.group ~break:(fun (a, _) (b, _) ->
            Time.(ms_clamp t.interval a <> ms_clamp t.interval b) )
     |> Sequence.map ~f:(fun ls ->
+           let key = ms_clamp t.interval (List.hd_exn ls |> fst) in
            (* remove relevant keys *)
-           ls
-           |> List.iter ~f:(fun (k, _) ->
-                  t.store <- Map.remove_multi t.store k ) ;
-           (* export batch *)
-           ls |> List.map ~f:snd |> List.join |> List.sort ~compare:t.compare )
+           let values =
+             ls
+             |> List.iter ~f:(fun (k, _) ->
+                    t.store <- Map.remove_multi t.store k ) ;
+             (* export batch *)
+             ls |> List.map ~f:snd |> List.join |> List.sort ~compare:t.compare
+           in
+           (values, key) )
 
   let add_value t v target =
     if Time_float.(target > t.hwm) then
@@ -131,7 +136,7 @@ module Types = struct
 
   let get_command idx t =
     if idx < 0 then Iter.empty
-    else Log.get t.conspire.commit_log idx |> Iter.of_list
+    else Log.get t.conspire.commit_log idx |> fst |> Iter.of_list
 
   let get_commit_index t = Log.highest t.conspire.commit_log
 
@@ -176,7 +181,14 @@ struct
 
   let gather_batch_from_buffer t =
     let time = Eio.Time.now t.clock |> Utils.float_to_time in
-    let batches = DelayReorderBuffer.get_values t.command_buffer time in
+    let batch_floor =
+      CTree.get_value t.conspire.rep.store t.conspire.rep.state.vval
+      |> Option.value_map ~default:Time.epoch ~f:snd
+    in
+    let batches =
+      DelayReorderBuffer.get_values t.command_buffer time
+      |> Sequence.filter ~f:(fun (_, t) -> Time.(t > batch_floor))
+    in
     Conspire.add_commands t.conspire
       (batches |> Sequence.iter |> Iter.from_labelled_iter)
 
@@ -184,7 +196,8 @@ struct
     match event with
     | Tick ->
         Counter.incr_counter t.tick_count ;
-        gather_batch_from_buffer t ;
+        if t.conspire.rep.state.vterm = t.conspire.rep.state.term then
+          gather_batch_from_buffer t ;
         broadcast t ;
         if Counter.over_lim t.tick_count then (
           Counter.reset t.tick_count ; broadcast t ~force:true )
@@ -235,7 +248,7 @@ struct
         (Eio.Time.now config.clock |> Utils.float_to_time)
     in
     let tick_count = Counter.{count= 0; limit= config.tick_limit} in
-    {config; conspire; command_buffer; tick_count; clock=config.clock}
+    {config; conspire; command_buffer; tick_count; clock= config.clock}
 end
 
 module Impl = Make (Actions_f.ImperativeActions (Types))
