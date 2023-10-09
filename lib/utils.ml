@@ -236,3 +236,18 @@ let mock_flow () =
   let q = Eio.Stream.create 8 in
   (make_source q, make_sink q)
 
+let prime nth =
+  let is_prime primes n =
+    let multiple_of n d = Int.div n d * d = n in
+    List.for_all (fun p -> not (multiple_of n p)) primes
+  in
+  let unfold primes =
+    let next =
+      Iter.iterate Int.succ (Core.List.hd primes |> Core.Option.value ~default:1)
+      |> Iter.drop 1
+      |> Iter.find_pred_exn (is_prime primes)
+    in
+    Some (next, next :: primes)
+  in
+  Iter.unfoldr unfold [] |> Iter.drop (nth - 1) |> Iter.head_exn
+

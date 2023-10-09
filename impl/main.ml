@@ -97,8 +97,8 @@ let run kind node_id node_addresses internal_port external_port tick_period
         Core.List.Assoc.find_exn replica_ids_norm ~equal:Int.equal node_id
       in
       let conspire_cfg =
-        Impl_core.ConspireSS.make_config ~node_id ~replica_ids ~fd_timeout:2
-          ~max_outstanding ()
+        Impl_core.ConspireSS.make_config ~node_id ~replica_ids
+          ~fd_timeout:election_timeout ~max_outstanding ()
       in
       let cfg = config conspire_cfg in
       Eio.traceln "Starting Conspire with single-shot instances per log entry" ;
@@ -110,8 +110,8 @@ let run kind node_id node_addresses internal_port external_port tick_period
         |> Core.List.sort ~compare:Int.compare
       in
       let conspire_cfg =
-        Impl_core.ConspireMP.make_config ~node_id ~replica_ids ~fd_timeout:2
-          ~max_outstanding ()
+        Impl_core.ConspireMP.make_config ~node_id ~replica_ids
+          ~fd_timeout:election_timeout ~max_outstanding ()
       in
       let cfg = config conspire_cfg in
       Eio.traceln "Starting Conspire" ;
@@ -279,7 +279,7 @@ let tick_limit_ot =
   let i =
     info ~docv:"TICK_LIMIT"
       ~doc:
-        "How many ticks before a message is force sent (useful for message \
+        "Number of ticks before a message must be sent (useful for message \
          loss)."
       ["tick-limit"]
   in

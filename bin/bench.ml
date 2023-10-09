@@ -5,8 +5,6 @@ module Cli = Ocons_core.Client
 module MT = Eio.Time.Mono
 open Eio.Std
 
-let primes = [|2; 3; 5; 7; 11; 13; 17; 19|]
-
 let pitcher ~sw nid mclock n rate cmgr (dispatch : (int, Mtime.t) Hashtbl.t) :
     unit Eio.Promise.t =
   let t, u = Promise.create () in
@@ -18,11 +16,12 @@ let pitcher ~sw nid mclock n rate cmgr (dispatch : (int, Mtime.t) Hashtbl.t) :
     O.Utils.InternalReporter.rate_reporter "req_dispatch"
   in
   should_run := true ;
+  let prime = Utils.prime nid in
   let rec aux = function
     | i, _ when i >= n ->
         ()
     | i, prev ->
-        let id = i * primes.(nid) in
+        let id = i * prime in
         let cmd =
           Command.
             {op= Write ("asdf", "asdf"); id; trace_start= Unix.gettimeofday ()}

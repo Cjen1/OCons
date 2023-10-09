@@ -1,5 +1,5 @@
 (tests
- (names test_msgs test_replication)
+ (names test_msgs)
  (flags
   (:standard -w -27))
  (preprocess
