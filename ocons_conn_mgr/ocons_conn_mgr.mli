@@ -4,7 +4,7 @@ type 'a t
 
 type 'a iter = ('a -> unit) -> unit
 
-type resolver = Switch.t -> Flow.two_way
+type resolver = Switch.t -> Flow.two_way_ty Resource.t
 
 type id = int
 
@@ -12,7 +12,7 @@ type 'a kind = Iter of (id * 'a -> unit) | Recv of {max_recv_buf: int}
 
 val create :
      ?kind:'a kind
-  -> ?use_domain:#Eio.Domain_manager.t
+  -> ?use_domain:Eio.Domain_manager.ty Eio.Domain_manager.t
   -> ?connected:unit Promise.t * unit Promise.u
   -> sw:Switch.t
   -> (id * resolver) list

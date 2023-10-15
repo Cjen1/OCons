@@ -88,10 +88,14 @@ let accept_handler t sock addr =
       traceln "Client handler failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
 
-let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
+let run (env) port
+    cmd_str res_str =
+  TRACE.run_cli_ex := true ;
+  TRACE.run_in_ex := true ;
   Switch.run
   @@ fun sw ->
-  let req_reporter = InternalReporter.rate_reporter 0 "cli_req" in
+  let req_reporter, should_run = InternalReporter.rate_reporter "cli_req" in
+  should_run := true ;
   let t =
     { conn_tbl= Hashtbl.create 16
     ; req_tbl= Hashtbl.create 4096
@@ -101,7 +105,7 @@ let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
   in
   let accept_handler = accept_handler t in
   let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
-  let sock = Eio.Net.listen ~backlog:4 ~sw net addr in
+  let sock = Eio.Net.listen ~backlog:4 ~sw (Eio.Stdenv.net env) addr in
   let server_fiber () =
     Eio.Net.run_server
       ~on_error:(function
@@ -129,7 +133,7 @@ let run (net : #Eio.Net.t) (clock : #Eio.Time.clock) port cmd_str res_str =
         try
           (* reply to client *)
           Line_prot.External_infra.serialise_response
-            (cid, res, Eio.Time.now clock)
+            (cid, res, Eio.Time.now (Eio.Stdenv.clock env))
             bw ;
           maybe_flush ()
         with e when Utils.is_not_cancel e ->

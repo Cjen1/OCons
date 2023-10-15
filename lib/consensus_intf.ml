@@ -27,21 +27,21 @@ let action_pp ?pp_msg ppf v =
   let open Fmt in
   match (v, pp_msg) with
   | Send (d, m), Some message_pp ->
-      pf ppf "Send(%d, %a)" d message_pp m
+      pf ppf "@[<v>@[<2>Send(%d,%a)@]@]" d message_pp m
   | Broadcast m, Some message_pp ->
-      pf ppf "Broadcast(%a)" message_pp m
+      pf ppf "@[<v>@[<2>Broadcast(%a)@]@]" message_pp m
   | Send (d, _), None ->
-      pf ppf "Send(%d, _)" d
+      pf ppf "@[<1>Send(%d,_)@]" d
   | Broadcast _, None ->
-      pf ppf "Broadcast(_)"
+      pf ppf "@[<1>Broadcast(_)@]"
   | CommitCommands cs, _ ->
-      pf ppf "CommitCommands(%a)" (Iter.pp_seq ~sep:"," Types.Command.pp) cs
+      (hovbox
+         (any "CommitCommands" ++ (parens @@ Iter.pp_seq Types.Command.pp)) )
+        ppf cs
 
 module type S = sig
   (** Incomming and outgoing messages should be symmetrical *)
   type message
-
-  val message_pp : message Fmt.t
 
   val parse : Eio.Buf_read.t -> message
   (** Reads the message from the buf_read*)
@@ -51,11 +51,7 @@ module type S = sig
 
   type config
 
-  val config_pp : config Fmt.t
-
   type t
-
-  val t_pp : t Fmt.t
 
   val create_node : node_id -> config -> t
   (** [create_node config] returns the initialised state machine. *)
@@ -68,4 +64,12 @@ module type S = sig
   (* The number of entries which can be added *)
 
   val should_ack_clients : t -> bool
+
+  module PP : sig
+    val t_pp : t Fmt.t
+
+    val message_pp : message Fmt.t
+
+    val config_pp : config Fmt.t
+  end
 end

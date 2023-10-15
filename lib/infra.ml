@@ -15,24 +15,17 @@ module Make (C : Consensus_intf.S) = struct
   module Internal = Internal_infra.Make (C)
   module ExInfra = External_infra
 
-  type 'a env =
-    < clock: #Eio.Time.clock
-    ; mono_clock: #Eio.Time.Mono.t
-    ; net: #Eio.Net.t
-    ; domain_mgr: #Eio.Domain_manager.t
-    ; .. >
-    as
-    'a
-
-  let run env config =
+  let run (env) config =
     Switch.run
     @@ fun sw ->
-    let command_stream = Eio.Stream.create Int.max_int in
-    Utils.InternalReporter.run ~sw env#clock config.stat_report ;
+    let command_stream = Eio.Stream.create config.stream_length in
+    Utils.InternalReporter.run ~sw (Eio.Stdenv.clock env) config.stat_report ;
     let result_stream = Eio.Stream.create Int.max_int in
-    let create_conn addr sw =
-      let c = (Eio.Net.connect ~sw env#net addr :> Eio.Flow.two_way) in
-      Utils.set_nodelay c ; c
+    let create_conn addr : Ocons_conn_mgr.resolver =
+     fun sw ->
+      let c = Eio.Net.connect ~sw (Eio.Stdenv.net env) addr in
+      Utils.set_nodelay c ;
+      (c :> Eio.Flow.two_way_ty r)
     in
     let conns : connection_creater list =
       config.nodes
@@ -51,8 +44,8 @@ module Make (C : Consensus_intf.S) = struct
           exit (-1) )
       (fun () ->
         try
-          Eio.Domain_manager.run env#domain_mgr (fun () ->
-              ExInfra.run env#net env#clock config.external_port command_stream
+          Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) (fun () ->
+              ExInfra.run env config.external_port command_stream
                 result_stream )
         with e when Utils.is_not_cancel e ->
           traceln "External infra failed" ;

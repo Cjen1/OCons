@@ -1,4 +1,5 @@
 open! Types
+module Utils = Utils
 module Line_prot = Line_prot
 module Types = Types
 
@@ -8,7 +9,11 @@ module Paxos = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -33,7 +38,11 @@ module Raft = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -58,7 +67,11 @@ module RaftSBN = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -83,7 +96,11 @@ module PrevoteRaft = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -108,7 +125,11 @@ module PrevoteRaftSBN = struct
 
   type config = Types.config
 
-  let config_pp = Types.config_pp
+  module PP = struct
+    include PP
+
+    let config_pp = Types.config_pp
+  end
 
   let create_node _ = create
 
@@ -125,4 +146,50 @@ module PrevoteRaftSBN = struct
   let parse = Line_prot.PrevoteRaft.parse
 
   let serialise = Line_prot.PrevoteRaft.serialise
+end
+
+module ConspireSS = struct
+  include Conspire_single_shot.Types
+  include Conspire_single_shot.Impl
+
+  let create_node _ = create
+
+  let available_space_for_commands t =
+    let outstanding = Utils.SegmentLog.highest t.prop_log - t.commit_index in
+    assert (outstanding >= 0) ;
+    max (t.config.max_outstanding - outstanding) 0
+
+  let should_ack_clients _ = true
+
+  let parse = Line_prot.ConspireSS.parse
+
+  let serialise = Line_prot.ConspireSS.serialise
+end
+
+module ConspireMP = struct
+  include Conspire_mp.Types
+  include Conspire_mp.Impl
+
+  let create_node _ = create
+
+  let should_ack_clients _ = true
+
+  let serialise m w =
+    Line_prot.bin_io_write w bin_write_message bin_size_message m
+
+  let parse r = Line_prot.bin_io_read bin_read_message r
+end
+
+module ConspireDC = struct
+  include Conspire_dc.Types
+  include Conspire_dc.Impl
+
+  let create_node _ = create
+
+  let should_ack_clients _ = true
+
+  let serialise m w =
+    Line_prot.bin_io_write w bin_write_message bin_size_message m
+
+  let parse r = Line_prot.bin_io_read bin_read_message r
 end

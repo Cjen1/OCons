@@ -4,6 +4,7 @@ let entries_equal (ea, la) (eb, lb) =
   la = lb && List.equal ( = ) (Iter.to_list ea) (Iter.to_list eb)
 
 module Gen = struct
+  open Ocons_core.Types
   open Crowbar
 
   let op =
@@ -19,61 +20,15 @@ module Gen = struct
     map [op; int] (fun op id ->
         Ocons_core.Types.Command.{op; id; trace_start= -1.} )
 
-  let log_entry =
-    map [command; int] (fun command term -> Ocons_core.Types.{command; term})
+  let log_entry = map [command; int] (fun command term -> {command; term})
 
   let entries =
     map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
+
+  let conspire_value : Impl_core.ConspireSS.value gen = list command
 end
 
 module LP = Impl_core.Line_prot
-
-let make_source q =
-  object (self)
-    inherit Eio.Flow.source
-
-    val q = q
-
-    val mutable left_over : Cstruct.t option = None
-
-    method read_into buf =
-      let copy_and_assign_rem data buf =
-        match (Cstruct.length data, Cstruct.length buf) with
-        | ld, lb when ld <= lb ->
-            Cstruct.blit data 0 buf 0 ld ;
-            ld
-        | ld, lb ->
-            Cstruct.blit data 0 buf 0 lb ;
-            let rem = Cstruct.take ~min:(ld - lb) data in
-            left_over <- Some rem ;
-            lb
-      in
-      match left_over with
-      | Some data ->
-          copy_and_assign_rem data buf
-      | None ->
-          copy_and_assign_rem (Eio.Stream.take q) buf
-  end
-
-let make_sink q =
-  object (self)
-    inherit Eio.Flow.sink
-
-    method copy src =
-      try
-        while true do
-          let buf = Cstruct.create 4096 in
-          let got = src#read_into buf in
-          Eio.Stream.add q (Cstruct.split buf got |> fst)
-        done
-      with End_of_file -> ()
-
-    method! write bufs = List.iter (fun buf -> Eio.Stream.add q buf) bufs
-  end
-
-let mock_flow () =
-  let q = Eio.Stream.create 8 in
-  (make_source q, make_sink q)
 
 let test_entry_equality les =
   let open Crowbar in
@@ -82,7 +37,7 @@ let test_entry_equality les =
   let length = List.length les in
   let w_entries = (Iter.of_list les, length) in
   (*guard (LP.Size.entries w_entries < 1024) ;*)
-  let fr, fw = mock_flow () in
+  let fr, fw = Ocons_core.Utils.mock_flow () in
   let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
   Eio.Buf_write.with_flow fw
   @@ fun bw ->
@@ -134,19 +89,19 @@ module Paxos = struct
     let open Crowbar in
     Eio_mock.Backend.run
     @@ fun () ->
-    let fr, fw = mock_flow () in
+    let fr, fw = Ocons_core.Utils.mock_flow () in
     let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
     Eio.Buf_write.with_flow fw
     @@ fun bw ->
     serialise msg bw ;
     let msg' = parse br in
-    check_eq ~pp:message_pp ~eq:msg_equal msg msg'
+    check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg'
 
   let test_msg_series_equality msgs =
     let open Crowbar in
     Eio_mock.Backend.run
     @@ fun () ->
-    let fr, fw = mock_flow () in
+    let fr, fw = Ocons_core.Utils.mock_flow () in
     let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
     Eio.Buf_write.with_flow fw
     @@ fun bw ->
@@ -156,7 +111,7 @@ module Paxos = struct
       | msg :: ms ->
           serialise msg bw ;
           let msg' = parse br in
-          check_eq ~pp:message_pp ~eq:msg_equal msg msg' ;
+          check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg' ;
           aux ms
     in
     aux msgs
@@ -203,19 +158,19 @@ module Raft = struct
     let open Crowbar in
     Eio_mock.Backend.run
     @@ fun () ->
-    let fr, fw = mock_flow () in
+    let fr, fw = Ocons_core.Utils.mock_flow () in
     let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
     Eio.Buf_write.with_flow fw
     @@ fun bw ->
     serialise msg bw ;
     let msg' = parse br in
-    check_eq ~pp:message_pp ~eq:msg_equal msg msg'
+    check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg'
 
   let test_msg_series_equality msgs =
     let open Crowbar in
     Eio_mock.Backend.run
     @@ fun () ->
-    let fr, fw = mock_flow () in
+    let fr, fw = Ocons_core.Utils.mock_flow () in
     let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
     Eio.Buf_write.with_flow fw
     @@ fun bw ->
@@ -225,7 +180,55 @@ module Raft = struct
       | msg :: ms ->
           serialise msg bw ;
           let msg' = parse br in
-          check_eq ~pp:message_pp ~eq:msg_equal msg msg' ;
+          check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg' ;
+          aux ms
+    in
+    aux msgs
+end
+
+module ConspireSS = struct
+  open Impl_core.ConspireSS
+  open LP.ConspireSS
+
+  let msg_gen =
+    let open Gen in
+    let open Crowbar in
+    choose
+      [ const Heartbeat
+      ; map [int; conspire_value; int] (fun idx value term ->
+            Sync (idx, {value; term}) )
+      ; map [int; conspire_value; int; int] (fun idx vvalue vterm term ->
+            SyncResp (idx, {vvalue; vterm; term}) ) ]
+
+  let msg_equal = [%compare.equal: message]
+
+  let test_msg_equality msg =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = Ocons_core.Utils.mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    serialise msg bw ;
+    let msg' = parse br in
+    check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg'
+
+  let test_msg_series_equality msgs =
+    let open Crowbar in
+    Eio_mock.Backend.run
+    @@ fun () ->
+    let fr, fw = Ocons_core.Utils.mock_flow () in
+    let br = Eio.Buf_read.of_flow ~max_size:65536 fr in
+    Eio.Buf_write.with_flow fw
+    @@ fun bw ->
+    let rec aux = function
+      | [] ->
+          ()
+      | msg :: ms ->
+          serialise msg bw ;
+          let msg' = parse br in
+          check_eq ~pp:PP.message_pp ~eq:msg_equal msg msg' ;
           aux ms
     in
     aux msgs
@@ -254,4 +257,10 @@ let () =
   add_test ~name:"raft_msg_passing" [Raft.msg_gen] Raft.test_msg_equality ;
   add_test ~name:"raft_msg_series_passing"
     [list Raft.msg_gen]
-    Raft.test_msg_series_equality
+    Raft.test_msg_series_equality ;
+  (* Conspire *)
+  add_test ~name:"conspire_ss_msg_passing" [ConspireSS.msg_gen]
+    ConspireSS.test_msg_equality ;
+  add_test ~name:"conspire_ss_msg_series_passing"
+    [list ConspireSS.msg_gen]
+    ConspireSS.test_msg_series_equality

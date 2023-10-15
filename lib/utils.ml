@@ -3,15 +3,15 @@ open Types
 let debug_flag = false
 
 let set_nodelay ?(should_warn = true) sock =
-  match sock |> Eio_unix.FD.peek_opt with
-  | None when should_warn ->
-      Eio.traceln
-        "WARNING: unable to set TCP_NODELAY, higher than required latencies \
-         may be experienced"
-  | None ->
-      ()
+  match sock |> Eio_unix.Resource.fd_opt with
   | Some fd ->
-      Unix.setsockopt fd Unix.TCP_NODELAY true
+      Eio_unix.Fd.use ~if_closed:ignore fd (fun fd ->
+          Unix.setsockopt fd Unix.TCP_NODELAY true )
+  | None ->
+      if should_warn then
+        Eio.traceln
+          "WARNING: unable to set TCP_NODELAY, higher than required latencies \
+           may be experienced"
 
 let time_pp ppf t =
   let tm = Unix.localtime t in
@@ -64,14 +64,14 @@ module InternalReporter = struct
       pps |> List.map (fun pp -> (pp, reset, running)) |> List.append !reporters
 
   let run_report period =
-    let pp_reporters = !reporters |> List.map (fun (v, _, _) -> v) in
+    let pp_reporters =
+      !reporters
+      |> List.filter (fun (_, _, running) -> !running)
+      |> List.map (fun (v, _, _) -> v)
+    in
     Eio.traceln "---- Report ----" ;
     Eio.traceln "%a" (Fmt.record pp_reporters) period ;
-    List.iter
-      (fun (_, r, f) ->
-        f := true ;
-        r () )
-      !reporters
+    List.iter (fun (_, r, running) -> if !running then r ()) !reporters
 
   let run ~sw clock period =
     if period > 0. then
@@ -89,21 +89,21 @@ module InternalReporter = struct
 
   type 'a reporter = 'a -> unit
 
-  let rate_reporter init name : unit reporter =
-    let state = {v= init; v'= init} in
-    let reset () = state.v <- state.v' in
+  let rate_reporter name : unit reporter * bool ref =
+    let state = ref 0 in
+    let reset () = state := 0 in
     let open Fmt in
     let pp =
       [ field name
-          (fun p -> Core.Float.(Int.(to_float state.v' - to_float state.v) / p))
-          float ]
+          (fun p -> Core.Float.(Int.(to_float !state) / p))
+          (float_dfrac 3) ]
     in
     let running = ref false in
-    let update () = if !running then state.v' <- state.v' + 1 in
+    let update () = if !running then incr state in
     register_reporter pp reset running ;
-    update
+    (update, running)
 
-  let fold_reporter ~name ~f ~init ~pp : 'a reporter =
+  let fold_reporter ~name ~f ~init ~pp : 'a reporter * bool ref =
     let state = ref [] in
     let reset () = state := [] in
     let open Fmt in
@@ -111,7 +111,7 @@ module InternalReporter = struct
     let running = ref false in
     let update x = if !running then state := x :: !state in
     register_reporter pp reset running ;
-    update
+    (update, running)
 
   type avg_reporter_state =
     { mutable max: float
@@ -119,7 +119,7 @@ module InternalReporter = struct
     ; mutable sum: float
     ; mutable count: int }
 
-  let avg_reporter : 'a. ('a -> float) -> string -> 'a reporter =
+  let avg_reporter : 'a. ('a -> float) -> string -> 'a reporter * bool ref =
    fun conv name ->
     let state = {max= -1.; tdigest= Tdigest.create (); sum= 0.; count= 0} in
     let reset () =
@@ -137,53 +137,117 @@ module InternalReporter = struct
           |> Core.Option.value ~default:Float.nan
         in
         record
-          [ field "avg" (fun s -> s.sum /. Float.of_int s.count) float
+          [ field "avg" (fun s -> s.sum /. Float.of_int s.count) (float_dfrac 3)
           ; field "#" (fun s -> s.count) int
-          ; field "50%" (fun s -> percentile s 0.5) float
-          ; field "99%" (fun s -> percentile s 0.99) float
-          ; field "max" (fun s -> s.max) float ]
+          ; field "50%" (fun s -> percentile s 0.5) (float_dfrac 3)
+          ; field "99%" (fun s -> percentile s 0.99) (float_dfrac 3)
+          ; field "max" (fun s -> s.max) (float_dfrac 3) ]
       in
       pf ppf "%a" pp s
     in
-    let pp = [field name (fun _ -> state) pp_stats] in
-    let running = ref false in
+    let print_enabled = ref false in
+    let pp = [field name (fun _ -> print_enabled := true; state) pp_stats] in
+    let run_enabled = ref false in
     let update x =
-      if !running then (
+      if !run_enabled && !print_enabled then (
         let dp = conv x in
         state.max <- max dp state.max ;
         state.tdigest <- Tdigest.add ~data:dp state.tdigest ;
         state.count <- state.count + 1 ;
         state.sum <- state.sum +. dp )
     in
-    register_reporter pp reset running ;
-    update
+    register_reporter pp reset run_enabled ;
+    (update, run_enabled)
 
-  let trace_reporter : string -> time reporter =
+  let trace_reporter : string -> time reporter * bool ref =
    fun name ->
     let conv t = (Unix.gettimeofday () -. t) *. 1000. in
     avg_reporter conv name
 
-  let command_trace_reporter : string -> Command.t reporter =
+  let command_trace_reporter : string -> Command.t reporter * bool ref =
    fun name ->
-    let reporter = trace_reporter name in
-    fun c ->
-      let st = c.Command.trace_start in
-      update_command_time c ; reporter st
+    let reporter, runner = trace_reporter name in
+    ( (fun c ->
+        let st = c.Command.trace_start in
+        update_command_time c ; reporter st )
+    , runner )
 end
 
 module TRACE = struct
   (* External_infra.accept_handler *)
-  let cli_ex = InternalReporter.command_trace_reporter "TRACE:cli->ex"
+  let cli_ex, run_cli_ex =
+    InternalReporter.command_trace_reporter "TRACE:cli->ex"
 
-  let ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
+  let ex_in, run_ex_in = InternalReporter.command_trace_reporter "TRACE:ex->in "
 
-  let rep = InternalReporter.command_trace_reporter "TRACE:replicate"
+  let commit, run_commit =
+    InternalReporter.command_trace_reporter "TRACE:commit "
 
-  let rep_reply = InternalReporter.trace_reporter "TRACE:replicate_reply"
+  let in_ex, run_in_ex = InternalReporter.trace_reporter "TRACE:in->ex "
 
-  let commit = InternalReporter.command_trace_reporter "TRACE:commit "
-
-  let in_ex = InternalReporter.trace_reporter "TRACE:in->ex "
-
-  let ex_cli = InternalReporter.trace_reporter "TRACE:ex->cli"
+  let ex_cli, run_ex_cli = InternalReporter.trace_reporter "TRACE:ex->cli"
 end
+
+module MockSource = struct
+  type t = {q: Cstruct.t Eio.Stream.t; mutable left_over: Cstruct.t option}
+
+  let create q = {left_over= None; q}
+
+  let single_read t buf =
+    let copy_and_assign_rem data buf =
+      match (Cstruct.length data, Cstruct.length buf) with
+      | ld, lb when ld <= lb ->
+          Cstruct.blit data 0 buf 0 ld ;
+          ld
+      | ld, lb ->
+          Cstruct.blit data 0 buf 0 lb ;
+          let rem = Cstruct.take ~min:(ld - lb) data in
+          t.left_over <- Some rem ;
+          lb
+    in
+    match t.left_over with
+    | Some data ->
+        copy_and_assign_rem data buf
+    | None ->
+        copy_and_assign_rem (Eio.Stream.take t.q) buf
+
+  let read_methods = []
+end
+
+let make_source =
+  let ops = Eio.Flow.Pi.source (module MockSource) in
+  fun q -> Eio.Resource.T (MockSource.create q, ops)
+
+module MockSink = struct
+  type t = Cstruct.t Eio.Stream.t
+
+  let single_write (t : t) bufs =
+    List.iter (fun buf -> Eio.Stream.add t buf) bufs ;
+    Core.List.sum (module Core.Int) bufs ~f:Cstruct.length
+
+  let copy t ~src = Eio.Flow.Pi.simple_copy ~single_write t ~src
+end
+
+let make_sink =
+  let ops = Eio.Flow.Pi.sink (module MockSink) in
+  fun q -> Eio.Resource.T (q, ops)
+
+let mock_flow () =
+  let q = Eio.Stream.create 8 in
+  (make_source q, make_sink q)
+
+let prime nth =
+  let is_prime primes n =
+    let multiple_of n d = Int.div n d * d = n in
+    List.for_all (fun p -> not (multiple_of n p)) primes
+  in
+  let unfold primes =
+    let next =
+      Iter.iterate Int.succ (Core.List.hd primes |> Core.Option.value ~default:1)
+      |> Iter.drop 1
+      |> Iter.find_pred_exn (is_prime primes)
+    in
+    Some (next, next :: primes)
+  in
+  Iter.unfoldr unfold [] |> Iter.drop (nth - 1) |> Iter.head_exn
+

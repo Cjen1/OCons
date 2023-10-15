@@ -6,11 +6,11 @@ type time = float
 
 type node_addr = string
 
-type command_id = int [@@deriving bin_io, compare, sexp]
+type command_id = int [@@deriving bin_io, compare, sexp, hash]
 
 type client_id = int [@@deriving bin_io]
 
-type node_id = int [@@deriving sexp_of, bin_io]
+type node_id = int [@@deriving sexp_of, bin_io, compare, equal, show]
 
 type key = string [@@deriving bin_io, compare, sexp]
 
@@ -39,16 +39,29 @@ let sm_op_pp ppf v =
       Fmt.pf ppf "NoOp"
 
 module Command = struct
-  type t = {op: sm_op; id: command_id; mutable trace_start: float}
-  [@@deriving compare]
+  module T = struct
+    type t = {op: sm_op; id: command_id; mutable trace_start: float}
+    [@@deriving sexp, bin_io]
 
-  let pp_mach ppf v =
-    Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
+    let hash t = hash_command_id t.id
 
-  let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
+    let hash_fold_t s t = hash_fold_command_id s t.id
+
+    let pp_mach ppf v =
+      Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
+
+    let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
+
+    let compare a b = Int.compare a.id b.id
+
+    let equal a b = a.id = b.id
+  end
+
+  include T
+  include Comparable.Make (T)
 end
 
-type command = Command.t [@@deriving compare]
+type command = Command.t [@@deriving hash, sexp, compare, equal, bin_io]
 
 let update_command_time c = c.Command.trace_start <- Core_unix.gettimeofday ()
 
@@ -109,11 +122,11 @@ let update_state_machine : state_machine -> command -> op_result =
 
 let create_state_machine () = Hashtbl.create (module String)
 
-type log_index = int [@@deriving bin_io, compare]
+type log_index = int [@@deriving compare, equal, bin_io, hash, sexp, show]
 
-type term = int [@@deriving compare, compare, bin_io]
+type term = int [@@deriving compare, equal, bin_io, hash, show]
 
-type log_entry = {command: command; term: term} [@@deriving compare]
+type log_entry = {command: command; term: term} [@@deriving accessors, compare]
 
 let log_entry_pp ppf v =
   Fmt.pf ppf "{command: %a; term : %d}" Command.pp v.command v.term

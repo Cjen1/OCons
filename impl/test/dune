@@ -1,6 +1,6 @@
 (library
- (name impl_core)
- (libraries ocons.core accessor iter)
+ (name impl_test)
+ (libraries impl_core)
  (inline_tests)
  (instrumentation
   (backend bisect_ppx))

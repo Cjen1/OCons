@@ -17,3 +17,5 @@ libpaxos/
 
 perf.data
 trace*
+
+result

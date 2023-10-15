@@ -21,15 +21,21 @@ dune exec paxos/main.exe -- ID 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:502
 ```
 
 ```
-EIO_BACKEND=linux dune exec impl/main.exe -- paxos 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5000 -q 5001 -t 1
-EIO_BACKEND=linux dune exec impl/main.exe -- paxos 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5010 -q 5011 -t 1
-EIO_BACKEND=linux dune exec impl/main.exe -- paxos 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5020 -q 5021 -t 1
+dune exec impl/main.exe -- paxos 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5000 -q 5001 -t 1
+dune exec impl/main.exe -- paxos 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5010 -q 5011 -t 1
+dune exec impl/main.exe -- paxos 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5020 -q 5021 -t 1
 
-EIO_BACKEND=linux dune exec impl/main.exe -- raft 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5000 -q 5001 -t 1
-EIO_BACKEND=linux dune exec impl/main.exe -- raft 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5010 -q 5011 -t 1
-EIO_BACKEND=linux dune exec impl/main.exe -- raft 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5020 -q 5021 -t 1
+dune exec impl/main.exe -- raft 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5000 -q 5001 -t 1
+dune exec impl/main.exe -- raft 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5010 -q 5011 -t 1
+dune exec impl/main.exe -- raft 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020 -p 5020 -q 5021 -t 1
+
+dune exec impl/main.exe -- conspire 0 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020,3:127.0.0.1:5030 -p 5000 -q 5001 -t 1
+dune exec impl/main.exe -- conspire 1 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020,3:127.0.0.1:5030 -p 5010 -q 5011 -t 1
+dune exec impl/main.exe -- conspire 2 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020,3:127.0.0.1:5030 -p 5020 -q 5021 -t 1
+dune exec impl/main.exe -- conspire 3 0:127.0.0.1:5000,1:127.0.0.1:5010,2:127.0.0.1:5020,3:127.0.0.1:5030 -p 5030 -q 5031 -t 1
 ```
 
 ```
 dune exec bin/cli.exe -- write 1 1 0 127.0.0.1:5001,127.0.0.1:5011,127.0.0.1:5021 -r 10
+dune exec bin/bench.exe -- 127.0.0.1:5001,127.0.0.1:5011,127.0.0.1:5021,127.0.0.1:5031 -r 1000 -n 20000
 ```

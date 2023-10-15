@@ -6,7 +6,7 @@ homepage: "https://github.com/cjen1/OcamlPaxos"
 bug-reports: "https://github.com/cjen1/OcamlPaxos/issues"
 depends: [
   "dune" {>= "2.7"}
-  "ocaml" {= "5.0.0"}
+  "ocaml" {= "5.1.0"}
   "cmdliner"
   "iter"
   "accessor"
@@ -19,10 +19,13 @@ depends: [
   "base"
   "core"
   "core_unix"
-  "eio"
+  "eio" {>= "0.11"}
   "eio_main"
   "eio_linux"
   "tdigest"
+  "irmin"
+  "irmin-containers"
+  "core_bench"
   "odoc" {with-doc}
 ]
 build: [

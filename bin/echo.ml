@@ -1,11 +1,15 @@
 open! Eio.Std
 
-let set_nodelay sock =
-  match sock |> Eio_unix.FD.peek_opt with
-  | None ->
-      Fmt.invalid_arg "Could not get underlying file descriptor"
+let set_nodelay ?(should_warn = true) sock =
+  match sock |> Eio_unix.Resource.fd_opt with
   | Some fd ->
-      Unix.setsockopt fd Unix.TCP_NODELAY true
+      Eio_unix.Fd.use ~if_closed:ignore fd (fun fd ->
+          Unix.setsockopt fd Unix.TCP_NODELAY true )
+  | None ->
+      if should_warn then
+        Eio.traceln
+          "WARNING: unable to set TCP_NODELAY, higher than required latencies \
+           may be experienced"
 
 let server addr =
   Eio_main.run

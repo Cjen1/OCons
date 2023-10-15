@@ -1,4 +1,16 @@
-(executables
- (names cli bench echo)
- (modules cli bench echo)
- (libraries ocons.core cmdliner))
+(executable
+  (name cli)
+  (modules cli)
+  (libraries ocons.core cmdliner))
+(executable
+  (name bench)
+  (modules bench)
+  (libraries ocons.core cmdliner))
+(executable
+  (name echo)
+  (modules echo)
+  (libraries ocons.core cmdliner))
+(executable
+  (name test_alloc)
+  (modules test_alloc)
+  (libraries core core_bench core_unix.command_unix))

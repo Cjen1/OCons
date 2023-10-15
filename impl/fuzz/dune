@@ -1,5 +1,7 @@
-(test
- (name test_msgs)
+(tests
+ (names test_msgs)
  (flags
   (:standard -w -27))
+ (preprocess
+  (pps ppx_jane))
  (libraries impl_core crowbar))

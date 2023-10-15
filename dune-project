@@ -11,7 +11,7 @@
   (name ocons)
   (synopsis "The infrastructure for pluggable consensus implementations")
   (depends 
-    (ocaml (= 5.0.0))
+    (ocaml (= 5.1.0))
     cmdliner
     iter
     accessor
@@ -24,8 +24,11 @@
     base
     core
     core_unix
-    eio
+    (eio (>= 0.11))
     eio_main
     eio_linux
     tdigest
+    irmin
+    irmin-containers
+    core_bench
     ))

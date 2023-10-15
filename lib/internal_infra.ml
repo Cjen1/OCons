@@ -5,7 +5,10 @@ open Utils
 open Consensus_intf
 
 module Ticker = struct
-  type t = {mutable next_tick: float; period: float; clock: Eio.Time.clock}
+  type t =
+    { mutable next_tick: float
+    ; period: float
+    ; clock: float Eio.Time.clock_ty Eio.Resource.t }
 
   let create clock period =
     {next_tick= Core.Float.(Eio.Time.now clock + period); period; clock}
@@ -25,7 +28,7 @@ module Make (C : Consensus_intf.S) = struct
     ; no_space_reporter: unit InternalReporter.reporter
     ; commit_reporter: unit InternalReporter.reporter
     ; main_loop_length_reporter: float InternalReporter.reporter
-    ; clock: Eio.Time.clock }
+    ; clock: float Eio.Time.clock_ty Eio.Resource.t }
 
   type t =
     { c_rx: command Eio.Stream.t
@@ -48,10 +51,10 @@ module Make (C : Consensus_intf.S) = struct
     let f : C.message action -> unit = function
       | Send (dst, msg) ->
           CMgr.send_blit t.cmgr dst (C.serialise msg) ;
-          dtraceln "Sent to %d: %a" dst C.message_pp msg
+          dtraceln "Sent to %d: %a" dst C.PP.message_pp msg
       | Broadcast msg ->
           CMgr.broadcast_blit t.cmgr (C.serialise msg) ;
-          dtraceln "Broadcast %a" C.message_pp msg
+          dtraceln "Broadcast %a" C.PP.message_pp msg
       | CommitCommands citer ->
           citer (fun cmd ->
               let res = apply t cmd in
@@ -69,7 +72,7 @@ module Make (C : Consensus_intf.S) = struct
   (** If any msgs to internal port exist then read and apply them *)
   let internal_msgs t =
     let iter_msg src msg =
-      dtraceln "Receiving msg from %d: %a" src C.message_pp msg ;
+      dtraceln "Receiving msg from %d: %a" src C.PP.message_pp msg ;
       let tcons, actions = C.advance t.cons (Recv (msg, src)) in
       t.cons <- tcons ;
       handle_actions t actions
@@ -115,6 +118,7 @@ module Make (C : Consensus_intf.S) = struct
             |> take_at_least_one (min num_to_take 8192)
                (* Limit total intake size *)
             |> Iter.map (fun c ->
+                   TRACE.ex_in c ;
                    t.debug.request_reporter () ;
                    c )
           in
@@ -122,7 +126,7 @@ module Make (C : Consensus_intf.S) = struct
           t.cons <- tcons ;
           handle_actions t actions )
 
-  let ensure_sent t =
+  let ensure_sent _t =
     (* We should flush here to ensure queueus aren't building up.
        However in practise that results in about a 2x drop in highest throughput
        So we just yield to the scheduler. This should cause writes to still be
@@ -132,7 +136,8 @@ module Make (C : Consensus_intf.S) = struct
 
        Expected outcome at system capacity is for queuing on outbound network capacity
     *)
-    CMgr.flush_all t.cmgr ; Fiber.yield ()
+    (*CMgr.flush_all t.cmgr ;*)
+    Fiber.yield ()
 
   let tick t () =
     dtraceln "Tick" ;
@@ -141,41 +146,42 @@ module Make (C : Consensus_intf.S) = struct
     handle_actions t actions
 
   let main_loop t =
-    try
-      (* Do internal mostly non-blocking things *)
-      let st = Eio.Time.now t.debug.clock in
-      internal_msgs t ;
-      admit_client_requests t ;
-      Ticker.tick t.ticker (tick t) ;
-      (* Then block to send all things *)
-      ensure_sent t ;
-      let dur = (Eio.Time.now t.debug.clock -. st) *. 1000. in
-      if dur > 0.01 then t.debug.main_loop_length_reporter dur ;
-      if dur > 100. then Magic_trace.take_snapshot () ;
-      ()
-    with e when Utils.is_not_cancel e ->
-      traceln "Failed with %a" Fmt.exn_backtrace
-        (e, Printexc.get_raw_backtrace ())
+    (* Do internal mostly non-blocking things *)
+    let st = Eio.Time.now t.debug.clock in
+    internal_msgs t ;
+    admit_client_requests t ;
+    Ticker.tick t.ticker (tick t) ;
+    (* Then block to send all things *)
+    ensure_sent t ;
+    let dur = (Eio.Time.now t.debug.clock -. st) *. 1000. in
+    if dur > 0.01 then t.debug.main_loop_length_reporter dur ;
+    if dur > 100. then Magic_trace.take_snapshot () ;
+    ()
 
-  let run_inter ~sw (clock : #Eio.Time.clock) node_id config period resolvers
-      client_msgs client_resps internal_streams =
+  let run_inter ~sw env node_id config period resolvers client_msgs client_resps
+      internal_streams =
     let cmgr =
       Ocons_conn_mgr.create ~sw resolvers C.parse (fun () ->
-          Eio.Time.sleep clock 1. )
+          Eio.Time.sleep env 1. )
     in
     let cons = C.create_node node_id config in
     let state_machine = Core.Hashtbl.create (module Core.String) in
-    let ticker = Ticker.create (clock :> Eio.Time.clock) period in
+    let ticker = Ticker.create (env :> float Eio.Time.clock_ty r) period in
+    let run (rep, should_run) =
+      should_run := true ;
+      rep
+    in
     let debug =
       { command_length_reporter=
-          InternalReporter.avg_reporter Int.to_float "cmd_len"
-      ; no_commands_reporter= InternalReporter.rate_reporter 0 "no-commands"
-      ; request_reporter= InternalReporter.rate_reporter 0 "request"
-      ; no_space_reporter= InternalReporter.rate_reporter 0 "no_space"
-      ; commit_reporter= InternalReporter.rate_reporter 0 "commit"
+          InternalReporter.avg_reporter Int.to_float "cmd_len" |> run
+      ; no_commands_reporter=
+          InternalReporter.rate_reporter "no-commands" |> run
+      ; request_reporter= InternalReporter.rate_reporter "request" |> run
+      ; no_space_reporter= InternalReporter.rate_reporter "no_space" |> run
+      ; commit_reporter= InternalReporter.rate_reporter "commit" |> run
       ; main_loop_length_reporter=
-          InternalReporter.avg_reporter Fun.id "main_loop_delay"
-      ; clock= (clock :> Eio.Time.clock) }
+          InternalReporter.avg_reporter Fun.id "main_loop_delay" |> run
+      ; clock= (env :> float Eio.Time.clock_ty r) }
     in
     let t =
       { c_tx= client_resps
@@ -192,8 +198,7 @@ module Make (C : Consensus_intf.S) = struct
     done ;
     Ocons_conn_mgr.close t.cmgr
 
-  let accept_handler internal_streams : Eio.Net.connection_handler =
-   fun sock addr ->
+  let accept_handler internal_streams sock addr =
     Utils.set_nodelay sock ;
     try
       let parse =
@@ -221,17 +226,10 @@ module Make (C : Consensus_intf.S) = struct
     in
     List.map (fun (id, r) -> (id, handshake r)) resolvers
 
-  type 'a env =
-    < clock: #Eio.Time.clock
-    ; net: #Eio.Net.t
-    ; mono_clock: #Eio.Time.Mono.t
-    ; domain_mgr: #Eio.Domain_manager.t
-    ; .. >
-    as
-    'a
-
-  let run ~sw (env : _ env) node_id config period resolvers client_msgs
+  let run ~sw env node_id config period resolvers client_msgs
       client_resps port =
+    TRACE.run_commit := true ;
+    TRACE.run_ex_in := true ;
     let internal_streams = Hashtbl.create (List.length resolvers) in
     Fiber.fork ~sw (fun () ->
         Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) (fun () ->
@@ -239,14 +237,14 @@ module Make (C : Consensus_intf.S) = struct
             @@ fun sw ->
             let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
             let sock =
-              Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw env#net addr
+              Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw (Eio.Stdenv.net env) addr
             in
             traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
             Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
               (accept_handler internal_streams) ) ) ;
     let resolvers = resolver_handshake node_id resolvers in
-    run_inter ~sw env#clock node_id config period resolvers client_msgs
-      client_resps internal_streams
+    run_inter ~sw (Eio.Stdenv.clock env) node_id config period resolvers client_msgs client_resps
+      internal_streams
 end
 
 module Test = struct
@@ -265,8 +263,6 @@ module Test = struct
 
     let should_ack_clients _ = true
 
-    let message_pp = Fmt.string
-
     let parse buf =
       let r = Eio.Buf_read.line buf in
       dtraceln "read %s" r ; r
@@ -277,11 +273,15 @@ module Test = struct
 
     type config = Core.Unit.t [@@deriving sexp_of]
 
-    let config_pp : config Fmt.t = Fmt.any "config"
-
     type t = {arr: command option Array.t; mutable len: int}
 
-    let t_pp ppf _ = Fmt.pf ppf "T"
+    module PP = struct
+      let message_pp = Fmt.string
+
+      let config_pp : config Fmt.t = Fmt.any "config"
+
+      let t_pp ppf _ = Fmt.pf ppf "T"
+    end
 
     let create_node _ () = {arr= Array.make 10 None; len= 0}
 

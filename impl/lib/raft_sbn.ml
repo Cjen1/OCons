@@ -43,37 +43,44 @@ module Types = struct
     ; config: config
     ; node_state: node_state
     ; current_term: term
-    ; append_entries_length: int Ocons_core.Utils.InternalReporter.reporter
     ; random: Random.State.t
     ; current_leader: node_id option }
   [@@deriving accessors]
 
-  let node_state_pp : node_state Fmt.t =
-   fun ppf v ->
-    let open Fmt in
-    match v with
-    | Follower {timeout} ->
-        pf ppf "Follower{timeout:%d}" timeout
-    | Candidate {quorum; timeout} ->
-        pf ppf "Candidate{quorum:%a, timeout:%d}" Quorum.pp quorum timeout
-    | Leader {rep_ackd; rep_sent; heartbeat} ->
-        let format_rep_map : int IntMap.t Fmt.t =
-         fun ppf v ->
-          let open Fmt in
-          let elts = v |> IntMap.bindings in
-          pf ppf "%a"
-            (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
-            elts
-        in
-        pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
-          format_rep_map rep_ackd format_rep_map rep_sent
+  let get_command idx t = (Log.get t.log idx).command |> Iter.singleton
 
-  let t_pp : t Fmt.t =
-   fun ppf t ->
-    Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
-      Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
-      (t.log |> Log.iter |> Iter.to_list)
-      t.commit_index t.current_term node_state_pp t.node_state
+  let get_commit_index t = t.commit_index
+
+  module PP = struct
+    include PP
+
+    let node_state_pp : node_state Fmt.t =
+     fun ppf v ->
+      let open Fmt in
+      match v with
+      | Follower {timeout} ->
+          pf ppf "Follower{timeout:%d}" timeout
+      | Candidate {quorum; timeout} ->
+          pf ppf "Candidate{quorum:%a, timeout:%d}" Quorum.pp quorum timeout
+      | Leader {rep_ackd; rep_sent; heartbeat} ->
+          let format_rep_map : int IntMap.t Fmt.t =
+           fun ppf v ->
+            let open Fmt in
+            let elts = v |> IntMap.bindings in
+            pf ppf "%a"
+              (brackets @@ list ~sep:comma @@ braces @@ pair ~sep:comma int int)
+              elts
+          in
+          pf ppf "Leader{heartbeat:%d; rep_ackd:%a; rep_sent:%a" heartbeat
+            format_rep_map rep_ackd format_rep_map rep_sent
+
+    let t_pp : t Fmt.t =
+     fun ppf t ->
+      Fmt.pf ppf "{log: %a; commit_index:%d; current_term: %d; node_state:%a}"
+        Fmt.(brackets @@ list ~sep:(const char ',') log_entry_pp)
+        (t.log |> Log.iter |> Iter.to_list)
+        t.commit_index t.current_term node_state_pp t.node_state
+  end
 end
 
 module Make
@@ -137,7 +144,7 @@ struct
     broadcast @@ RequestVote {term; lastIndex; lastTerm}
 
   let transit_follower ?voted_for:_ term =
-    Utils.traceln "Follower for term %d" term ;
+    traceln "Follower for term %d" term ;
     ex.@(t @> node_state) <-
       Follower {timeout= ex.@(t @> config @> election_timeout)} ;
     ex.@(t @> current_term) <- term
@@ -145,7 +152,7 @@ struct
   let transit_candidate () =
     let new_term = get_next_term () in
     let num_nodes = ex.@(t @> config @> num_nodes) in
-    Utils.traceln "Candidate for term %d" new_term ;
+    traceln "Candidate for term %d" new_term ;
     (* Vote for self *)
     let threshold = (num_nodes / 2) + 1 - 1 in
     ex.@(t @> node_state) <-
@@ -157,7 +164,7 @@ struct
     let ct = ex.@(t) in
     match ct.node_state with
     | Candidate _ ->
-        Utils.traceln "Leader for term %d" ct.current_term ;
+        traceln "Leader for term %d" ct.current_term ;
         let rep_ackd =
           ct.config.other_nodes |> List.to_seq
           |> Seq.map (fun i -> (i, -1))
@@ -246,7 +253,7 @@ struct
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        Utils.dtraceln "Failed to match\n%a" t_pp ex.@(t)
+        dtraceln "Failed to match\n%a" PP.t_pp ex.@(t)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _
       when request_vote_valid (RequestVote m) ->
@@ -272,20 +279,19 @@ struct
         | false ->
             (* Reply with the highest index known not to be replicated *)
             (* This will be the prev_log_index of the next msg *)
-            Utils.dtraceln
+            dtraceln
               "Failed to match\n\
                rooted_at_start(%b), matching_index_and_term(%b):\n\
                %a"
               rooted_at_start
               (matching_index_and_term ())
-              t_pp ct ;
+              PP.t_pp ct ;
             send lid
             @@ AppendEntriesResponse
                  { term= ct.current_term
                  ; success=
                      Error (min (prev_log_index - 1) (Log.highest ct.log)) }
         | true ->
-            ct.append_entries_length (snd entries) ;
             let index_iter =
               fst entries |> Iter.zip_i
               |> Iter.map (fun (i, v) -> (i + prev_log_index + 1, v))
@@ -369,8 +375,6 @@ struct
     ; config
     ; node_state= Follower {timeout= 0}
     ; current_term= 0
-    ; append_entries_length=
-        Ocons_core.Utils.InternalReporter.avg_reporter Int.to_float "ae_length"
     ; random= Random.State.make [|config.node_id|]
     ; current_leader= None }
 
