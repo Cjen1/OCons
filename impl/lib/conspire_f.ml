@@ -239,6 +239,10 @@ module Make (Value : Value) = struct
     Rep.add_commands t.rep ~node:t.config.node_id ci ;
     check_commit t
 
+  let acceptor_term_tick t term' =
+    if t.rep.state.term < term' then
+      t.rep.state.term <- term'
+
   let handle_steady_state t src (msg : Rep.success) =
     let option_bind o ~f = Option.value_map o ~default:(Ok ()) ~f in
     let%bind.Result () = option_bind msg.ctree ~f:(Rep.recv_update t.rep src) in
@@ -257,7 +261,9 @@ module Make (Value : Value) = struct
         set_state remote new_state ;
         acceptor_reply t src ;
         check_commit t ;
-        check_conflict_recovery t ) ;
+        check_conflict_recovery t;
+        acceptor_term_tick t new_state.term;
+      ) ;
     Result.return ()
 
   let handle_message t src (msg : Rep.message) :

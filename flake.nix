@@ -50,7 +50,6 @@
           ocaml-lsp-server = "*";
           ocamlformat = "0.25.1";
           utop = "*";
-          memtrace = "*";
         };
         repos = [
           opam-repository

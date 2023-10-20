@@ -69,7 +69,7 @@ end
 module Types = struct
   type config =
     { conspire: Conspire_f.config
-    ; higher_replica_ids: node_id list
+    ; lower_replica_ids: node_id list
     ; other_replica_ids: node_id list
     ; fd_timeout: int
     ; max_outstanding: int }
@@ -84,8 +84,8 @@ module Types = struct
     let other_replica_ids =
       List.filter replica_ids ~f:(fun i -> not (i = node_id))
     in
-    let higher_replica_ids =
-      List.take_while replica_ids ~f:(fun id -> id <> node_id)
+    let lower_replica_ids =
+      List.filter replica_ids ~f:(fun id -> id < node_id)
     in
     let conspire =
       Conspire_f.
@@ -93,7 +93,7 @@ module Types = struct
     in
     { conspire
     ; other_replica_ids
-    ; higher_replica_ids
+    ; lower_replica_ids
     ; fd_timeout
     ; max_outstanding }
 
@@ -129,9 +129,18 @@ struct
   include Conspire
   include Types
 
-  let is_leader t =
-    List.for_all t.config.higher_replica_ids ~f:(fun nid ->
-        not @@ FailureDetector.is_live t.failure_detector nid )
+  let is_leader =
+    let rep, run =
+      Ocons_core.Utils.InternalReporter.rate_reporter "is_leader"
+    in
+    fun t ->
+      run := true ;
+      let res =
+        List.for_all t.config.lower_replica_ids ~f:(fun nid ->
+            not @@ FailureDetector.is_live t.failure_detector nid )
+      in
+      if res then rep () ;
+      res
 
   let can_apply_requests t =
     let term_valid = t.conspire.rep.state.vterm = t.conspire.rep.state.term in
