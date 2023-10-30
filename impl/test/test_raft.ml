@@ -176,8 +176,7 @@ let%expect_test "append_entries from other leader" =
   in
   Fmt.pr "t1: %a\n" PP.t_pp t ;
   [%expect
-    {|
-    t1: {log: []; commit_index:-1; current_term: 1; node_state:Follower{timeout:5; voted_for:1}} |}]
+    {| t1: {log: []; commit_index:-1; current_term: 1; node_state:Follower{timeout:5; voted_for:1}} |}]
 
 let pp_res t actions =
   Fmt.pr "t: %a\n" PP.t_pp t ;
@@ -212,8 +211,7 @@ let%expect_test "Loop" =
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
   [%expect
-    {|
-    actions: [Broadcast(RequestVote {term:11; lastIndex:-1; lastTerm:0})] |}] ;
+    {| actions: [Broadcast(RequestVote {term:11; lastIndex:-1; lastTerm:0})] |}] ;
   let rv = RequestVote {term= 11; lastIndex= -1; lastTerm= 0} in
   let t1 = create (c3 1) in
   let t1, a1 = Impl.advance t1 (Recv (rv, 2)) in

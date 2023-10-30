@@ -168,9 +168,7 @@ let%expect_test "Loop" =
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
-  [%expect
-    {|
-    actions: [Broadcast(RequestVote {term:12; leader_commit:-1})] |}] ;
+  [%expect {| actions: [Broadcast(RequestVote {term:12; leader_commit:-1})] |}] ;
   let rv = RequestVote {term= 12; leader_commit= -1} in
   let t1 = create (c3 1) in
   let t1, a1 = Impl.advance t1 (Recv (rv, 2)) in
