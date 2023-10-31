@@ -1,33 +1,23 @@
-name: Build and runtest
+name: "CI"
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
+  push:
 
 jobs:
-   build:
-     name: Check build
-     runs-on: ubuntu-22.04
-     steps:
-      - uses: actions/checkout@v3
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-      - run: nix develop -c dune build
-   format:
-     name: Check formatting
-     runs-on: ubuntu-22.04
-     steps:
-      - uses: actions/checkout@v3
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-      - run: nix develop -c dune build @fmt
-   runtest:
-     name: Run tests
-     runs-on: ubuntu-22.04
-     steps:
-      - uses: actions/checkout@v3
-      - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-      - run: nix develop -c dune runtest
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@v4
+    - name: Run the Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@v1
+    - name: Run tests
+      run: |
+        nix develop -c dune runtest
+    - name: Format
+      run: |
+        nix develop -c dune build @fmt
+

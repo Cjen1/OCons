@@ -7,19 +7,20 @@ module type Value = sig
 end
 
 module CommandTree (Value : Value) = struct
-  module Key = struct 
+  module Key = struct
     include Md5
-    let pp ppf v =
-      Fmt.pf ppf "%s" (Md5.to_hex v)
+
+    let pp ppf v = Fmt.pf ppf "%s" (Md5.to_hex v)
   end
+
   type key = Key.t [@@deriving show, bin_io, equal, compare]
 
   let make_key =
-    let open struct 
+    let open struct
       type relevant_key_data = key * Value.t [@@deriving bin_io]
     end in
     fun parent_key value ->
-    Md5.digest_bin_prot bin_writer_relevant_key_data (parent_key, value)
+      Md5.digest_bin_prot bin_writer_relevant_key_data (parent_key, value)
 
   (* Map of vector clocks to values
      Aim to replicate this to other nodes
@@ -44,7 +45,8 @@ module CommandTree (Value : Value) = struct
 
   let root_key = Md5.digest_string ""
 
-  let get_key_of_node node = match node with None -> root_key | Some {key; _} -> key
+  let get_key_of_node node =
+    match node with None -> root_key | Some {key; _} -> key
 
   let get_idx_of_node node =
     match node with None -> 0 | Some {node= idx, _, _; _} -> idx
@@ -224,7 +226,7 @@ module CommandTree (Value : Value) = struct
         Some GT
     | Some ({node= ia, _, _; _} as na), Some ({node= ib, _, _; _} as nb) -> (
         let rec on_path t curr ({key= kt; node= it, _, _; _} as target) =
-          assert (get_idx_of_node curr >= it);
+          assert (get_idx_of_node curr >= it) ;
           match curr with
           | None ->
               false

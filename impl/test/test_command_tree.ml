@@ -78,9 +78,7 @@ let%expect_test "make_update" =
   let ct, _ = CTree.addv ct ~node:0 ~parent:ct.root (Iter.of_list [1; 2]) in
   let hd1 = Md5.of_hex_exn "5278a244879fc58054713fb2f920f455" in
   let partial_tree = ct in
-  Fmt.pr "%a@."
-    (Impl_core__Utils.pp_set CTree.Key.pp)
-    (Map.key_set ct.ctree) ;
+  Fmt.pr "%a@." (Impl_core__Utils.pp_set CTree.Key.pp) (Map.key_set ct.ctree) ;
   [%expect
     {|
     [5278a244879fc58054713fb2f920f455, 9b72f276548d04f7e1b6c1f1419a523b,

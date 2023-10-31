@@ -88,8 +88,7 @@ let accept_handler t sock addr =
       traceln "Client handler failed with %a" Fmt.exn_backtrace
         (e, Printexc.get_raw_backtrace ())
 
-let run (env) port
-    cmd_str res_str =
+let run env port cmd_str res_str =
   TRACE.run_cli_ex := true ;
   TRACE.run_in_ex := true ;
   Switch.run

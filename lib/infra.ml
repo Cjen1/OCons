@@ -15,7 +15,7 @@ module Make (C : Consensus_intf.S) = struct
   module Internal = Internal_infra.Make (C)
   module ExInfra = External_infra
 
-  let run (env) config =
+  let run env config =
     Switch.run
     @@ fun sw ->
     let command_stream = Eio.Stream.create config.stream_length in
@@ -45,8 +45,7 @@ module Make (C : Consensus_intf.S) = struct
       (fun () ->
         try
           Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) (fun () ->
-              ExInfra.run env config.external_port command_stream
-                result_stream )
+              ExInfra.run env config.external_port command_stream result_stream )
         with e when Utils.is_not_cancel e ->
           traceln "External infra failed" ;
           traceln "%a" Fmt.exn_backtrace (e, Printexc.get_raw_backtrace ()) ;

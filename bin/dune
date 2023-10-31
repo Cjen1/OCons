@@ -1,16 +1,19 @@
 (executable
-  (name cli)
-  (modules cli)
-  (libraries ocons.core cmdliner))
+ (name cli)
+ (modules cli)
+ (libraries ocons.core cmdliner))
+
 (executable
-  (name bench)
-  (modules bench)
-  (libraries ocons.core cmdliner))
+ (name bench)
+ (modules bench)
+ (libraries ocons.core cmdliner))
+
 (executable
-  (name echo)
-  (modules echo)
-  (libraries ocons.core cmdliner))
+ (name echo)
+ (modules echo)
+ (libraries ocons.core cmdliner))
+
 (executable
-  (name test_alloc)
-  (modules test_alloc)
-  (libraries core core_bench core_unix.command_unix))
+ (name test_alloc)
+ (modules test_alloc)
+ (libraries core core_bench core_unix.command_unix))

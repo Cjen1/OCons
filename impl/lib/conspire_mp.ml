@@ -91,11 +91,7 @@ module Types = struct
       Conspire_f.
         {node_id; replica_ids; other_replica_ids; replica_count; quorum_size}
     in
-    { conspire
-    ; other_replica_ids
-    ; lower_replica_ids
-    ; fd_timeout
-    ; max_outstanding }
+    {conspire; other_replica_ids; lower_replica_ids; fd_timeout; max_outstanding}
 
   type message = Conspire.message [@@deriving show, bin_io]
 
