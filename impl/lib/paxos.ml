@@ -297,6 +297,9 @@ struct
         dtraceln "Failed to match\n%a" PP.t_pp ex.@(t)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _ ->
+        ex.@(t @> node_state @> Follower.timeout) <-
+          ex.@(t @> config @> election_timeout) ;
+        (* Reply *)
         let t = ex.@(t) in
         let start = m.leader_commit + 1 in
         let entries = Log.iter_len t.log ~lo:start () in

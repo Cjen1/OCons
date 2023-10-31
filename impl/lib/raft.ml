@@ -293,6 +293,8 @@ struct
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _
       when request_vote_valid (RequestVote m) ->
+        ex.@(t @> node_state @> Follower.timeout) <-
+          ex.@(t @> config @> election_timeout) ;
         ex.@(t @> node_state @> Follower.voted_for) <- Some cid ;
         send cid
         @@ RequestVoteResponse {term= ex.@(t @> current_term); success= true}
