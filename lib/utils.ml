@@ -146,7 +146,13 @@ module InternalReporter = struct
       pf ppf "%a" pp s
     in
     let print_enabled = ref false in
-    let pp = [field name (fun _ -> print_enabled := true; state) pp_stats] in
+    let pp =
+      [ field name
+          (fun _ ->
+            print_enabled := true ;
+            state )
+          pp_stats ]
+    in
     let run_enabled = ref false in
     let update x =
       if !run_enabled && !print_enabled then (
@@ -251,3 +257,89 @@ let prime nth =
   in
   Iter.unfoldr unfold [] |> Iter.drop (nth - 1) |> Iter.head_exn
 
+let pp_hashtbl comp ppk ppv ppf v =
+  let open Core in
+  Fmt.pf ppf "%a"
+    Fmt.(brackets @@ list @@ parens @@ pair ppk ~sep:(any ":@ ") ppv)
+    Core.(v |> Hashtbl.to_alist |> List.sort ~compare:comp)
+
+module RemovableQueue (T : sig
+  module Index : Core.Hashtbl.Key
+
+  val pp_index : Index.t Fmt.t
+
+  type t [@@deriving sexp]
+
+  val pp : t Fmt.t
+
+  val to_index : t -> Index.t
+end) : sig
+  type t [@@deriving sexp, show]
+
+  val create : unit -> t
+
+  val add : t -> T.t -> unit
+
+  val remove : t -> T.Index.t -> unit
+
+  val take : t -> int -> T.t Core.Doubly_linked.t
+
+  val invariant : t -> unit
+end = struct
+  open Core
+
+  let pp_access =
+    let comp (a, _) (b, _) = [%compare: T.Index.t] a b in
+    pp_hashtbl comp T.pp_index (Fmt.any "ELT")
+
+  let pp_queue ppf v =
+    Fmt.pf ppf "%a"
+      Fmt.(braces @@ list ~sep:comma T.pp)
+      (Doubly_linked.to_list v)
+
+  type t =
+    { access: (T.t Doubly_linked.Elt.t[@sexp.opaque]) Hashtbl.M(T.Index).t
+          [@printer pp_access]
+    ; queue: T.t Doubly_linked.t [@printer pp_queue] }
+  [@@deriving sexp, show]
+
+  let invariant t : unit =
+    Invariant.invariant [%here] t [%sexp_of: t] (fun () ->
+        Doubly_linked.iteri t.queue ~f:(fun idx v ->
+            let id = T.to_index v in
+            if not (Hashtbl.mem t.access id) then
+              Fmt.failwith "Unable to find (%d:%a) in accessor" idx T.pp_index
+                id ) ;
+        Hashtbl.iteri t.access ~f:(fun ~key ~data ->
+            if not (Doubly_linked.mem_elt t.queue data) then
+              Fmt.failwith "Unable to find elt for %a in queue" T.pp_index key ) )
+
+  let create () =
+    {access= Hashtbl.create (module T.Index); queue= Doubly_linked.create ()}
+
+  let add t c =
+    let id = T.to_index c in
+    if not (Hashtbl.mem t.access id) then
+      let elt = Doubly_linked.insert_last t.queue c in
+      Hashtbl.add_exn t.access ~key:id ~data:elt
+
+  let remove t id =
+    match Hashtbl.find t.access id with
+    | None ->
+        ()
+    | Some elt ->
+        Doubly_linked.remove t.queue elt ;
+        Hashtbl.remove t.access id
+
+  let take t n =
+    if Doubly_linked.is_empty t.queue then Doubly_linked.create ()
+    else
+      let taken, rest =
+        Doubly_linked.partitioni_tf t.queue ~f:(fun i _ -> i < n)
+      in
+      Doubly_linked.clear t.queue ;
+      Doubly_linked.transfer ~src:rest ~dst:t.queue ;
+      Doubly_linked.iter taken ~f:(fun v ->
+          Hashtbl.remove t.access (T.to_index v) ) ;
+      taken
+end
