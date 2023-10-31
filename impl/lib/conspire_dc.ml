@@ -2,10 +2,13 @@ open! Core
 open Types
 module Time = Time_float_unix
 
+let pp_time_float_unix : Time.t Fmt.t =
+ fun ppf v -> Fmt.pf ppf "%0.5f" (Utils.time_to_float v)
+
 module Value = struct
   let pp_command = Command.pp
 
-  type t = command list * Time.t
+  type t = command list * (Time.t[@printer pp_time_float_unix])
   [@@deriving compare, equal, hash, bin_io, sexp, show]
 
   let empty = ([], Time.epoch)
@@ -26,13 +29,10 @@ end
 *)
 
 module DelayReorderBuffer = struct
-  let pp_time_float_unix : Time.t Fmt.t =
-   fun ppf v -> Fmt.pf ppf "%0.5f" (Utils.time_to_float v)
-
   type 'a t =
     { mutable store: 'a list Map.M(Time).t
           [@polyprinter fun pa -> Utils.pp_map pp_time_float_unix pa]
-    ; mutable hwm: Time.t
+    ; mutable hwm: Time.t [@printer pp_time_float_unix]
     ; interval: Time.Span.t
     ; compare: 'a -> 'a -> int }
   [@@deriving show {with_path= false}]
@@ -121,7 +121,7 @@ module Types = struct
     ; clock= (clock :> float Eio.Time.clock_ty Eio.Time.clock) }
 
   type message =
-    | Commands of (Command.t list * Time.t)
+    | Commands of (Command.t list * (Time.t[@printer pp_time_float_unix]))
     | Conspire of Conspire.message
   [@@deriving show, bin_io]
 
