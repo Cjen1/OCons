@@ -238,9 +238,10 @@ struct
             | AppendEntriesResponse {term; _}
             | RequestVote {term; _}
             | RequestVoteResponse {term; _} )
-          , _ )
-      , _ )
+          , src )
+      , _)
       when term > ex.@(t @> current_term) ->
+        traceln "Follower for node %d for term %d" src term;
         transit_follower term
     | _ ->
         ()
@@ -276,6 +277,7 @@ struct
     (* Recv msgs from this term*)
     (* Candidate *)
     | Recv (RequestVoteResponse m, src), Candidate _ ->
+        traceln "Received vote from %d" src;
         assert (m.term = ex.@(t @> current_term)) ;
         let entries, _ = m.entries in
         let q_entries =
