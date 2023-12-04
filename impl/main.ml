@@ -37,7 +37,7 @@ let run kind node_id node_addresses internal_port external_port tick_period
     ; node_id
     ; election_timeout
     ; max_outstanding
-    ; max_append_entries= 8192 }
+    ; max_append_entries= 512 }
   in
   let config cons_config =
     Infra.

@@ -65,25 +65,38 @@ module Types = struct
 
   module PP = struct
     let message_pp ppf v =
+      let verb = true in
       let open Fmt in
       match v with
       | RequestVote {term; leader_commit} ->
           pf ppf "RequestVote {term:%d; leader_commit:%d}" term leader_commit
       | RequestVoteResponse {term; start_index; entries= entries, len} ->
-          pf ppf
-            "RequestVoteResponse {term:%d; start_index:%d; entries_length:%d; \
-             entries: %a}"
-            term start_index len
-            (brackets @@ list ~sep:(const char ',') log_entry_pp)
-            (entries |> Iter.to_list)
+          if verb then
+            pf ppf
+              "RequestVoteResponse {term:%d; start_index:%d; \
+               entries_length:%d; entries: %a}"
+              term start_index len
+              (brackets @@ list ~sep:(const char ',') log_entry_pp)
+              (entries |> Iter.to_list)
+          else
+            pf ppf
+              "RequestVoteResponse {term:%d; start_index:%d; \
+               entries_length:%d; entries: _ }"
+              term start_index len
       | AppendEntries
           {term; leader_commit; prev_log_index; prev_log_term; entries} ->
-          pf ppf
-            "AppendEntries {term: %d; leader_commit: %d; prev_log_index: %d; \
-             prev_log_term: %d; entries_length: %d; entries: %a}"
-            term leader_commit prev_log_index prev_log_term (snd entries)
-            (brackets @@ list ~sep:(const char ',') log_entry_pp)
-            (fst entries |> Iter.to_list)
+          if verb then
+            pf ppf
+              "AppendEntries {term: %d; leader_commit: %d; prev_log_index: %d; \
+               prev_log_term: %d; entries_length: %d; entries: %a}"
+              term leader_commit prev_log_index prev_log_term (snd entries)
+              (brackets @@ list ~sep:(const char ',') log_entry_pp)
+              (fst entries |> Iter.to_list)
+          else
+            pf ppf
+              "AppendEntries {term: %d; leader_commit: %d; prev_log_index: %d; \
+               prev_log_term: %d; entries_length: %d; entries: _}"
+              term leader_commit prev_log_index prev_log_term (snd entries)
       | AppendEntriesResponse {term; success; _} ->
           pf ppf "AppendEntriesResponse {term: %d; success: %a}" term
             (result
@@ -142,28 +155,27 @@ struct
     match ct.node_state with
     | Leader s ->
         let highest = Log.highest ct.log in
-        (* Assume we are going to send up to highest to each *)
-        let send_f id highest_sent =
-          let lo = highest_sent + 1 in
-          let len =
-            min (highest - lo) ex.@(t @> config @> max_append_entries)
-          in
-          let hi = lo + len in
-          (* so we want to send the segment [lo -> hi] inclusive *)
-          if lo <= hi || force then
-            let prev_log_index = lo - 1 in
-            let entries = Log.iter_len ct.log ~lo ~hi () in
-            send id
-            @@ AppendEntries
-                 { term= ct.current_term
-                 ; leader_commit= ex.@(t @> commit_index)
-                 ; prev_log_index
-                 ; prev_log_term= get_log_term ct.log prev_log_index
-                 ; entries }
-        in
-        IntMap.iter send_f s.rep_sent ;
         ex.@(t @> node_state @> Leader.rep_sent) <-
-          IntMap.map (fun _ -> highest) s.rep_sent
+          IntMap.mapi
+            (fun id highest_sent ->
+              let lo = highest_sent + 1 in
+              let len =
+                min (highest - lo) ex.@(t @> config @> max_append_entries)
+              in
+              let hi = lo + len in
+              (* so we want to send the segment [lo -> hi] inclusive *)
+              ( if lo <= hi || force then
+                  let prev_log_index = lo - 1 in
+                  let entries = Log.iter_len ct.log ~lo ~hi () in
+                  send id
+                  @@ AppendEntries
+                       { term= ct.current_term
+                       ; leader_commit= ex.@(t @> commit_index)
+                       ; prev_log_index
+                       ; prev_log_term= get_log_term ct.log prev_log_index
+                       ; entries } ) ;
+              hi )
+            s.rep_sent
     | _ ->
         assert false
 
@@ -239,9 +251,9 @@ struct
             | RequestVote {term; _}
             | RequestVoteResponse {term; _} )
           , src )
-      , _)
+      , _ )
       when term > ex.@(t @> current_term) ->
-        traceln "Follower for node %d for term %d" src term;
+        traceln "Follower for node %d for term %d" src term ;
         transit_follower term
     | _ ->
         ()
@@ -277,7 +289,7 @@ struct
     (* Recv msgs from this term*)
     (* Candidate *)
     | Recv (RequestVoteResponse m, src), Candidate _ ->
-        traceln "Received vote from %d" src;
+        traceln "Received vote from %d" src ;
         assert (m.term = ex.@(t @> current_term)) ;
         let entries, _ = m.entries in
         let q_entries =
@@ -296,7 +308,6 @@ struct
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
         A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        dtraceln "Failed to match\n%a" PP.t_pp ex.@(t)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _ ->
         ex.@(t @> node_state @> Follower.timeout) <-
@@ -330,11 +341,9 @@ struct
             (* This will be the prev_log_index of the next msg *)
             dtraceln
               "Failed to match\n\
-               rooted_at_start(%b), matching_index_and_term(%b):\n\
-               %a"
+               rooted_at_start(%b), matching_index_and_term(%b):\n"
               rooted_at_start
-              (matching_index_and_term ())
-              PP.t_pp ct ;
+              (matching_index_and_term ()) ;
             send lid
             @@ AppendEntriesResponse
                  { term= ct.current_term
@@ -386,7 +395,7 @@ struct
         transit_candidate ()
     | Candidate {timeout; _} when timeout <= 0 ->
         send_request_vote () ;
-        ex.@(t @> node_state @> Candidate.timeout) <- 1
+        ex.@(t @> node_state @> Candidate.timeout) <- ex.@(t @> config @> election_timeout)
     | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1
@@ -414,8 +423,8 @@ struct
   let advance_raw e =
     resolve_event e ;
     resolve_timeouts () ;
-    check_conditions () ;
-    check_commit ()
+    check_commit () ;
+    check_conditions ()
 
   let advance t e = run_side_effects (fun () -> advance_raw e) t
 
