@@ -8,7 +8,7 @@ module RMain_sbn = Infra.Make (Impl_core.RaftSBN)
 module PRMain = Infra.Make (Impl_core.PrevoteRaft)
 module PRMain_sbn = Infra.Make (Impl_core.PrevoteRaftSBN)
 module ConspireSSMain = Infra.Make (Impl_core.ConspireSS)
-module ConspireMPMain = Infra.Make (Impl_core.ConspireMP)
+module ConspireLeaderMain = Infra.Make (Impl_core.ConspireLeader)
 module ConspireDCMain = Infra.Make (Impl_core.ConspireDC)
 
 type kind =
@@ -18,7 +18,7 @@ type kind =
   | Raft_sbn
   | PRaft_sbn
   | ConspireSS
-  | ConspireMP
+  | ConspireLeader
   | ConspireDC
 
 let run kind node_id node_addresses internal_port external_port tick_period
@@ -104,19 +104,19 @@ let run kind node_id node_addresses internal_port external_port tick_period
       Eio.traceln "Starting Conspire with single-shot instances per log entry" ;
       Eio.traceln "config = %a" Impl_core.ConspireSS.PP.config_pp conspire_cfg ;
       ConspireSSMain.run env cfg
-  | ConspireMP ->
+  | ConspireLeader ->
       let replica_ids =
         List.map (fun (i, _) -> i) node_addresses
         |> Core.List.sort ~compare:Int.compare
       in
       let conspire_cfg =
-        Impl_core.ConspireMP.make_config ~node_id ~replica_ids
+        Impl_core.ConspireLeader.make_config ~node_id ~replica_ids
           ~fd_timeout:election_timeout ~max_outstanding ()
       in
       let cfg = config conspire_cfg in
       Eio.traceln "Starting Conspire" ;
-      Eio.traceln "config = %a" Impl_core.ConspireMP.PP.config_pp conspire_cfg ;
-      ConspireMPMain.run env cfg
+      Eio.traceln "config = %a" Impl_core.ConspireLeader.PP.config_pp conspire_cfg ;
+      ConspireLeaderMain.run env cfg
   | ConspireDC ->
       let replica_ids =
         List.map (fun (i, _) -> i) node_addresses
@@ -295,7 +295,7 @@ let cmd =
         ; ("prevote-raft", PRaft)
         ; ("prevote-raft+sbn", PRaft_sbn)
         ; ("conspire-ss", ConspireSS)
-        ; ("conspire-mp", ConspireMP)
+        ; ("conspire-leader", ConspireLeader)
         ; ("conspire-dc", ConspireDC) ]
     in
     Arg.(

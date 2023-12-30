@@ -166,9 +166,9 @@ module ConspireSS = struct
   let serialise = Line_prot.ConspireSS.serialise
 end
 
-module ConspireMP = struct
-  include Conspire_mp.Types
-  include Conspire_mp.Impl
+module ConspireLeader = struct
+  include Conspire_leader.Types
+  include Conspire_leader.Impl
 
   let create_node _ = create
 

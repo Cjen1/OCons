@@ -1,5 +1,5 @@
 open! Core
-module MP = Impl_core__Conspire_mp
+module MP = Impl_core__Conspire_leader
 module Imp = Impl_core__Actions_f.ImperativeActions (MP.Types)
 module Impl = MP.Make (Imp)
 module Rep = MP.Conspire.Rep
@@ -36,7 +36,7 @@ let%expect_test "local_commit" =
              remotes = <opaque> };
            other_nodes_state = []; config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = []; timeout = 2 };
+         { Conspire_leader.FailureDetector.state = []; timeout = 2 };
          stall_checker = <opaque> }
     actions: [] |}] ;
   let c1 = make_command (Read "c1") in
@@ -62,7 +62,7 @@ let%expect_test "local_commit" =
            other_nodes_state = []; config = <opaque>;
            commit_log = [[Command(Read c1, 1)]] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = []; timeout = 2 };
+         { Conspire_leader.FailureDetector.state = []; timeout = 2 };
          stall_checker = <opaque> }
     actions: [CommitCommands(Command(Read c1, 1))] |}] ;
   let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
@@ -94,7 +94,7 @@ let%expect_test "local_commit" =
            commit_log =
            [[Command(Read c1, 1)][Command(Read c2, 3); Command(Read c3, 2)]] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = []; timeout = 2 };
+         { Conspire_leader.FailureDetector.state = []; timeout = 2 };
          stall_checker = <opaque> }
     actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))] |}]
 
@@ -136,8 +136,8 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(1,{ ctree =
                        (Some { new_head = 1183a904cd1a3b8f3cf219be9367701f;
@@ -208,8 +208,8 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(0: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(0: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [] |}] ;
   let t0_vote =
@@ -248,8 +248,8 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(0: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(0: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(0,{ ctree = None;
                        cons =
@@ -288,8 +288,8 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [] |}] ;
   let t0, actions = Impl.advance t0 (Recv (Ok t0_vote, 2)) in
@@ -323,8 +323,8 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [[Command(Read c1, 1)]] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [CommitCommands(Command(Read c1, 1))
               Send(1,{ ctree = None;
@@ -385,8 +385,8 @@ let%expect_test "e2e conflict resolution" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(1,{ ctree =
                        (Some { new_head = 1fddcd0db3e43a000153d0c4de56a7cc;
@@ -470,8 +470,8 @@ let%expect_test "e2e conflict resolution" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [] |}] ;
   (* ---- Votes for values ---- *)
@@ -538,8 +538,8 @@ let%expect_test "e2e conflict resolution" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(1,{ ctree = None;
                        cons =
@@ -611,8 +611,8 @@ let%expect_test "e2e conflict resolution" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(1,{ ctree = None;
                        cons =
@@ -673,8 +673,8 @@ let%expect_test "message loss" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(1,{ ctree =
                        (Some { new_head = 1fddcd0db3e43a000153d0c4de56a7cc;
@@ -769,8 +769,8 @@ let%expect_test "message loss" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [CommitCommands(Command(Read c0, 1))
               Send(1,{ ctree = None;
@@ -826,8 +826,8 @@ let%expect_test "message loss" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(1,{ ctree =
                        (Some { new_head = b1d8bad167372c336ae91f91677feca1;
@@ -896,8 +896,8 @@ let%expect_test "message loss" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(0: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(0: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(0,{ commit = d41d8cd98f00b204e9800998ecf8427e })] |}] ;
   let t0, actions =
@@ -938,8 +938,8 @@ let%expect_test "message loss" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
          failure_detector =
-         { Conspire_mp.FailureDetector.state = [(1: 2)(2: 2)(3: 2)]; timeout = 2
-           };
+         { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
+           timeout = 2 };
          stall_checker = <opaque> }
     actions: [Send(1,{ ctree =
                        (Some { new_head = b1d8bad167372c336ae91f91677feca1;
