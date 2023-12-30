@@ -630,8 +630,7 @@ let%expect_test "Missing elements" =
     {|
     +Failed to match
     +rooted_at_start(false), matching_index_and_term(false):
-    +{log:
-    +[]; commit_index:-1; current_term: 11; node_state:Follower{timeout:5; voted_for:0}}
+    +
     t: {log: []; commit_index:-1; current_term: 11; node_state:Follower{timeout:5; voted_for:0}}
     actions:
     [Send(0,AppendEntriesResponse {term: 11; success: Error: -1})] |}] ;
@@ -640,9 +639,6 @@ let%expect_test "Missing elements" =
   pp_res t actions ;
   [%expect
     {|
-    +Failed to match
-    +{log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
-    +[{1, -1}, {2, -1}]; rep_sent:[{1, -1}, {2, 2}]}
     t: {log: [{command: Command(NoOp, -1); term : 11},{command: Command(Read m1, 1); term : 11},{command: Command(Read m2, 2); term : 11}]; commit_index:-1; current_term: 11; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 2}, {2, 2}]}
     actions: [Send(1,AppendEntries {term: 11; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 3; entries:
