@@ -166,24 +166,32 @@ module SegmentLog = struct
       (i mod t.segmentsize) v ;
     if t.vhi < i then t.vhi <- i
 
+  let norm t lo hi =
+    let lo = min lo t.vhi in
+    let lo = max lo 0 in
+    let hi = min hi t.vhi in
+    let hi = max hi (-1) in
+    (lo, hi)
+
   let to_seq t ?(lo = 0) ?(hi = t.vhi) : 'a Seq.t =
-    let lo = max 0 lo in
+    let lo, hi = norm t lo hi in
     Seq.unfold (fun i -> if i <= hi then Some (get t i, i + 1) else None) lo
 
   let to_seqi t ?(lo = 0) ?(hi = t.vhi) : 'a Seq.t =
-    let lo = max 0 lo in
+    let lo, hi = norm t lo hi in
     Seq.unfold
       (fun i -> if i <= hi then Some ((i, get t i), i + 1) else None)
       lo
 
   let iteri t ?(lo = 0) ?(hi = t.vhi) : (int * 'a) Iter.t =
-    let lo = max 0 lo in
+    let lo, hi = norm t lo hi in
     fun f ->
       for i = lo to hi do
         f (i, get t i)
       done
 
   let iteri_len t ?(lo = 0) ?(hi = t.vhi) () : (int * 'a) Iter.t * int =
+    let lo, hi = norm t lo hi in
     let iter f = iteri t ~lo ~hi f in
     let len = hi - lo + 1 in
     if not (Iter.length iter = len) then
@@ -313,7 +321,9 @@ let pp_set pp : _ Set.t Fmt.t =
  fun ppf v ->
   Fmt.pf ppf "%a" Fmt.(brackets @@ list ~sep:comma @@ pp) (Set.to_list v)
 
-let float_to_time f = f |> Time_float_unix.Span.of_sec |> Time_float_unix.of_span_since_epoch
+let float_to_time f =
+  f |> Time_float_unix.Span.of_sec |> Time_float_unix.of_span_since_epoch
 
 let time_to_float t =
-  t |> Time_float_unix.to_span_since_epoch |> Time_float_unix.Span.to_proportional_float
+  t |> Time_float_unix.to_span_since_epoch
+  |> Time_float_unix.Span.to_proportional_float

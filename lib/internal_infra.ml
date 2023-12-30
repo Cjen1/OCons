@@ -20,6 +20,16 @@ module Ticker = struct
       f () )
 end
 
+module CommandQueue = RemovableQueue (struct
+  module Index = Core.Int
+
+  let pp_index = Fmt.int
+
+  type t = Command.t [@@deriving sexp, show]
+
+  let to_index t = t.Command.id
+end)
+
 module Make (C : Consensus_intf.S) = struct
   type debug =
     { command_length_reporter: int InternalReporter.reporter
@@ -38,13 +48,11 @@ module Make (C : Consensus_intf.S) = struct
     ; mutable cons: C.t
     ; ticker: Ticker.t
     ; internal_streams: (node_id, C.message Eio.Stream.t) Hashtbl.t
+    ; command_queue: CommandQueue.t
+    ; applied_txns: Core.Hash_set.M(Int).t
     ; debug: debug }
 
   let apply (t : t) (cmd : command) : op_result =
-    (* TODO truncate
-          ie from each client record the high water mark of results and remove lower than that
-       Core.Hash_set.remove t.inflight_txns cmd.id ;
-    *)
     update_state_machine t.state_machine cmd
 
   let handle_actions t actions =
@@ -57,6 +65,8 @@ module Make (C : Consensus_intf.S) = struct
           dtraceln "Broadcast %a" C.PP.message_pp msg
       | CommitCommands citer ->
           citer (fun cmd ->
+              CommandQueue.remove t.command_queue cmd.id ;
+              Core.Hash_set.add t.applied_txns cmd.id ;
               let res = apply t cmd in
               TRACE.commit cmd ;
               if C.should_ack_clients t.cons then (
@@ -83,40 +93,29 @@ module Make (C : Consensus_intf.S) = struct
        Iter.of_gen (fun () -> Eio.Stream.take_nonblocking s)
        |> Iter.iter (iter_msg src)
 
-  let take_at_least_one =
-    let open struct
-      exception ExitTake
-    end in
-    fun n seq k ->
-      if n < 1 then
-        Fmt.invalid_arg "take_at_least_one must take at least one, but took %d"
-          n ;
-      let count = ref 1 in
-      try
-        seq (fun x ->
-            k x ;
-            if !count = n then raise_notrace ExitTake ;
-            incr count )
-      with ExitTake -> ()
-
-  (** Recv client msgs *)
+  (* TODO just let other end add to the list maybe? *)
   let admit_client_requests t =
-    match C.available_space_for_commands t.cons with
-    | num_to_take when num_to_take <= 0 ->
-        t.debug.no_space_reporter ()
-    | num_to_take -> (
+    let cmd_iter =
       match Eio.Stream.take_nonblocking t.c_rx with
       | None ->
-          t.debug.no_commands_reporter ()
+          Iter.empty
       | Some c1 ->
-          let rec str_iter k =
-            Eio.Stream.take_nonblocking t.c_rx
-            |> Option.iter (fun i -> k i ; (str_iter [@tailcall]) k)
-          in
+          Iter.cons c1
+            (Iter.from_fun (fun () -> Eio.Stream.take_nonblocking t.c_rx))
+    in
+    cmd_iter (fun c ->
+        if not (Core.Hash_set.mem t.applied_txns c.Command.id) then
+          CommandQueue.add t.command_queue c ) ;
+    match C.available_space_for_commands t.cons with
+    | space when space <= 0 ->
+        t.debug.no_space_reporter ()
+    | space ->
+        let elts = CommandQueue.take t.command_queue space in
+        if Core.Doubly_linked.is_empty elts then t.debug.no_commands_reporter ()
+        else
           let iter =
-            Iter.cons c1 str_iter
-            |> take_at_least_one (min num_to_take 8192)
-               (* Limit total intake size *)
+            Core.Doubly_linked.iter elts
+            |> Iter.from_labelled_iter
             |> Iter.map (fun c ->
                    TRACE.ex_in c ;
                    t.debug.request_reporter () ;
@@ -124,7 +123,7 @@ module Make (C : Consensus_intf.S) = struct
           in
           let tcons, actions = C.advance t.cons (Commands iter) in
           t.cons <- tcons ;
-          handle_actions t actions )
+          handle_actions t actions
 
   let ensure_sent _t =
     (* We should flush here to ensure queueus aren't building up.
@@ -191,6 +190,8 @@ module Make (C : Consensus_intf.S) = struct
       ; state_machine
       ; ticker
       ; internal_streams
+      ; command_queue= CommandQueue.create ()
+      ; applied_txns= Core.Hash_set.create (module Core.Int)
       ; debug }
     in
     while true do
@@ -226,8 +227,8 @@ module Make (C : Consensus_intf.S) = struct
     in
     List.map (fun (id, r) -> (id, handshake r)) resolvers
 
-  let run ~sw env node_id config period resolvers client_msgs
-      client_resps port =
+  let run ~sw env node_id config period resolvers client_msgs client_resps port
+      =
     TRACE.run_commit := true ;
     TRACE.run_ex_in := true ;
     let internal_streams = Hashtbl.create (List.length resolvers) in
@@ -237,14 +238,15 @@ module Make (C : Consensus_intf.S) = struct
             @@ fun sw ->
             let addr = `Tcp (Eio.Net.Ipaddr.V4.any, port) in
             let sock =
-              Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw (Eio.Stdenv.net env) addr
+              Eio.Net.listen ~reuse_addr:true ~backlog:4 ~sw
+                (Eio.Stdenv.net env) addr
             in
             traceln "Listening on %a" Eio.Net.Sockaddr.pp addr ;
             Eio.Net.run_server ~on_error:(dtraceln "%a" Fmt.exn) sock
               (accept_handler internal_streams) ) ) ;
     let resolvers = resolver_handshake node_id resolvers in
-    run_inter ~sw (Eio.Stdenv.clock env) node_id config period resolvers client_msgs client_resps
-      internal_streams
+    run_inter ~sw (Eio.Stdenv.clock env) node_id config period resolvers
+      client_msgs client_resps internal_streams
 end
 
 module Test = struct

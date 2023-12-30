@@ -76,7 +76,8 @@ let is_open t = not t.should_close
 let switch_run ~on_error f =
   try Switch.run f with e when is_not_cancel e -> on_error e
 
-let create ?connected ~sw (f : Switch.t -> Eio.Flow.two_way_ty Flow.two_way) delayer =
+let create ?connected ~sw (f : Switch.t -> Eio.Flow.two_way_ty Flow.two_way)
+    delayer =
   let t =
     { conn_state= Closed
     ; should_close= false
@@ -135,7 +136,11 @@ let%expect_test "PersistantConn" =
     ; `Return "3\n"
     ; `Return "4\n"
     ; `Raise End_of_file ] ;
-  let c = create ~sw (fun _ -> (!f :> Eio.Flow.two_way_ty Eio.Flow.two_way)) (fun () -> ()) in
+  let c =
+    create ~sw
+      (fun _ -> (!f :> Eio.Flow.two_way_ty Eio.Flow.two_way))
+      (fun () -> ())
+  in
   let p_line = Buf_read.line in
   print_endline (recv c p_line) ;
   [%expect {|

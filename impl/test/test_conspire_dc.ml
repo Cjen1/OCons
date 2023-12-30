@@ -52,8 +52,7 @@ let%expect_test "local_commit" =
              remotes = <opaque> };
            other_nodes_state = []; config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 0.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [] |}] ;
@@ -74,14 +73,12 @@ let%expect_test "local_commit" =
              remotes = <opaque> };
            other_nodes_state = []; config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = [(1.00000: [Command(Read c0, 1)])];
-           hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
-           };
+         { store = [(1.00000: [Command(Read c0, 1)])]; hwm = 0.00000;
+           interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
-                           ([Command(Read c0, 1)],
-                            1970-01-01 01:00:01.000000+01:00)))] |}] ;
+                           ([Command(Read c0, 1)], 1.00000)))] |}] ;
   ac0 1. ;
   [%expect {| +mock time is now 1 |}] ;
   let t, actions = Impl.advance t Tick in
@@ -99,17 +96,15 @@ let%expect_test "local_commit" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state = []; config = <opaque>;
-           commit_log =
-           [([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00)] };
+           commit_log = [([Command(Read c0, 1)], 1.00000)] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 1.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [CommitCommands(Command(Read c0, 1))] |}] ;
@@ -130,23 +125,20 @@ let%expect_test "local_commit" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state = []; config = <opaque>;
-           commit_log =
-           [([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00)] };
+           commit_log = [([Command(Read c0, 1)], 1.00000)] };
          command_buffer =
          { store = [(2.00000: [Command(Read c2, 3); Command(Read c1, 2)])];
-           hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s; compare = <fun>
-           };
+           hwm = 1.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
-                           ([Command(Read c1, 2); Command(Read c2, 3)],
-                            1970-01-01 01:00:02.000000+01:00)))] |}] ;
+                           ([Command(Read c1, 2); Command(Read c2, 3)], 2.00000)))] |}] ;
   ac0 1. ;
   [%expect {| +mock time is now 2 |}] ;
   let t, actions = Impl.advance t Tick in
@@ -164,27 +156,24 @@ let%expect_test "local_commit" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (ccfc0ddc71cfcede53a100a51835b7ff:
                  { node =
                    (2, 34e452ffd92c22ea72ef125a33a0a593,
-                    ([Command(Read c1, 2); Command(Read c2, 3)],
-                     1970-01-01 01:00:02.000000+01:00));
+                    ([Command(Read c1, 2); Command(Read c2, 3)], 2.00000));
                    parent = <opaque>; key = ccfc0ddc71cfcede53a100a51835b7ff });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state = []; config = <opaque>;
            commit_log =
-           [([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00)
-            ([Command(Read c1, 2); Command(Read c2, 3)],
-             1970-01-01 01:00:02.000000+01:00)]
+           [([Command(Read c0, 1)], 1.00000)
+            ([Command(Read c1, 2); Command(Read c2, 3)], 2.00000)]
            };
          command_buffer =
-         { store = [(2.00000: [Command(Read c1, 2)])];
-           hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s; compare = <fun>
-           };
+         { store = [(2.00000: [Command(Read c1, 2)])]; hwm = 2.00000;
+           interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 2; limit = 100 };
          clock = <opaque> }
     actions: [CommitCommands(Command(Read c1, 2), Command(Read c2, 3))] |}]
@@ -198,8 +187,9 @@ let%expect_test "e2e commit" =
   let t1 = create (c4 1 clk1) in
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
-  print t0 actions;
-  [%expect {|
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -222,20 +212,18 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = [(1.00000: [Command(Read c1, 1)])];
-           hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
-           };
+         { store = [(1.00000: [Command(Read c1, 1)])]; hwm = 0.00000;
+           interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
-                           ([Command(Read c1, 1)],
-                            1970-01-01 01:00:01.000000+01:00)))] |}] ;
+                           ([Command(Read c1, 1)], 1.00000)))] |}] ;
   let t1, actions =
-    Impl.advance t1
-      (Recv ((Commands ([c1], Utils.float_to_time 1.)), 0))
+    Impl.advance t1 (Recv (Commands ([c1], Utils.float_to_time 1.), 0))
   in
-  print t1 actions;
-  [%expect {|
+  print t1 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -258,18 +246,20 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = [(1.00000: [Command(Read c1, 1)])];
-           hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
-           };
+         { store = [(1.00000: [Command(Read c1, 1)])]; hwm = 0.00000;
+           interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
-    actions: [] |}];
-  ac0 1.; ac1 1.;
-  [%expect{|
+    actions: [] |}] ;
+  ac0 1. ;
+  ac1 1. ;
+  [%expect {|
     +mock time is now 1
-    +mock time is now 1 |}];
-  let t0, actions = Impl.advance t0 (Tick) in
-  print t0 actions; [%expect{|
+    +mock time is now 1 |}] ;
+  let t0, actions = Impl.advance t0 Tick in
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -281,7 +271,7 @@ let%expect_test "e2e commit" =
                [(c4677fbe3fa92d4246f849e282f15527:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c1, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c1, 1)], 1.00000));
                    parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -298,8 +288,7 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 1.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
@@ -307,9 +296,7 @@ let%expect_test "e2e commit" =
                           (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                    ([Command(Read c1, 1)],
-                                     1970-01-01 01:00:01.000000+01:00))
-                                    ]
+                                    ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
                           (Some { vval = c4677fbe3fa92d4246f849e282f15527;
@@ -322,9 +309,7 @@ let%expect_test "e2e commit" =
                           (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                    ([Command(Read c1, 1)],
-                                     1970-01-01 01:00:01.000000+01:00))
-                                    ]
+                                    ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
                           (Some { vval = c4677fbe3fa92d4246f849e282f15527;
@@ -337,110 +322,18 @@ let%expect_test "e2e commit" =
                           (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                    ([Command(Read c1, 1)],
-                                     1970-01-01 01:00:01.000000+01:00))
-                                    ]
+                                    ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
                           (Some { vval = c4677fbe3fa92d4246f849e282f15527;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
-                          }))] |}];
-  let t1, actions = Impl.advance t1 (Tick) in
-  print t1 actions; [%expect{|
-  t: { config = <opaque>;
-       conspire =
-       { rep =
-         { state =
-           { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e };
-           store =
-           { ctree =
-             [(c4677fbe3fa92d4246f849e282f15527:
-               { node =
-                 (1, d41d8cd98f00b204e9800998ecf8427e,
-                  ([Command(Read c1, 1)], 1970-01-01 01:00:01.000000+01:00));
-                 parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
-              (d41d8cd98f00b204e9800998ecf8427e: Root)];
-             root = d41d8cd98f00b204e9800998ecf8427e };
-           remotes = <opaque> };
-         other_nodes_state =
-         [(0:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e });
-          (2:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e });
-          (3:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e })];
-         config = <opaque>; commit_log = [] };
-       command_buffer =
-       { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
-         compare = <fun> };
-       tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
-       clock = <opaque> }
-  actions: [Send(0,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c1, 1)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = c4677fbe3fa92d4246f849e282f15527;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))
-            Send(2,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c1, 1)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = c4677fbe3fa92d4246f849e282f15527;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))
-            Send(3,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c1, 1)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = c4677fbe3fa92d4246f849e282f15527;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))] |}];
-  let root_clk = t0.conspire.rep.store.root in
-  let c1_clk = Md5.of_hex_exn "c4677fbe3fa92d4246f849e282f15527" in
-  let replication_message = Conspire (Ok {
-    ctree = Some {
-      new_head = c1_clk
-      ; extension = [(1, root_clk, ([c1], Utils.float_to_time 1.))]
-    };
-    cons = Some {
-      vval = c1_clk
-      ; vterm = 0 ; term = 0
-      ; commit_index = root_clk
-    }
-  }) in
-  let t0, actions = Impl.advance t0 (Recv (replication_message, 1)) in
-  print t0 actions; [%expect{|
+                          }))] |}] ;
+  let t1, actions = Impl.advance t1 Tick in
+  print t1 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -452,7 +345,93 @@ let%expect_test "e2e commit" =
                [(c4677fbe3fa92d4246f849e282f15527:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c1, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c1, 1)], 1.00000));
+                   parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
+                (d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state =
+           [(0:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (2:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (3:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e })];
+           config = <opaque>; commit_log = [] };
+         command_buffer =
+         { store = []; hwm = 1.00000; interval = 1s; compare = <fun> };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
+         clock = <opaque> }
+    actions: [Send(0,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c1, 1)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))
+              Send(2,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c1, 1)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))
+              Send(3,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c1, 1)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))] |}] ;
+  let root_clk = t0.conspire.rep.store.root in
+  let c1_clk = Md5.of_hex_exn "c4677fbe3fa92d4246f849e282f15527" in
+  let replication_message =
+    Conspire
+      (Ok
+         { ctree=
+             Some
+               { new_head= c1_clk
+               ; extension= [(1, root_clk, ([c1], Utils.float_to_time 1.))] }
+         ; cons= Some {vval= c1_clk; vterm= 0; term= 0; commit_index= root_clk}
+         } )
+  in
+  let t0, actions = Impl.advance t0 (Recv (replication_message, 1)) in
+  print t0 actions ;
+  [%expect
+    {|
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e };
+             store =
+             { ctree =
+               [(c4677fbe3fa92d4246f849e282f15527:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e,
+                    ([Command(Read c1, 1)], 1.00000));
                    parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -469,13 +448,14 @@ let%expect_test "e2e commit" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 1.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
-    actions: [] |}];
+    actions: [] |}] ;
   let t0, actions = Impl.advance t0 (Recv (replication_message, 2)) in
-  print t0 actions; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -487,7 +467,7 @@ let%expect_test "e2e commit" =
                [(c4677fbe3fa92d4246f849e282f15527:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c1, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c1, 1)], 1.00000));
                    parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -502,12 +482,9 @@ let%expect_test "e2e commit" =
             (3:
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
-           config = <opaque>;
-           commit_log =
-           [([Command(Read c1, 1)], 1970-01-01 01:00:01.000000+01:00)] };
+           config = <opaque>; commit_log = [([Command(Read c1, 1)], 1.00000)] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 1.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [CommitCommands(Command(Read c1, 1))
@@ -543,7 +520,9 @@ let%expect_test "batching" =
   let t0 = create (c4 0 clk0) in
   let c0 = make_command (Read "c0") in
   let t0, actions = Impl.advance t0 (Commands (Iter.singleton c0)) in
-  print t0 actions; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -566,18 +545,19 @@ let%expect_test "batching" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = [(1.00000: [Command(Read c0, 1)])];
-           hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
-           };
+         { store = [(1.00000: [Command(Read c0, 1)])]; hwm = 0.00000;
+           interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
-                           ([Command(Read c0, 1)],
-                            1970-01-01 01:00:01.000000+01:00)))] |}];
-  ac0 1.1; [%expect{| +mock time is now 1.1 |}];
+                           ([Command(Read c0, 1)], 1.00000)))] |}] ;
+  ac0 1.1 ;
+  [%expect {| +mock time is now 1.1 |}] ;
   let c1 = make_command (Read "c1") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
-  print t0 actions; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -602,17 +582,17 @@ let%expect_test "batching" =
          command_buffer =
          { store =
            [(1.00000: [Command(Read c0, 1)]); (2.10000: [Command(Read c1, 2)])];
-           hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
-           };
+           hwm = 0.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
-                           ([Command(Read c1, 2)],
-                            1970-01-01 01:00:02.100000+01:00)))] |}];
-  ac0 0.5;
+                           ([Command(Read c1, 2)], 2.10000)))] |}] ;
+  ac0 0.5 ;
   let c2 = make_command (Read "c2") in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c2])) in
-  print t0 actions; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     +mock time is now 1.6
     t: { config = <opaque>;
          conspire =
@@ -639,98 +619,95 @@ let%expect_test "batching" =
          { store =
            [(1.00000: [Command(Read c0, 1)]); (2.10000: [Command(Read c1, 2)]);
             (2.60000: [Command(Read c2, 3)])];
-           hwm = 1970-01-01 01:00:00.000000+01:00; interval = 1s; compare = <fun>
-           };
+           hwm = 0.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [Broadcast((Conspire_dc.Types.Commands
-                           ([Command(Read c2, 3)],
-                            1970-01-01 01:00:02.600000+01:00)))] |}];
+                           ([Command(Read c2, 3)], 2.60000)))] |}] ;
   let t0, actions = Impl.advance t0 Tick in
-  print t0 actions; [%expect{|
-  t: { config = <opaque>;
-       conspire =
-       { rep =
-         { state =
-           { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e };
-           store =
-           { ctree =
-             [(34e452ffd92c22ea72ef125a33a0a593:
-               { node =
-                 (1, d41d8cd98f00b204e9800998ecf8427e,
-                  ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
-                 parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
-              (d41d8cd98f00b204e9800998ecf8427e: Root)];
-             root = d41d8cd98f00b204e9800998ecf8427e };
-           remotes = <opaque> };
-         other_nodes_state =
-         [(1:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e });
-          (2:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e });
-          (3:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e })];
-         config = <opaque>; commit_log = [] };
-       command_buffer =
-       { store =
-         [(2.10000: [Command(Read c1, 2)]); (2.60000: [Command(Read c2, 3)])];
-         hwm = 1970-01-01 01:00:01.000000+01:00; interval = 1s; compare = <fun>
-         };
-       tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
-       clock = <opaque> }
-  actions: [Send(1,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c0, 1)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))
-            Send(2,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c0, 1)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))
-            Send(3,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c0, 1)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))] |}];
-  ac0 1.; [%expect{| +mock time is now 2.6 |}];
-  ac0 1.; [%expect{| +mock time is now 3.6 |}];
+  print t0 actions ;
+  [%expect
+    {|
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e };
+             store =
+             { ctree =
+               [(34e452ffd92c22ea72ef125a33a0a593:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e,
+                    ([Command(Read c0, 1)], 1.00000));
+                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
+                (d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state =
+           [(1:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (2:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (3:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e })];
+           config = <opaque>; commit_log = [] };
+         command_buffer =
+         { store =
+           [(2.10000: [Command(Read c1, 2)]); (2.60000: [Command(Read c2, 3)])];
+           hwm = 1.00000; interval = 1s; compare = <fun> };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
+         clock = <opaque> }
+    actions: [Send(1,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c0, 1)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))
+              Send(2,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c0, 1)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))
+              Send(3,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c0, 1)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))] |}] ;
+  ac0 1. ;
+  [%expect {| +mock time is now 2.6 |}] ;
+  ac0 1. ;
+  [%expect {| +mock time is now 3.6 |}] ;
   let t0, actions = Impl.advance t0 Tick in
-  print t0 actions; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -742,13 +719,12 @@ let%expect_test "batching" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (4208465ea72aa1217306cdb4da303438:
                  { node =
                    (2, 34e452ffd92c22ea72ef125a33a0a593,
-                    ([Command(Read c1, 2); Command(Read c2, 3)],
-                     1970-01-01 01:00:03.000000+01:00));
+                    ([Command(Read c1, 2); Command(Read c2, 3)], 3.00000));
                    parent = <opaque>; key = 4208465ea72aa1217306cdb4da303438 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -765,8 +741,7 @@ let%expect_test "batching" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:03.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 3.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 2; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
@@ -775,7 +750,7 @@ let%expect_test "batching" =
                                   extension =
                                   [(2, 34e452ffd92c22ea72ef125a33a0a593,
                                     ([Command(Read c1, 2); Command(Read c2, 3)],
-                                     1970-01-01 01:00:03.000000+01:00))
+                                     3.00000))
                                     ]
                                   });
                           cons =
@@ -790,7 +765,7 @@ let%expect_test "batching" =
                                   extension =
                                   [(2, 34e452ffd92c22ea72ef125a33a0a593,
                                     ([Command(Read c1, 2); Command(Read c2, 3)],
-                                     1970-01-01 01:00:03.000000+01:00))
+                                     3.00000))
                                     ]
                                   });
                           cons =
@@ -805,7 +780,7 @@ let%expect_test "batching" =
                                   extension =
                                   [(2, 34e452ffd92c22ea72ef125a33a0a593,
                                     ([Command(Read c1, 2); Command(Read c2, 3)],
-                                     1970-01-01 01:00:03.000000+01:00))
+                                     3.00000))
                                     ]
                                   });
                           cons =
@@ -825,9 +800,11 @@ let%expect_test "Conflict" =
   (* add c0 to t0 *)
   let c0 = make_command (Read "c0") in
   let t0, _ = Impl.advance t0 (Commands (Iter.singleton c0)) in
-  ac0 2.;
+  ac0 2. ;
   let t0, actions = Impl.advance t0 Tick in
-  print t0 actions; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     +mock time is now 2
     t: { config = <opaque>;
          conspire =
@@ -840,7 +817,7 @@ let%expect_test "Conflict" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -857,8 +834,7 @@ let%expect_test "Conflict" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 2.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
@@ -866,9 +842,7 @@ let%expect_test "Conflict" =
                           (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                    ([Command(Read c0, 1)],
-                                     1970-01-01 01:00:01.000000+01:00))
-                                    ]
+                                    ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
                           (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
@@ -881,9 +855,7 @@ let%expect_test "Conflict" =
                           (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                    ([Command(Read c0, 1)],
-                                     1970-01-01 01:00:01.000000+01:00))
-                                    ]
+                                    ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
                           (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
@@ -896,118 +868,109 @@ let%expect_test "Conflict" =
                           (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                    ([Command(Read c0, 1)],
-                                     1970-01-01 01:00:01.000000+01:00))
-                                    ]
+                                    ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
                           (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
-                          }))] |}];
+                          }))] |}] ;
   (* add c1 to t1 *)
   let c1 = make_command (Read "c1") in
   let t1, _ = Impl.advance t1 (Commands (Iter.singleton c1)) in
-  ac1 2.;
+  ac1 2. ;
   let t1, actions = Impl.advance t1 Tick in
-  print t1 actions; [%expect{|
-  +mock time is now 2
-  t: { config = <opaque>;
-       conspire =
-       { rep =
-         { state =
-           { vval = 9ddc31c480e04b8965ff34f30c37d919; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e };
-           store =
-           { ctree =
-             [(9ddc31c480e04b8965ff34f30c37d919:
-               { node =
-                 (1, d41d8cd98f00b204e9800998ecf8427e,
-                  ([Command(Read c1, 2)], 1970-01-01 01:00:01.000000+01:00));
-                 parent = <opaque>; key = 9ddc31c480e04b8965ff34f30c37d919 });
-              (d41d8cd98f00b204e9800998ecf8427e: Root)];
-             root = d41d8cd98f00b204e9800998ecf8427e };
-           remotes = <opaque> };
-         other_nodes_state =
-         [(0:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e });
-          (2:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e });
-          (3:
-           { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-             commit_index = d41d8cd98f00b204e9800998ecf8427e })];
-         config = <opaque>; commit_log = [] };
-       command_buffer =
-       { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
-         compare = <fun> };
-       tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
-       clock = <opaque> }
-  actions: [Send(0,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c1, 2)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))
-            Send(2,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c1, 2)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))
-            Send(3,(Conspire_dc.Types.Conspire
-                      { ctree =
-                        (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
-                                extension =
-                                [(1, d41d8cd98f00b204e9800998ecf8427e,
-                                  ([Command(Read c1, 2)],
-                                   1970-01-01 01:00:01.000000+01:00))
-                                  ]
-                                });
-                        cons =
-                        (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
-                                vterm = 0; term = 0;
-                                commit_index = d41d8cd98f00b204e9800998ecf8427e
-                                })
-                        }))] |}];
-  let root_clk = t0.conspire.rep.store.root in
-  let c0_clk = Md5.of_hex_exn "34e452ffd92c22ea72ef125a33a0a593" in
-  let update_t0 term = (Conspire
-                        (Ok { ctree =
-                          (Some { new_head = c0_clk;
+  print t1 actions ;
+  [%expect
+    {|
+    +mock time is now 2
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = 9ddc31c480e04b8965ff34f30c37d919; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e };
+             store =
+             { ctree =
+               [(9ddc31c480e04b8965ff34f30c37d919:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e,
+                    ([Command(Read c1, 2)], 1.00000));
+                   parent = <opaque>; key = 9ddc31c480e04b8965ff34f30c37d919 });
+                (d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state =
+           [(0:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (2:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (3:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e })];
+           config = <opaque>; commit_log = [] };
+         command_buffer =
+         { store = []; hwm = 2.00000; interval = 1s; compare = <fun> };
+         tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
+         clock = <opaque> }
+    actions: [Send(0,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
                                   extension =
-                                    [(1, root_clk,
-                                    ([c0], Utils.float_to_time 1.))]
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c1, 2)], 1.00000))]
                                   });
                           cons =
-                            (Some { vval = c0_clk;
-                                  vterm = 0; term ;
-                                  commit_index = root_clk
+                          (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
+              Send(2,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c1, 2)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))
+              Send(3,(Conspire_dc.Types.Conspire
+                        { ctree =
+                          (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
+                                  extension =
+                                  [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                    ([Command(Read c1, 2)], 1.00000))]
+                                  });
+                          cons =
+                          (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
+                                  vterm = 0; term = 0;
+                                  commit_index = d41d8cd98f00b204e9800998ecf8427e
+                                  })
+                          }))] |}] ;
+  let root_clk = t0.conspire.rep.store.root in
+  let c0_clk = Md5.of_hex_exn "34e452ffd92c22ea72ef125a33a0a593" in
+  let update_t0 term =
+    Conspire
+      (Ok
+         { ctree=
+             Some
+               { new_head= c0_clk
+               ; extension= [(1, root_clk, ([c0], Utils.float_to_time 1.))] }
+         ; cons= Some {vval= c0_clk; vterm= 0; term; commit_index= root_clk} }
+      )
   in
   let t0, actions = Impl.advance t0 (Recv (update_t0 0, 2)) in
-  print t0 actions; [%expect{|
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -1019,7 +982,7 @@ let%expect_test "Conflict" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -1036,28 +999,25 @@ let%expect_test "Conflict" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 2.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
-    actions: [] |}];
+    actions: [] |}] ;
   let c1_clk = Md5.of_hex_exn "620122743bc84de6b418bd632ea0cdc2" in
-  let update_t1 term = (Conspire
-                        (Ok { ctree =
-                          (Some { new_head = c1_clk;
-                                  extension =
-                                    [(1, root_clk,
-                                    ([c1], Utils.float_to_time 1.))]
-                                  });
-                          cons =
-                            (Some { vval = c1_clk;
-                                  vterm = 0; term ;
-                                  commit_index = root_clk
-                                  })
-                          }))
+  let update_t1 term =
+    Conspire
+      (Ok
+         { ctree=
+             Some
+               { new_head= c1_clk
+               ; extension= [(1, root_clk, ([c1], Utils.float_to_time 1.))] }
+         ; cons= Some {vval= c1_clk; vterm= 0; term; commit_index= root_clk} }
+      )
   in
-  let t0,actions = Impl.advance t0 (Recv (update_t1 0, 1)) in
-  print t0 actions; [%expect{|
+  let t0, actions = Impl.advance t0 (Recv (update_t1 0, 1)) in
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -1069,12 +1029,12 @@ let%expect_test "Conflict" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (620122743bc84de6b418bd632ea0cdc2:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c1, 2)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c1, 2)], 1.00000));
                    parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -1091,8 +1051,7 @@ let%expect_test "Conflict" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 2.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
@@ -1118,9 +1077,11 @@ let%expect_test "Conflict" =
                                   vterm = 0; term = 1;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
-                          }))] |}];
-  let t0,actions = Impl.advance t0 (Recv (update_t1 1, 1)) in
-  print t0 actions; [%expect{|
+                          }))] |}] ;
+  let t0, actions = Impl.advance t0 (Recv (update_t1 1, 1)) in
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -1132,12 +1093,12 @@ let%expect_test "Conflict" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (620122743bc84de6b418bd632ea0cdc2:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c1, 2)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c1, 2)], 1.00000));
                    parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -1154,13 +1115,14 @@ let%expect_test "Conflict" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 2.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
-    actions: [] |}];
-  let t0,actions = Impl.advance t0 (Recv (update_t0 1, 2)) in
-  print t0 actions; [%expect{|
+    actions: [] |}] ;
+  let t0, actions = Impl.advance t0 (Recv (update_t0 1, 2)) in
+  print t0 actions ;
+  [%expect
+    {|
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -1172,12 +1134,12 @@ let%expect_test "Conflict" =
                [(34e452ffd92c22ea72ef125a33a0a593:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c0, 1)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c0, 1)], 1.00000));
                    parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
                 (620122743bc84de6b418bd632ea0cdc2:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
-                    ([Command(Read c1, 2)], 1970-01-01 01:00:01.000000+01:00));
+                    ([Command(Read c1, 2)], 1.00000));
                    parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
@@ -1194,8 +1156,7 @@ let%expect_test "Conflict" =
                commit_index = d41d8cd98f00b204e9800998ecf8427e })];
            config = <opaque>; commit_log = [] };
          command_buffer =
-         { store = []; hwm = 1970-01-01 01:00:02.000000+01:00; interval = 1s;
-           compare = <fun> };
+         { store = []; hwm = 2.00000; interval = 1s; compare = <fun> };
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire

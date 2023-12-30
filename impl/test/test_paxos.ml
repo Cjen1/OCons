@@ -99,6 +99,7 @@ let%expect_test "request vote from higher" =
     actions ;
   [%expect
     {|
+    +Follower for node 2 for term 10
     +Follower for term 10
     t': {log: []; commit_index:-1; current_term: 10; node_state:Follower(5)}
     actions:
@@ -114,6 +115,7 @@ let%expect_test "request vote from higher" =
   [%expect
     {|
     +Candidate for term 3
+    +Follower for node 2 for term 10
     +Follower for term 10
     t': {log: []; commit_index:-1; current_term: 10; node_state:Follower(5)}
     actions:
@@ -131,6 +133,7 @@ let%expect_test "request vote from higher" =
     {|
     +Candidate for term 3
     +Leader for term 3
+    +Follower for node 2 for term 10
     +Follower for term 10
     t': {log: []; commit_index:-1; current_term: 10; node_state:Follower(5)}
     actions:
@@ -156,6 +159,7 @@ let%expect_test "Loop" =
   let t, _ = Impl.advance t Tick in
   Fmt.pr "node_state: %a\n" PP.node_state_pp (A.get node_state t) ;
   [%expect {|
+    +Follower for node 2 for term 10
     +Follower for term 10
     node_state: Follower(1) |}] ;
   let t, actions = Impl.advance t Tick in
@@ -168,15 +172,14 @@ let%expect_test "Loop" =
   Fmt.pr "actions: %a\n"
     Fmt.(brackets @@ list ~sep:(const string "\n") action_pp)
     actions ;
-  [%expect
-    {|
-    actions: [Broadcast(RequestVote {term:12; leader_commit:-1})] |}] ;
+  [%expect {| actions: [Broadcast(RequestVote {term:12; leader_commit:-1})] |}] ;
   let rv = RequestVote {term= 12; leader_commit= -1} in
   let t1 = create (c3 1) in
   let t1, a1 = Impl.advance t1 (Recv (rv, 2)) in
   Fmt.pr "a1: %a\n" Fmt.(brackets @@ list ~sep:(const string "\n") action_pp) a1 ;
   [%expect
     {|
+    +Follower for node 2 for term 12
     +Follower for term 12
     a1: [Send(2,RequestVoteResponse {term:12; start_index:0; entries_length:0; entries:
            []})] |}] ;
@@ -185,6 +188,7 @@ let%expect_test "Loop" =
   Fmt.pr "a2: %a\n" Fmt.(brackets @@ list ~sep:(const string "\n") action_pp) a2 ;
   [%expect
     {|
+    +Follower for node 2 for term 12
     +Follower for term 12
     a2: [Send(2,RequestVoteResponse {term:12; start_index:0; entries_length:0; entries:
            []})] |}] ;
@@ -198,6 +202,7 @@ let%expect_test "Loop" =
     actions ;
   [%expect
     {|
+    +Received vote from 1
     +Leader for term 12
     actions: [Send(1,AppendEntries {term: 12; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 0; entries:
                 []})
@@ -311,6 +316,7 @@ let%expect_test "Loop" =
   pp_res t2 actions ;
   [%expect
     {|
+    +Follower for node 1 for term 13
     +Follower for term 13
     t: {log: [{command: Command(Read m1, 1); term : 12}]; commit_index:-1; current_term: 13; node_state:Follower(5)}
     actions:
@@ -326,6 +332,7 @@ let%expect_test "Loop" =
   pp_res t1 actions ;
   [%expect
     {|
+    +Received vote from 2
     +Leader for term 13
     t: {log: [{command: Command(Read m1, 1); term : 13}]; commit_index:-1; current_term: 13; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {2, -1}]; rep_sent:[{0, 0}, {2, 0}]}
@@ -399,6 +406,7 @@ let%expect_test "Loop" =
   pp_res t actions ;
   [%expect
     {|
+    +Follower for node 2 for term 14
     +Follower for term 14
     t: {log: [{command: Command(Read m1, 1); term : 12},{command: Command(Read m2, 2); term : 12}]; commit_index:0; current_term: 14; node_state:Follower(5)}
     actions:
@@ -417,6 +425,7 @@ let%expect_test "Loop" =
   pp_res t2 actions ;
   [%expect
     {|
+    +Received vote from 0
     +Leader for term 14
     t: {log: [{command: Command(Read m1, 1); term : 14},{command: Command(Read m4, 3); term : 14}]; commit_index:-1; current_term: 14; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 1}, {1, 1}]}
@@ -448,8 +457,11 @@ let%expect_test "Loop" =
   Fmt.pr "t2:\n%a\n" PP.t_pp t2 ;
   [%expect
     {|
+    +Follower for node 1 for term 100
     +Follower for term 100
+    +Follower for node 2 for term 100
     +Follower for term 100
+    +Follower for node 2 for term 100
     +Follower for term 100
     t0:
     {log: [{command: Command(Read m1, 1); term : 12},{command: Command(Read m2, 2); term : 12}]; commit_index:0; current_term: 100; node_state:Follower(5)}
@@ -512,6 +524,7 @@ let%expect_test "Loop" =
   pp_res t actions ;
   [%expect
     {|
+    +Received vote from 1
     +Leader for term 102
     t: {log: [{command: Command(Read m1, 1); term : 12},{command: Command(Read m4, 3); term : 102},{command: Command(Read m5, 4); term : 102},{command: Command(Read m6, 5); term : 102}]; commit_index:0; current_term: 102; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 3}, {2, 3}]}
@@ -537,6 +550,7 @@ let%expect_test "Loop" =
   pp_res t1 actions ;
   [%expect
     {|
+    +Received vote from 2
     +Leader for term 103
     t: {log: [{command: Command(Read m1, 1); term : 13},{command: Command(Read m4, 3); term : 13},{command: Command(Read m7, 6); term : 103},{command: Command(Read m6, 5); term : 103}]; commit_index:1; current_term: 103; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {2, -1}]; rep_sent:[{0, 3}, {2, 3}]}
@@ -562,6 +576,7 @@ let%expect_test "Loop" =
   pp_res t2 actions ;
   [%expect
     {|
+    +Received vote from 0
     +Leader for term 101
     t: {log: [{command: Command(Read m1, 1); term : 101},{command: Command(Read m4, 3); term : 101},{command: Command(Read m7, 6); term : 101}]; commit_index:-1; current_term: 101; node_state:Leader{heartbeat:1; rep_ackd:
     [{0, -1}, {1, -1}]; rep_sent:[{0, 2}, {1, 2}]}
@@ -595,9 +610,12 @@ let%expect_test "Missing elements" =
   pp_res t actions ;
   [%expect
     {|
+    +Follower for node 2 for term 10
     +Follower for term 10
     +Candidate for term 12
+    +Follower for node 2 for term 12
     +Follower for term 12
+    +Received vote from 1
     +Leader for term 12
     t: {log: []; commit_index:-1; current_term: 12; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, -1}, {2, -1}]}
@@ -641,8 +659,7 @@ let%expect_test "Missing elements" =
     {|
     +Failed to match
     +rooted_at_start(false), matching_index_and_term(false):
-    +{log:
-    +[]; commit_index:-1; current_term: 12; node_state:Follower(5)}
+    +
     t: {log: []; commit_index:-1; current_term: 12; node_state:Follower(5)}
     actions:
     [Send(0,AppendEntriesResponse {term: 12; success: Error: -1})] |}] ;
@@ -651,9 +668,6 @@ let%expect_test "Missing elements" =
   pp_res t actions ;
   [%expect
     {|
-    +Failed to match
-    +{log: [{command: Command(Read m1, 1); term : 12},{command: Command(Read m2, 2); term : 12}]; commit_index:-1; current_term: 12; node_state:Leader{heartbeat:1; rep_ackd:
-    +[{1, -1}, {2, -1}]; rep_sent:[{1, -1}, {2, 1}]}
     t: {log: [{command: Command(Read m1, 1); term : 12},{command: Command(Read m2, 2); term : 12}]; commit_index:-1; current_term: 12; node_state:Leader{heartbeat:1; rep_ackd:
     [{1, -1}, {2, -1}]; rep_sent:[{1, 1}, {2, 1}]}
     actions: [Send(1,AppendEntries {term: 12; leader_commit: -1; prev_log_index: -1; prev_log_term: 0; entries_length: 2; entries:

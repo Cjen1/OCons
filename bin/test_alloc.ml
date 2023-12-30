@@ -9,8 +9,7 @@ let alloc_test =
   let test `init =
     let large = make_data 1000 in
     let extern = ref None in
-    fun () -> 
-      extern := Some large
+    fun () -> extern := Some large
   in
   Bench.Test.create_with_initialization ~name:"alloc_with_reference" test
 

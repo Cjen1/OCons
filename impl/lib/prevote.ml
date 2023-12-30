@@ -145,28 +145,27 @@ struct
     match ct.node_state with
     | Leader s ->
         let highest = Log.highest ct.log in
-        (* Assume we are going to send up to highest to each *)
-        let send_f id highest_sent =
-          let lo = highest_sent + 1 in
-          let len =
-            min (highest - lo) ex.@(t @> config @> max_append_entries)
-          in
-          let hi = lo + len in
-          (* so we want to send the segment [lo -> hi] inclusive *)
-          if lo <= hi || force then
-            let prev_log_index = lo - 1 in
-            let entries = Log.iter_len ct.log ~lo ~hi () in
-            send id
-            @@ AppendEntries
-                 { term= ct.current_term
-                 ; leader_commit= ex.@(t @> commit_index)
-                 ; prev_log_index
-                 ; prev_log_term= get_log_term ct.log prev_log_index
-                 ; entries }
-        in
-        IntMap.iter send_f s.rep_sent ;
         ex.@(t @> node_state @> Leader.rep_sent) <-
-          IntMap.map (fun _ -> highest) s.rep_sent
+          IntMap.mapi
+            (fun id highest_sent ->
+              let lo = highest_sent + 1 in
+              let len =
+                min (highest - lo) ex.@(t @> config @> max_append_entries)
+              in
+              let hi = lo + len in
+              (* so we want to send the segment [lo -> hi] inclusive *)
+              ( if lo <= hi || force then
+                  let prev_log_index = lo - 1 in
+                  let entries = Log.iter_len ct.log ~lo ~hi () in
+                  send id
+                  @@ AppendEntries
+                       { term= ct.current_term
+                       ; leader_commit= ex.@(t @> commit_index)
+                       ; prev_log_index
+                       ; prev_log_term= get_log_term ct.log prev_log_index
+                       ; entries } ) ;
+              hi )
+            s.rep_sent
     | _ ->
         assert false
 
@@ -315,8 +314,7 @@ struct
       ->
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
-        A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
-        dtraceln "Failed to match\n%a" PP.t_pp ex.@(t)
+        A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx)
     (* All nodes must be able to receive prevote *)
     | Recv ((RequestVote {prevote= true; term; _} as m), cid), _
       when term > ex.@(t @> current_term) && request_vote_valid m ->
@@ -325,6 +323,8 @@ struct
     | Recv (RequestVote ({prevote= false; _} as m), cid), Follower _
       when request_vote_valid (RequestVote m) ->
         ex.@(t @> node_state @> Follower.voted_for) <- Some cid ;
+        ex.@(t @> node_state @> Follower.timeout) <-
+          ex.@(t @> config @> election_timeout) ;
         send cid
         @@ RequestVoteResponse
              {term= ex.@(t @> current_term); success= true; prevote= false}
@@ -352,11 +352,9 @@ struct
             (* This will be the prev_log_index of the next msg *)
             dtraceln
               "Failed to match\n\
-               rooted_at_start(%b), matching_index_and_term(%b):\n\
-               %a"
+               rooted_at_start(%b), matching_index_and_term(%b):\n"
               rooted_at_start
-              (matching_index_and_term ())
-              PP.t_pp ct ;
+              (matching_index_and_term ()) ;
             send lid
             @@ AppendEntriesResponse
                  { term= ct.current_term

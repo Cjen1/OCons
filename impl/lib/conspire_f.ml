@@ -128,10 +128,14 @@ module Make (Value : Value) = struct
 
   type t =
     { rep: Rep.rep
-    ; other_nodes_state: state Map.M(Int).t [@printer Utils.pp_map Fmt.int pp_state]
+    ; other_nodes_state: state Map.M(Int).t
+          [@printer Utils.pp_map Fmt.int pp_state]
     ; config: config [@opaque]
     ; commit_log: Value.t Log.t }
   [@@deriving show {with_path= false}]
+
+  let reporter_conflict, run_c =
+    Ocons_core.Utils.InternalReporter.rate_reporter "conflict"
 
   let acceptor_reply t src =
     let local = t.rep.state in
@@ -148,6 +152,7 @@ module Make (Value : Value) = struct
         let res = CTree.compare_keys t.rep.store local.vval remote.vval in
         match res with
         | None ->
+            reporter_conflict () ;
             (* conflict *)
             Utils.dtraceln "CONFLICT from %d" src ;
             Utils.dtraceln "local %a does not prefix of remote %a"
@@ -240,8 +245,7 @@ module Make (Value : Value) = struct
     check_commit t
 
   let acceptor_term_tick t term' =
-    if t.rep.state.term < term' then
-      t.rep.state.term <- term'
+    if t.rep.state.term < term' then t.rep.state.term <- term'
 
   let handle_steady_state t src (msg : Rep.success) =
     let option_bind o ~f = Option.value_map o ~default:(Ok ()) ~f in
@@ -261,9 +265,8 @@ module Make (Value : Value) = struct
         set_state remote new_state ;
         acceptor_reply t src ;
         check_commit t ;
-        check_conflict_recovery t;
-        acceptor_term_tick t new_state.term;
-      ) ;
+        check_conflict_recovery t ;
+        acceptor_term_tick t new_state.term ) ;
     Result.return ()
 
   let handle_message t src (msg : Rep.message) :
@@ -280,6 +283,7 @@ module Make (Value : Value) = struct
         Error `MustAck
 
   let create (config : config) =
+    run_c := true ;
     let rep = Rep.create config.other_replica_ids in
     let other_nodes_state =
       List.map config.other_replica_ids ~f:(fun i -> (i, init_state rep.store))

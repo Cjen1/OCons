@@ -25,7 +25,7 @@ let config_pp : config Fmt.t =
     v.other_nodes
 
 let make_config ~node_id ~node_list ~election_timeout ?(max_outstanding = 8192)
-    ?(max_append_entries = 8192) () =
+    ?(max_append_entries = 512) () =
   let length = List.length node_list in
   let phase1quorum = (length + 1) / 2 in
   let phase2quorum = (length + 1) / 2 in

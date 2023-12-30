@@ -24,79 +24,79 @@ let%expect_test "local_commit" =
   print t [] ;
   [%expect
     {|
-      t: { config = <opaque>;
-           conspire =
-           { rep =
-             { state =
-               { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
-                 commit_index = d41d8cd98f00b204e9800998ecf8427e };
-               store =
-               { ctree = [(d41d8cd98f00b204e9800998ecf8427e: Root)];
-                 root = d41d8cd98f00b204e9800998ecf8427e };
-               remotes = <opaque> };
-             other_nodes_state = []; config = <opaque>; commit_log = [] };
-           failure_detector =
-           { Conspire_mp.FailureDetector.state = []; timeout = 2 };
-           stall_checker = <opaque> }
-      actions: [] |}] ;
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e };
+             store =
+             { ctree = [(d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state = []; config = <opaque>; commit_log = [] };
+         failure_detector =
+         { Conspire_mp.FailureDetector.state = []; timeout = 2 };
+         stall_checker = <opaque> }
+    actions: [] |}] ;
   let c1 = make_command (Read "c1") in
   let t, actions = Impl.advance t (Commands (c1 |> Iter.singleton)) in
   print t actions ;
   [%expect
     {|
-      t: { config = <opaque>;
-           conspire =
-           { rep =
-             { state =
-               { vval = 1183a904cd1a3b8f3cf219be9367701f; vterm = 0; term = 0;
-                 commit_index = 1183a904cd1a3b8f3cf219be9367701f };
-               store =
-               { ctree =
-                 [(1183a904cd1a3b8f3cf219be9367701f:
-                   { node =
-                     (1, d41d8cd98f00b204e9800998ecf8427e, [Command(Read c1, 1)]);
-                     parent = <opaque>; key = 1183a904cd1a3b8f3cf219be9367701f });
-                  (d41d8cd98f00b204e9800998ecf8427e: Root)];
-                 root = d41d8cd98f00b204e9800998ecf8427e };
-               remotes = <opaque> };
-             other_nodes_state = []; config = <opaque>;
-             commit_log = [[Command(Read c1, 1)]] };
-           failure_detector =
-           { Conspire_mp.FailureDetector.state = []; timeout = 2 };
-           stall_checker = <opaque> }
-      actions: [CommitCommands(Command(Read c1, 1))] |}] ;
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = 1183a904cd1a3b8f3cf219be9367701f; vterm = 0; term = 0;
+               commit_index = 1183a904cd1a3b8f3cf219be9367701f };
+             store =
+             { ctree =
+               [(1183a904cd1a3b8f3cf219be9367701f:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e, [Command(Read c1, 1)]);
+                   parent = <opaque>; key = 1183a904cd1a3b8f3cf219be9367701f });
+                (d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state = []; config = <opaque>;
+           commit_log = [[Command(Read c1, 1)]] };
+         failure_detector =
+         { Conspire_mp.FailureDetector.state = []; timeout = 2 };
+         stall_checker = <opaque> }
+    actions: [CommitCommands(Command(Read c1, 1))] |}] ;
   let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
   print t actions ;
   [%expect
     {|
-      t: { config = <opaque>;
-           conspire =
-           { rep =
-             { state =
-               { vval = 7f2c0aae94bf199f9b303480537af547; vterm = 0; term = 0;
-                 commit_index = 7f2c0aae94bf199f9b303480537af547 };
-               store =
-               { ctree =
-                 [(1183a904cd1a3b8f3cf219be9367701f:
-                   { node =
-                     (1, d41d8cd98f00b204e9800998ecf8427e, [Command(Read c1, 1)]);
-                     parent = <opaque>; key = 1183a904cd1a3b8f3cf219be9367701f });
-                  (7f2c0aae94bf199f9b303480537af547:
-                   { node =
-                     (2, 1183a904cd1a3b8f3cf219be9367701f,
-                      [Command(Read c2, 3); Command(Read c3, 2)]);
-                     parent = <opaque>; key = 7f2c0aae94bf199f9b303480537af547 });
-                  (d41d8cd98f00b204e9800998ecf8427e: Root)];
-                 root = d41d8cd98f00b204e9800998ecf8427e };
-               remotes = <opaque> };
-             other_nodes_state = []; config = <opaque>;
-             commit_log =
-             [[Command(Read c1, 1)][Command(Read c2, 3); Command(Read c3, 2)]] };
-           failure_detector =
-           { Conspire_mp.FailureDetector.state = []; timeout = 2 };
-           stall_checker = <opaque> }
-      actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))] |}]
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = 7f2c0aae94bf199f9b303480537af547; vterm = 0; term = 0;
+               commit_index = 7f2c0aae94bf199f9b303480537af547 };
+             store =
+             { ctree =
+               [(1183a904cd1a3b8f3cf219be9367701f:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e, [Command(Read c1, 1)]);
+                   parent = <opaque>; key = 1183a904cd1a3b8f3cf219be9367701f });
+                (7f2c0aae94bf199f9b303480537af547:
+                 { node =
+                   (2, 1183a904cd1a3b8f3cf219be9367701f,
+                    [Command(Read c2, 3); Command(Read c3, 2)]);
+                   parent = <opaque>; key = 7f2c0aae94bf199f9b303480537af547 });
+                (d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state = []; config = <opaque>;
+           commit_log =
+           [[Command(Read c1, 1)][Command(Read c2, 3); Command(Read c3, 2)]] };
+         failure_detector =
+         { Conspire_mp.FailureDetector.state = []; timeout = 2 };
+         stall_checker = <opaque> }
+    actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))] |}]
 
 let%expect_test "e2e commit" =
   Imp.set_is_test true ;
