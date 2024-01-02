@@ -145,9 +145,9 @@ struct
   let available_space_for_commands t =
     if can_apply_requests t then t.config.max_outstanding else 0
 
-  let send ?(force = false) t dst =
+  let send ?(force = false) ?(prune = false) t dst =
     let open Rep in
-    let update = get_update_to_send t.conspire.rep dst in
+    let update = get_update_to_send ~prune t.conspire.rep dst in
     if force || Option.is_some update.ctree || Option.is_some update.cons then
       Act.send dst (Ok update)
 
@@ -155,7 +155,8 @@ struct
     Act.send dst (Error {commit= t.conspire.rep.state.commit_index})
 
   let broadcast ?(force = false) t =
-    List.iter t.config.other_replica_ids ~f:(fun nid -> send ~force t nid)
+    List.iter t.config.other_replica_ids ~f:(fun nid ->
+        send ~force t nid ~prune:(not @@ is_leader t) )
 
   let stall_check (t : t) =
     StallChecker.check t.stall_checker ~pp:(fun ppf () ->
@@ -186,34 +187,48 @@ struct
         stall_check t ;
         term_tracker t.conspire.rep.state.term ;
         FailureDetector.tick t.failure_detector ;
+        if is_leader t then Conspire.conflict_recovery t.conspire |> ignore ;
         broadcast t ~force:true
     | Commands ci when can_apply_requests t ->
         let commands = Iter.to_list ci in
         value_length (List.length commands) ;
-        Conspire.add_commands t.conspire (commands |> Iter.singleton) ;
+        let _ = Conspire.add_commands t.conspire (commands |> Iter.singleton) in
         broadcast t
     | Commands _ ->
         Fmt.invalid_arg "Commands cannot yet be applied"
     | Recv (m, src) -> (
         FailureDetector.reset t.failure_detector src ;
-        let recovery_started, prev_ci =
-          ( t.conspire.rep.state.term > t.conspire.rep.state.vterm
-          , get_commit_index t )
-        in
-        let msg_result = Conspire.handle_message t.conspire src m in
-        let now_steady_state, committed =
-          ( t.conspire.rep.state.term = t.conspire.rep.state.vterm
-          , get_commit_index t > prev_ci )
-        in
-        match (msg_result, recovery_started && now_steady_state, committed) with
-        | Error `MustAck, _, _ ->
+        let update_result = Conspire.handle_update_message t.conspire src m in
+        match update_result with
+        | Error `MustAck ->
             ack_counter () ; send t src
-        | Error `MustNack, _, _ ->
+        | Error (`MustNack reason) ->
+            ( match reason with
+            | `Root_of_update_not_found _ ->
+                Utils.dtraceln "Update is not rooted"
+            | `Commit_index_not_in_tree ->
+                Utils.dtraceln "Commit index not in tree"
+            | `VVal_not_in_tree ->
+                Utils.dtraceln "VVal not int tree" ) ;
             nack_counter () ; nack t src
-        | Ok _, true, _ | Ok _, _, true ->
-            broadcast t
-        | _ ->
-            send t src )
+        | Ok () ->
+            process_acceptor_state t.conspire src ;
+            let conflict_recovery_attempt =
+              if is_leader t then Conspire.conflict_recovery t.conspire
+              else Error `NotLeader
+            in
+            let recovery_started =
+              t.conspire.rep.state.term > t.conspire.rep.state.vterm
+            in
+            let committed =
+              Conspire.check_commit t.conspire |> Option.is_some
+            in
+            let should_ack_ss_message =
+              not
+                ( Result.is_ok conflict_recovery_attempt
+                || committed || recovery_started )
+            in
+            if should_ack_ss_message then send t src else broadcast t )
 
   let advance t e =
     Act.run_side_effects
