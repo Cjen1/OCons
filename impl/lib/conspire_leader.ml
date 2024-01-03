@@ -223,12 +223,11 @@ struct
             let committed =
               Conspire.check_commit t.conspire |> Option.is_some
             in
-            let should_ack_ss_message =
-              not
-                ( Result.is_ok conflict_recovery_attempt
-                || committed || recovery_started )
+            let should_broadcast =
+              Result.is_ok conflict_recovery_attempt
+              || committed || recovery_started
             in
-            if should_ack_ss_message then send t src else broadcast t )
+            if should_broadcast then broadcast t else send t src )
 
   let advance t e =
     Act.run_side_effects

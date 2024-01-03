@@ -351,9 +351,77 @@ let%expect_test "e2e conflict resolution" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t0 = create (c4 0) in
-  let _t1 = create (c4 1) in
+  let t1 = create (c4 1) in
   let c0 = make_command (Read "c0") in
   let c1 = make_command (Read "c1") in
+  let t1, _ = Impl.advance t1 Tick in
+  let t1, _ = Impl.advance t1 Tick in
+  let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
+  print t1 actions ;
+  [%expect {|
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = 620122743bc84de6b418bd632ea0cdc2; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e };
+             store =
+             { ctree =
+               [(620122743bc84de6b418bd632ea0cdc2:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e, [Command(Read c1, 2)]);
+                   parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
+                (d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state =
+           [(0:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (2:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (3:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e })];
+           config = <opaque>; commit_log = [] };
+         failure_detector =
+         { Conspire_leader.FailureDetector.state = [(0: 0)(2: 0)(3: 0)];
+           timeout = 2 };
+         stall_checker = <opaque> }
+    actions: [Send(0,{ ctree =
+                       (Some { new_head = 620122743bc84de6b418bd632ea0cdc2;
+                               extension =
+                               [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                 [Command(Read c1, 2)])]
+                               });
+                       cons =
+                       (Some { vval = 620122743bc84de6b418bd632ea0cdc2;
+                               vterm = 0; term = 0;
+                               commit_index = d41d8cd98f00b204e9800998ecf8427e })
+                       })
+              Send(2,{ ctree =
+                       (Some { new_head = 620122743bc84de6b418bd632ea0cdc2;
+                               extension =
+                               [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                 [Command(Read c1, 2)])]
+                               });
+                       cons =
+                       (Some { vval = 620122743bc84de6b418bd632ea0cdc2;
+                               vterm = 0; term = 0;
+                               commit_index = d41d8cd98f00b204e9800998ecf8427e })
+                       })
+              Send(3,{ ctree =
+                       (Some { new_head = 620122743bc84de6b418bd632ea0cdc2;
+                               extension =
+                               [(1, d41d8cd98f00b204e9800998ecf8427e,
+                                 [Command(Read c1, 2)])]
+                               });
+                       cons =
+                       (Some { vval = 620122743bc84de6b418bd632ea0cdc2;
+                               vterm = 0; term = 0;
+                               commit_index = d41d8cd98f00b204e9800998ecf8427e })
+                       })] |}] ;
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c0])) in
   print t0 actions ;
   [%expect
@@ -546,6 +614,18 @@ let%expect_test "e2e conflict resolution" =
                        (Some { vval = 1fddcd0db3e43a000153d0c4de56a7cc;
                                vterm = 0; term = 1;
                                commit_index = d41d8cd98f00b204e9800998ecf8427e })
+                       })
+              Send(2,{ ctree = None;
+                       cons =
+                       (Some { vval = 1fddcd0db3e43a000153d0c4de56a7cc;
+                               vterm = 0; term = 1;
+                               commit_index = d41d8cd98f00b204e9800998ecf8427e })
+                       })
+              Send(3,{ ctree = None;
+                       cons =
+                       (Some { vval = 1fddcd0db3e43a000153d0c4de56a7cc;
+                               vterm = 0; term = 1;
+                               commit_index = d41d8cd98f00b204e9800998ecf8427e })
                        })] |}] ;
   (* conflict term responses *)
   let t0, _ =
@@ -632,7 +712,72 @@ let%expect_test "e2e conflict resolution" =
                                vterm = 1; term = 1;
                                commit_index = d41d8cd98f00b204e9800998ecf8427e })
                        })] |}] ;
-  ignore (t0, _t1, c0_node, c1_node)
+  (* ---- T1 will not recover since it believes T0 is the leader *)
+  (* Conflict from 0 *)
+  let t1, _ =
+    Impl.advance t1
+      (Recv
+         ( Ok
+             Rep.
+               { ctree= Some {new_head= c0_clock; extension= [c0_node]}
+               ; cons= Some { vval= c0_clock
+                     ; vterm= 0
+                     ; term= 1
+                     ; commit_index= root_clock }}
+         , 0 ) )
+  in
+  let t1, actions =
+    Impl.advance t1
+      (Recv
+         ( Ok
+             Rep.
+               { ctree= None
+               ; cons=
+                   Some
+                     { vval= c1_clock
+                     ; vterm= 0
+                     ; term= 1
+                     ; commit_index= root_clock } }
+         , 3 ) )
+  in
+  print t1 actions ;
+  [%expect {|
+    t: { config = <opaque>;
+         conspire =
+         { rep =
+           { state =
+             { vval = 620122743bc84de6b418bd632ea0cdc2; vterm = 0; term = 1;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e };
+             store =
+             { ctree =
+               [(1fddcd0db3e43a000153d0c4de56a7cc:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e, [Command(Read c0, 1)]);
+                   parent = <opaque>; key = 1fddcd0db3e43a000153d0c4de56a7cc });
+                (620122743bc84de6b418bd632ea0cdc2:
+                 { node =
+                   (1, d41d8cd98f00b204e9800998ecf8427e, [Command(Read c1, 2)]);
+                   parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
+                (d41d8cd98f00b204e9800998ecf8427e: Root)];
+               root = d41d8cd98f00b204e9800998ecf8427e };
+             remotes = <opaque> };
+           other_nodes_state =
+           [(0:
+             { vval = 1fddcd0db3e43a000153d0c4de56a7cc; vterm = 0; term = 1;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (2:
+             { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e });
+            (3:
+             { vval = 620122743bc84de6b418bd632ea0cdc2; vterm = 0; term = 1;
+               commit_index = d41d8cd98f00b204e9800998ecf8427e })];
+           config = <opaque>; commit_log = [] };
+         failure_detector =
+         { Conspire_leader.FailureDetector.state = [(0: 2)(2: 0)(3: 2)];
+           timeout = 2 };
+         stall_checker = <opaque> }
+    actions: [] |}] ;
+  ignore (t0, t1, c0_node, c1_node)
 
 let%expect_test "message loss" =
   Imp.set_is_test true ;

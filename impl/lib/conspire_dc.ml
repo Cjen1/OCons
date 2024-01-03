@@ -212,28 +212,35 @@ struct
         List.iter cs ~f:(fun c ->
             DelayReorderBuffer.add_value t.command_buffer c tar )
     | Recv (Conspire m, src) -> (
-        let recovery_started, prev_ci =
-          ( t.conspire.rep.state.term > t.conspire.rep.state.vterm
-          , get_commit_index t )
-        in
-        let msg_result = Conspire.handle_message t.conspire src m in
-        let now_steady_state, committed =
-          ( t.conspire.rep.state.term = t.conspire.rep.state.vterm
-          , get_commit_index t > prev_ci )
-        in
-        let recovery_completed = recovery_started && now_steady_state in
-        let recovery_initiated =
-          (not recovery_started) && not now_steady_state
-        in
-        match msg_result with
+        let update_result = Conspire.handle_update_message t.conspire src m in
+        match update_result with
         | Error `MustAck ->
             send t src
-        | Error `MustNack ->
+        | Error (`MustNack reason) ->
+            ( match reason with
+            | `Root_of_update_not_found _ ->
+                Utils.dtraceln "Update is not rooted"
+            | `Commit_index_not_in_tree ->
+                Utils.dtraceln "Commit index not in tree"
+            | `VVal_not_in_tree ->
+                Utils.dtraceln "VVal not int tree" ) ;
             nack t src
-        | Ok _ when recovery_completed || committed || recovery_initiated ->
-            broadcast t
-        | _ ->
-            send t src )
+        | Ok () ->
+            process_acceptor_state t.conspire src ;
+            let conflict_recovery_attempt =
+              Conspire.conflict_recovery t.conspire
+            in
+            let recovery_started =
+              t.conspire.rep.state.term > t.conspire.rep.state.vterm
+            in
+            let committed =
+              Conspire.check_commit t.conspire |> Option.is_some
+            in
+            let should_broadcast =
+              Result.is_ok conflict_recovery_attempt
+              || committed || recovery_started
+            in
+            if should_broadcast then broadcast t else send t src )
 
   let advance t e =
     Act.run_side_effects

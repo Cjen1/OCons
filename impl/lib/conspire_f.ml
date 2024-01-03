@@ -193,14 +193,14 @@ module Make (Value : Value) = struct
         t.config.quorum_size
     in
     match new_commit with
-    | None ->
-        None
-    | Some ci ->
+    | Some ci when not ([%equal: CTree.key] t.rep.state.commit_index ci) ->
         (* can update since once committed, never overwritten *)
         t.rep.state.commit_index <- ci ;
         let cis = CTree.path_between t.rep.store old_ci ci in
         List.iter cis ~f:(fun (_, _, v) -> Log.add t.commit_log v) ;
-        Some (Log.highest t.commit_log)
+        Some ci
+    | _ ->
+        None
 
   let conflict_recovery t =
     let votes =
@@ -253,7 +253,7 @@ module Make (Value : Value) = struct
 
   let add_commands t (ci : Value.t Iter.t) =
     Rep.add_commands t.rep ~node:t.config.node_id ci ;
-    let (_ : log_index option) = check_commit t in
+    let (_ : CTree.key option) = check_commit t in
     ()
 
   let handle_update_message t src (msg : Rep.message) =
