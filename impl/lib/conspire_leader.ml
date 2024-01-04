@@ -16,32 +16,6 @@ module Conspire = Conspire_f.Make (Value)
    - Command otherwise => ignore
 *)
 
-module StallChecker = struct
-  open Utils
-
-  type t =
-    { mutable prev_commit_idx: log_index
-    ; mutable ticks_since_commit: int
-    ; tick_limit: int }
-
-  let reset t commit_index =
-    if commit_index > t.prev_commit_idx then t.prev_commit_idx <- commit_index ;
-    t.ticks_since_commit <- t.tick_limit
-
-  let is_stalled t = t.ticks_since_commit <= 0
-
-  let check ?(pp : unit Fmt.t = fun _ () -> ()) ?(should_make_progress = false)
-      t =
-    t.ticks_since_commit <- t.ticks_since_commit - 1 ;
-    if is_stalled t && should_make_progress then (
-      traceln "========== Stalled ==========" ;
-      traceln "%a" pp () ;
-      traceln "========== Stalled ==========" ) ;
-    if is_stalled t then reset t t.prev_commit_idx
-
-  let create = {ticks_since_commit= 2; prev_commit_idx= -1; tick_limit= 2}
-end
-
 module FailureDetector = struct
   type t =
     { state: (node_id, int) Hashtbl.t
@@ -99,7 +73,7 @@ module Types = struct
     { config: config [@opaque]
     ; conspire: Conspire.t
     ; failure_detector: FailureDetector.t
-    ; stall_checker: StallChecker.t [@opaque] }
+    }
   [@@deriving show {with_path= false}]
 
   let get_command idx t =
@@ -158,13 +132,6 @@ struct
     List.iter t.config.other_replica_ids ~f:(fun nid ->
         send ~force t nid ~prune:(not @@ is_leader t) )
 
-  let stall_check (t : t) =
-    StallChecker.check t.stall_checker ~pp:(fun ppf () ->
-        let problem_idx = t.conspire.rep.state.commit_index in
-        Fmt.pf ppf "Stalled on %d at %a@." t.config.conspire.node_id
-          (Fmt.option Conspire.CTree.pp_parent_ref_node)
-          (Conspire.CTree.get t.conspire.rep.store problem_idx) )
-
   let nack_counter, run_nc =
     Ocons_core.Utils.InternalReporter.rate_reporter "nacks"
 
@@ -184,7 +151,6 @@ struct
     run_vl := true ;
     match event with
     | Tick ->
-        stall_check t ;
         term_tracker t.conspire.rep.state.term ;
         FailureDetector.tick t.failure_detector ;
         if is_leader t then Conspire.conflict_recovery t.conspire |> ignore ;
@@ -205,11 +171,11 @@ struct
         | Error (`MustNack reason) ->
             ( match reason with
             | `Root_of_update_not_found _ ->
-                Utils.dtraceln "Update is not rooted"
+                Utils.dtraceln "Nack: Update is not rooted"
             | `Commit_index_not_in_tree ->
-                Utils.dtraceln "Commit index not in tree"
+                Utils.dtraceln "Nack: Commit index not in tree"
             | `VVal_not_in_tree ->
-                Utils.dtraceln "VVal not int tree" ) ;
+                Utils.dtraceln "Nack: VVal not int tree" ) ;
             nack_counter () ; nack t src
         | Ok () ->
             process_acceptor_state t.conspire src ;
@@ -217,6 +183,9 @@ struct
               if is_leader t then Conspire.conflict_recovery t.conspire
               else Error `NotLeader
             in
+            Result.iter conflict_recovery_attempt ~f:(fun () ->
+                Utils.traceln "Recovery complete term: {t:%d,vt:%d}"
+                  t.conspire.rep.state.term t.conspire.rep.state.vterm ) ;
             let recovery_started =
               t.conspire.rep.state.term > t.conspire.rep.state.vterm
             in
@@ -227,7 +196,8 @@ struct
               Result.is_ok conflict_recovery_attempt
               || committed || recovery_started
             in
-            if should_broadcast then broadcast t else send t src )
+            if should_broadcast then broadcast t
+            else send ~prune:(not @@ is_leader t) t src )
 
   let advance t e =
     Act.run_side_effects
@@ -239,7 +209,7 @@ struct
     let failure_detector =
       FailureDetector.create config.fd_timeout config.conspire.other_replica_ids
     in
-    {config; conspire; failure_detector; stall_checker= StallChecker.create}
+    {config; conspire; failure_detector}
 end
 
 module Impl = Make (Actions_f.ImperativeActions (Types))

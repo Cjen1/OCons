@@ -193,3 +193,17 @@ module ConspireDC = struct
 
   let parse r = Line_prot.bin_io_read bin_read_message r
 end
+
+module ConspireLeaderDC = struct
+  include Conspire_leader_dc.Types
+  include Conspire_leader_dc.Impl
+
+  let create_node _ = create
+
+  let should_ack_clients _ = true
+
+  let serialise m w =
+    Line_prot.bin_io_write w bin_write_message bin_size_message m
+
+  let parse r = Line_prot.bin_io_read bin_read_message r
+end

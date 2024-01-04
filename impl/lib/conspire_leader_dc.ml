@@ -14,20 +14,9 @@ module Value = struct
   let empty = ([], Time.epoch)
 end
 
-(* Idea is that each client sends its message to a single node
-   that node is the advocate for that request.
-   The advocate hedges the time the message will arrive at the other nodes and sends the request with that time to them
-   nodes recv this request and put it into a delay re-order buffer
-   On each tick this buffer is examined and and msgs are batched by the millisecond
-   If the time of a batch is greater than now then add batch to local log and update local and propose
-   (so long as a batch with the relevant timestamp does not exist in the local log)
-   This update should be sent to all replicas which are represented in the batch
-
-   All nodes should then have batched the same requests, and advocate can immediately commit to client
-
-   (all the while doing the recovery and commit messages as before)
-*)
-
+(*
+  Use delay-reorder-buffer to avoid conflict with leader when backup pre-emptively proposes
+ *)
 
 module Counter = struct
   type t = {mutable count: int; limit: int} [@@deriving show]
@@ -40,20 +29,23 @@ module Counter = struct
 end
 
 module Conspire = Conspire_f.Make (Value)
+module FailureDetector = Conspire_leader.FailureDetector
 
 module Types = struct
   type config =
     { conspire: Conspire_f.config
     ; other_replica_ids: node_id list
+    ; lower_replica_ids: node_id list
     ; batching_interval: Time.Span.t
     ; delay_interval: Time.Span.t
+    ; fd_timeout: int
     ; max_outstanding: int
     ; tick_limit: int
     ; clock: float Eio.Time.clock_ty Eio.Time.clock [@opaque] }
   [@@deriving show {with_path= false}]
 
-  let make_config ~node_id ~replica_ids ~delay_interval ~batching_interval
-      ?(max_outstanding = 8192) ~tick_limit clock : config =
+  let make_config ~node_id ~replica_ids ~delay_interval ~fd_timeout
+      ~batching_interval ?(max_outstanding = 8192) ~tick_limit clock : config =
     let floor f = f |> Int.of_float in
     let replica_count = List.length replica_ids in
     let quorum_size = floor (2. *. Float.of_int replica_count /. 3.) + 1 in
@@ -61,13 +53,18 @@ module Types = struct
     let other_replica_ids =
       List.filter replica_ids ~f:(fun i -> not (i = node_id))
     in
+    let lower_replica_ids =
+      List.filter replica_ids ~f:(fun id -> id < node_id)
+    in
     let conspire =
       Conspire_f.
         {node_id; replica_ids; other_replica_ids; replica_count; quorum_size}
     in
     { conspire
     ; other_replica_ids
+    ; lower_replica_ids
     ; delay_interval
+    ; fd_timeout
     ; batching_interval
     ; max_outstanding
     ; tick_limit
@@ -81,9 +78,9 @@ module Types = struct
   type t =
     { config: config [@opaque]
     ; conspire: Conspire.t
-    ; command_buffer:
-        Command.t Delay_buffer.t (* TODO only reply to relevnat nodes *)
+    ; command_buffer: Command.t Delay_buffer.t
     ; tick_count: Counter.t
+    ; failure_detector: FailureDetector.t
     ; clock: float Eio.Time.clock_ty Eio.Std.r [@opaque] }
   [@@deriving show {with_path= false}]
 
@@ -110,19 +107,17 @@ struct
   include Conspire
   include Types
 
-  let current_leader t =
-    let leader_idx =
-      t.conspire.rep.state.term % t.config.conspire.replica_count
-    in
-    List.nth_exn t.config.conspire.replica_ids leader_idx
+  let is_leader t =
+    List.for_all t.config.lower_replica_ids ~f:(fun nid ->
+        not @@ FailureDetector.is_live t.failure_detector nid )
 
   let can_apply_requests _t = true
 
   let available_space_for_commands t = t.config.max_outstanding
 
-  let send ?(force = false) t dst =
+  let send ?(force = false) ?(prune = false) t dst =
     let open Rep in
-    let update = get_update_to_send t.conspire.rep dst in
+    let update = get_update_to_send ~prune t.conspire.rep dst in
     if force || Option.is_some update.ctree || Option.is_some update.cons then
       Act.send dst (Conspire (Ok update))
 
@@ -130,7 +125,8 @@ struct
     Act.send dst (Conspire (Error {commit= t.conspire.rep.state.commit_index}))
 
   let broadcast ?(force = false) t =
-    List.iter t.config.other_replica_ids ~f:(fun nid -> send ~force t nid)
+    List.iter t.config.other_replica_ids ~f:(fun nid ->
+        send ~force t nid ~prune:(not @@ is_leader t) )
 
   let gather_batch_from_buffer t =
     let time = Eio.Time.now t.clock |> Utils.float_to_time in
@@ -148,10 +144,17 @@ struct
   let handle_event t (event : message Ocons_core.Consensus_intf.event) =
     match event with
     | Tick ->
+        (* Increment counters *)
         Counter.incr_counter t.tick_count ;
-        if t.conspire.rep.state.vterm = t.conspire.rep.state.term then
-          gather_batch_from_buffer t ;
-        broadcast t ;
+        FailureDetector.tick t.failure_detector ;
+        if is_leader t then (
+          (* Do recovery *)
+          Conspire.conflict_recovery t.conspire |> ignore ;
+          (* If leader add batch *)
+          if t.conspire.rep.state.vterm = t.conspire.rep.state.term then
+            gather_batch_from_buffer t ;
+          broadcast t ) ;
+        (* Broadcast occasionally *)
         if Counter.over_lim t.tick_count then (
           Counter.reset t.tick_count ; broadcast t ~force:true )
     | Commands ci ->
@@ -181,7 +184,8 @@ struct
         | Ok () ->
             process_acceptor_state t.conspire src ;
             let conflict_recovery_attempt =
-              Conspire.conflict_recovery t.conspire
+              if is_leader t then Conspire.conflict_recovery t.conspire
+              else Error `NotLeader
             in
             let recovery_started =
               t.conspire.rep.state.term > t.conspire.rep.state.vterm
@@ -193,7 +197,8 @@ struct
               Result.is_ok conflict_recovery_attempt
               || committed || recovery_started
             in
-            if should_broadcast then broadcast t else send t src )
+            if should_broadcast then broadcast t
+            else send ~prune:(not @@ is_leader t) t src )
 
   let advance t e =
     Act.run_side_effects
@@ -203,12 +208,19 @@ struct
   let create (config : config) =
     let conspire = Conspire.create config.conspire in
     let command_buffer =
-      Delay_buffer.create ~compare:Command.compare
-        config.batching_interval
+      Delay_buffer.create ~compare:Command.compare config.batching_interval
         (Eio.Time.now config.clock |> Utils.float_to_time)
     in
+    let failure_detector =
+      FailureDetector.create config.fd_timeout config.conspire.other_replica_ids
+    in
     let tick_count = Counter.{count= 0; limit= config.tick_limit} in
-    {config; conspire; command_buffer; tick_count; clock= config.clock}
+    { config
+    ; conspire
+    ; command_buffer
+    ; tick_count
+    ; clock= config.clock
+    ; failure_detector }
 end
 
 module Impl = Make (Actions_f.ImperativeActions (Types))

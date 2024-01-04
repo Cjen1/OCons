@@ -10,6 +10,7 @@ module PRMain_sbn = Infra.Make (Impl_core.PrevoteRaftSBN)
 module ConspireSSMain = Infra.Make (Impl_core.ConspireSS)
 module ConspireLeaderMain = Infra.Make (Impl_core.ConspireLeader)
 module ConspireDCMain = Infra.Make (Impl_core.ConspireDC)
+module ConspireLeaderDCMain = Infra.Make (Impl_core.ConspireLeaderDC)
 
 type kind =
   | Paxos
@@ -20,6 +21,7 @@ type kind =
   | ConspireSS
   | ConspireLeader
   | ConspireDC
+  | ConspireLeaderDC
 
 let run kind node_id node_addresses internal_port external_port tick_period
     election_timeout max_outstanding stream_length stat_report
@@ -114,7 +116,7 @@ let run kind node_id node_addresses internal_port external_port tick_period
           ~fd_timeout:election_timeout ~max_outstanding ()
       in
       let cfg = config conspire_cfg in
-      Eio.traceln "Starting Conspire" ;
+      Eio.traceln "Starting Conspire-Leader" ;
       Eio.traceln "config = %a" Impl_core.ConspireLeader.PP.config_pp conspire_cfg ;
       ConspireLeaderMain.run env cfg
   | ConspireDC ->
@@ -130,9 +132,26 @@ let run kind node_id node_addresses internal_port external_port tick_period
           ~tick_limit
       in
       let cfg = config conspire_cfg in
-      Eio.traceln "Starting Conspire" ;
+      Eio.traceln "Starting Conspire-DC" ;
       Eio.traceln "config = %a" Impl_core.ConspireDC.PP.config_pp conspire_cfg ;
       ConspireDCMain.run env cfg
+  | ConspireLeaderDC ->
+      let replica_ids =
+        List.map (fun (i, _) -> i) node_addresses
+        |> Core.List.sort ~compare:Int.compare
+      in
+      let conspire_cfg =
+        Impl_core.ConspireLeaderDC.make_config ~node_id ~replica_ids ~max_outstanding
+          (Eio.Stdenv.clock env)
+          ~delay_interval:(Time_float_unix.Span.of_sec delay_interval)
+          ~batching_interval:(Time_float_unix.Span.of_sec batching_interval)
+          ~fd_timeout:election_timeout
+          ~tick_limit
+      in
+      let cfg = config conspire_cfg in
+      Eio.traceln "Starting Conspire-leader-dc" ;
+      Eio.traceln "config = %a" Impl_core.ConspireLeaderDC.PP.config_pp conspire_cfg ;
+      ConspireLeaderDCMain.run env cfg
 
 open Cmdliner
 
