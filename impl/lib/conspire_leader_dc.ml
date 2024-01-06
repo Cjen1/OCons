@@ -34,18 +34,19 @@ module FailureDetector = Conspire_leader.FailureDetector
 module Types = struct
   type config =
     { conspire: Conspire_f.config
-    ; other_replica_ids: node_id list
     ; lower_replica_ids: node_id list
+    ; other_replica_ids: node_id list
     ; batching_interval: Time.Span.t
     ; delay_interval: Time.Span.t
     ; fd_timeout: int
     ; max_outstanding: int
-    ; tick_limit: int
+    ; broadcast_tick_interval: int
     ; clock: float Eio.Time.clock_ty Eio.Time.clock [@opaque] }
   [@@deriving show {with_path= false}]
 
   let make_config ~node_id ~replica_ids ~delay_interval ~fd_timeout
-      ~batching_interval ?(max_outstanding = 8192) ~tick_limit clock : config =
+      ~batching_interval ?(max_outstanding = 8192) ~broadcast_tick_interval
+      clock : config =
     let floor f = f |> Int.of_float in
     let replica_count = List.length replica_ids in
     let quorum_size = floor (2. *. Float.of_int replica_count /. 3.) + 1 in
@@ -67,7 +68,7 @@ module Types = struct
     ; fd_timeout
     ; batching_interval
     ; max_outstanding
-    ; tick_limit
+    ; broadcast_tick_interval
     ; clock= (clock :> float Eio.Time.clock_ty Eio.Time.clock) }
 
   type message =
@@ -168,6 +169,7 @@ struct
         List.iter cs ~f:(fun c ->
             Delay_buffer.add_value t.command_buffer c tar )
     | Recv (Conspire m, src) -> (
+        FailureDetector.reset t.failure_detector src ;
         let update_result = Conspire.handle_update_message t.conspire src m in
         match update_result with
         | Error `MustAck ->
@@ -175,11 +177,11 @@ struct
         | Error (`MustNack reason) ->
             ( match reason with
             | `Root_of_update_not_found _ ->
-                Utils.dtraceln "Update is not rooted"
+                Utils.traceln "Nack: Update root not in tree"
             | `Commit_index_not_in_tree ->
-                Utils.dtraceln "Commit index not in tree"
+                Utils.traceln "Nack: Commit index not in tree"
             | `VVal_not_in_tree ->
-                Utils.dtraceln "VVal not int tree" ) ;
+                Utils.traceln "Nack: VVal not in tree" ) ;
             nack t src
         | Ok () ->
             process_acceptor_state t.conspire src ;
@@ -187,6 +189,10 @@ struct
               if is_leader t then Conspire.conflict_recovery t.conspire
               else Error `NotLeader
             in
+            Result.iter conflict_recovery_attempt ~f:(fun () ->
+                Utils.traceln "Recovery complete term: {t:%d,vt:%d}"
+                  t.conspire.rep.state.term t.conspire.rep.state.vterm ) ;
+            broadcast t ;
             let recovery_started =
               t.conspire.rep.state.term > t.conspire.rep.state.vterm
             in
@@ -201,9 +207,15 @@ struct
             else send ~prune:(not @@ is_leader t) t src )
 
   let advance t e =
-    Act.run_side_effects
-      (fun () -> Exn.handle_uncaught_and_exit (fun () -> handle_event t e))
-      t
+    let init_leader = is_leader t in
+    let res =
+      Act.run_side_effects
+        (fun () -> Exn.handle_uncaught_and_exit (fun () -> handle_event t e))
+        t
+    in
+    if is_leader t && not init_leader then
+      Utils.traceln "Is now leader for %d" t.conspire.rep.state.term ;
+    res
 
   let create (config : config) =
     let conspire = Conspire.create config.conspire in
@@ -214,7 +226,9 @@ struct
     let failure_detector =
       FailureDetector.create config.fd_timeout config.conspire.other_replica_ids
     in
-    let tick_count = Counter.{count= 0; limit= config.tick_limit} in
+    let tick_count =
+      Counter.{count= 0; limit= config.broadcast_tick_interval}
+    in
     { config
     ; conspire
     ; command_buffer

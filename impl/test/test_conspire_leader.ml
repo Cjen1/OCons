@@ -36,8 +36,7 @@ let%expect_test "local_commit" =
              remotes = <opaque> };
            other_nodes_state = []; config = <opaque>; commit_log = [] };
          failure_detector =
-         { Conspire_leader.FailureDetector.state = []; timeout = 2 };
-         stall_checker = <opaque> }
+         { Conspire_leader.FailureDetector.state = []; timeout = 2 } }
     actions: [] |}] ;
   let c1 = make_command (Read "c1") in
   let t, actions = Impl.advance t (Commands (c1 |> Iter.singleton)) in
@@ -62,8 +61,7 @@ let%expect_test "local_commit" =
            other_nodes_state = []; config = <opaque>;
            commit_log = [[Command(Read c1, 1)]] };
          failure_detector =
-         { Conspire_leader.FailureDetector.state = []; timeout = 2 };
-         stall_checker = <opaque> }
+         { Conspire_leader.FailureDetector.state = []; timeout = 2 } }
     actions: [CommitCommands(Command(Read c1, 1))] |}] ;
   let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
@@ -94,8 +92,7 @@ let%expect_test "local_commit" =
            commit_log =
            [[Command(Read c1, 1)][Command(Read c2, 3); Command(Read c3, 2)]] };
          failure_detector =
-         { Conspire_leader.FailureDetector.state = []; timeout = 2 };
-         stall_checker = <opaque> }
+         { Conspire_leader.FailureDetector.state = []; timeout = 2 } }
     actions: [CommitCommands(Command(Read c2, 3), Command(Read c3, 2))] |}]
 
 let%expect_test "e2e commit" =
@@ -137,8 +134,8 @@ let%expect_test "e2e commit" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(1,{ ctree =
                        (Some { new_head = 1183a904cd1a3b8f3cf219be9367701f;
                                extension =
@@ -209,8 +206,8 @@ let%expect_test "e2e commit" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(0: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [] |}] ;
   let t0_vote =
     Rep.
@@ -249,8 +246,8 @@ let%expect_test "e2e commit" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(0: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(0,{ ctree = None;
                        cons =
                        (Some { vval = 1183a904cd1a3b8f3cf219be9367701f;
@@ -289,8 +286,8 @@ let%expect_test "e2e commit" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [] |}] ;
   let t0, actions = Impl.advance t0 (Recv (Ok t0_vote, 2)) in
   print t0 actions ;
@@ -324,8 +321,8 @@ let%expect_test "e2e commit" =
            config = <opaque>; commit_log = [[Command(Read c1, 1)]] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [CommitCommands(Command(Read c1, 1))
               Send(1,{ ctree = None;
                        cons =
@@ -387,8 +384,8 @@ let%expect_test "e2e conflict resolution" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(0: 0)(2: 0)(3: 0)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(0,{ ctree =
                        (Some { new_head = 620122743bc84de6b418bd632ea0cdc2;
                                extension =
@@ -454,8 +451,8 @@ let%expect_test "e2e conflict resolution" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(1,{ ctree =
                        (Some { new_head = 1fddcd0db3e43a000153d0c4de56a7cc;
                                extension =
@@ -539,8 +536,8 @@ let%expect_test "e2e conflict resolution" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [] |}] ;
   (* ---- Votes for values ---- *)
   let t0, _ =
@@ -607,8 +604,8 @@ let%expect_test "e2e conflict resolution" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(1,{ ctree = None;
                        cons =
                        (Some { vval = 1fddcd0db3e43a000153d0c4de56a7cc;
@@ -660,6 +657,7 @@ let%expect_test "e2e conflict resolution" =
   print t0 actions ;
   [%expect
     {|
+    +Recovery complete term: {t:1,vt:1}
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -692,8 +690,8 @@ let%expect_test "e2e conflict resolution" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(1,{ ctree = None;
                        cons =
                        (Some { vval = 1fddcd0db3e43a000153d0c4de56a7cc;
@@ -774,8 +772,8 @@ let%expect_test "e2e conflict resolution" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(0: 2)(2: 0)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [] |}] ;
   ignore (t0, t1, c0_node, c1_node)
 
@@ -819,8 +817,8 @@ let%expect_test "message loss" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(1,{ ctree =
                        (Some { new_head = 1fddcd0db3e43a000153d0c4de56a7cc;
                                extension =
@@ -915,8 +913,8 @@ let%expect_test "message loss" =
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [CommitCommands(Command(Read c0, 1))
               Send(1,{ ctree = None;
                        cons =
@@ -972,8 +970,8 @@ let%expect_test "message loss" =
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(1,{ ctree =
                        (Some { new_head = b1d8bad167372c336ae91f91677feca1;
                                extension =
@@ -1019,6 +1017,7 @@ let%expect_test "message loss" =
   print t1 actions ;
   [%expect
     {|
+    +Nack: Update is not rooted
     t: { config = <opaque>;
          conspire =
          { rep =
@@ -1042,8 +1041,8 @@ let%expect_test "message loss" =
            config = <opaque>; commit_log = [] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(0: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(0,{ commit = d41d8cd98f00b204e9800998ecf8427e })] |}] ;
   let t0, actions =
     Impl.advance t0 (Recv (Error MP.Conspire.Rep.{commit= root_clock}, 1))
@@ -1084,8 +1083,8 @@ let%expect_test "message loss" =
            config = <opaque>; commit_log = [[Command(Read c0, 1)]] };
          failure_detector =
          { Conspire_leader.FailureDetector.state = [(1: 2)(2: 2)(3: 2)];
-           timeout = 2 };
-         stall_checker = <opaque> }
+           timeout = 2 }
+         }
     actions: [Send(1,{ ctree =
                        (Some { new_head = b1d8bad167372c336ae91f91677feca1;
                                extension =

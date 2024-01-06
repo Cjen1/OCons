@@ -193,7 +193,7 @@ module Make (Value : Value) = struct
         t.config.quorum_size
     in
     match new_commit with
-    | Some ci when not ([%equal: CTree.key] t.rep.state.commit_index ci) ->
+    | Some ci when not ([%equal: CTree.key] old_ci ci) ->
         (* can update since once committed, never overwritten *)
         t.rep.state.commit_index <- ci ;
         let cis = CTree.path_between t.rep.store old_ci ci in

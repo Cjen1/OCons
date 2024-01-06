@@ -72,8 +72,7 @@ module Types = struct
   type t =
     { config: config [@opaque]
     ; conspire: Conspire.t
-    ; failure_detector: FailureDetector.t
-    }
+    ; failure_detector: FailureDetector.t }
   [@@deriving show {with_path= false}]
 
   let get_command idx t =
@@ -171,11 +170,11 @@ struct
         | Error (`MustNack reason) ->
             ( match reason with
             | `Root_of_update_not_found _ ->
-                Utils.dtraceln "Nack: Update is not rooted"
+                Act.dtraceln "Nack: Update is not rooted"
             | `Commit_index_not_in_tree ->
-                Utils.dtraceln "Nack: Commit index not in tree"
+                Act.dtraceln "Nack: Commit index not in tree"
             | `VVal_not_in_tree ->
-                Utils.dtraceln "Nack: VVal not int tree" ) ;
+                Act.dtraceln "Nack: VVal not int tree" ) ;
             nack_counter () ; nack t src
         | Ok () ->
             process_acceptor_state t.conspire src ;
@@ -184,7 +183,7 @@ struct
               else Error `NotLeader
             in
             Result.iter conflict_recovery_attempt ~f:(fun () ->
-                Utils.traceln "Recovery complete term: {t:%d,vt:%d}"
+                Act.traceln "Recovery complete term: {t:%d,vt:%d}"
                   t.conspire.rep.state.term t.conspire.rep.state.vterm ) ;
             let recovery_started =
               t.conspire.rep.state.term > t.conspire.rep.state.vterm
