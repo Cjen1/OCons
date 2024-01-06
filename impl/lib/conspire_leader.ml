@@ -166,16 +166,19 @@ struct
         let update_result = Conspire.handle_update_message t.conspire src m in
         match update_result with
         | Error `MustAck ->
+            Act.traceln "Acking %d" src;
             ack_counter () ; send t src
         | Error (`MustNack reason) ->
-            ( match reason with
-            | `Root_of_update_not_found _ ->
-                Act.dtraceln "Nack: Update is not rooted"
-            | `Commit_index_not_in_tree ->
-                Act.dtraceln "Nack: Commit index not in tree"
-            | `VVal_not_in_tree ->
-                Act.dtraceln "Nack: VVal not int tree" ) ;
-            nack_counter () ; nack t src
+            Act.traceln "Nack for %d: %s" src
+              ( match reason with
+              | `Root_of_update_not_found _ ->
+                  "Update is not rooted"
+              | `Commit_index_not_in_tree ->
+                  "Commit index not in tree"
+              | `VVal_not_in_tree ->
+                  "VVal not int tree" ) ;
+            nack_counter () ;
+            nack t src
         | Ok () ->
             process_acceptor_state t.conspire src ;
             let conflict_recovery_attempt =
