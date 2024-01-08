@@ -112,13 +112,11 @@ struct
     List.for_all t.config.lower_replica_ids ~f:(fun nid ->
         not @@ FailureDetector.is_live t.failure_detector nid )
 
-  let can_apply_requests _t = true
-
   let available_space_for_commands t = t.config.max_outstanding
 
-  let send ?(force = false) ?(prune = false) t dst =
+  let send ?(force = false) t dst =
     let open Rep in
-    let update = get_update_to_send ~prune t.conspire.rep dst in
+    let update = get_update_to_send t.conspire.rep dst in
     if force || Option.is_some update.ctree || Option.is_some update.cons then
       Act.send dst (Conspire (Ok update))
 
@@ -126,8 +124,7 @@ struct
     Act.send dst (Conspire (Error {commit= t.conspire.rep.state.commit_index}))
 
   let broadcast ?(force = false) t =
-    List.iter t.config.other_replica_ids ~f:(fun nid ->
-        send ~force t nid ~prune:(not @@ is_leader t) )
+    List.iter t.config.other_replica_ids ~f:(fun nid -> send ~force t nid)
 
   let gather_batch_from_buffer t =
     let time = Eio.Time.now t.clock |> Utils.float_to_time in
@@ -173,15 +170,17 @@ struct
         let update_result = Conspire.handle_update_message t.conspire src m in
         match update_result with
         | Error `MustAck ->
+            Act.traceln "Acking %d" src ;
             send t src
         | Error (`MustNack reason) ->
-            ( match reason with
-            | `Root_of_update_not_found _ ->
-                Utils.traceln "Nack: Update root not in tree"
-            | `Commit_index_not_in_tree ->
-                Utils.traceln "Nack: Commit index not in tree"
-            | `VVal_not_in_tree ->
-                Utils.traceln "Nack: VVal not in tree" ) ;
+            Act.traceln "Nack for %d: %s" src
+              ( match reason with
+              | `Root_of_update_not_found _ ->
+                  "Update is not rooted"
+              | `Commit_index_not_in_tree ->
+                  "Commit index not in tree"
+              | `VVal_not_in_tree ->
+                  "VVal not int tree" ) ;
             nack t src
         | Ok () ->
             process_acceptor_state t.conspire src ;
@@ -203,8 +202,7 @@ struct
               Result.is_ok conflict_recovery_attempt
               || committed || recovery_started
             in
-            if should_broadcast then broadcast t
-            else send ~prune:(not @@ is_leader t) t src )
+            if should_broadcast then broadcast t else send t src )
 
   let advance t e =
     let init_leader = is_leader t in

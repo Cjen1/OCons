@@ -118,9 +118,9 @@ struct
   let available_space_for_commands t =
     if can_apply_requests t then t.config.max_outstanding else 0
 
-  let send ?(force = false) ?(prune = false) t dst =
+  let send ?(force = false) t dst =
     let open Rep in
-    let update = get_update_to_send ~prune t.conspire.rep dst in
+    let update = get_update_to_send t.conspire.rep dst in
     if force || Option.is_some update.ctree || Option.is_some update.cons then
       Act.send dst (Ok update)
 
@@ -128,8 +128,7 @@ struct
     Act.send dst (Error {commit= t.conspire.rep.state.commit_index})
 
   let broadcast ?(force = false) t =
-    List.iter t.config.other_replica_ids ~f:(fun nid ->
-        send ~force t nid ~prune:(not @@ is_leader t) )
+    List.iter t.config.other_replica_ids ~f:(fun nid -> send ~force t nid)
 
   let nack_counter, run_nc =
     Ocons_core.Utils.InternalReporter.rate_reporter "nacks"
@@ -166,8 +165,9 @@ struct
         let update_result = Conspire.handle_update_message t.conspire src m in
         match update_result with
         | Error `MustAck ->
-            Act.traceln "Acking %d" src;
-            ack_counter () ; send t src
+            Act.traceln "Acking %d" src ;
+            ack_counter () ;
+            send t src
         | Error (`MustNack reason) ->
             Act.traceln "Nack for %d: %s" src
               ( match reason with
@@ -198,13 +198,29 @@ struct
               Result.is_ok conflict_recovery_attempt
               || committed || recovery_started
             in
-            if should_broadcast then broadcast t
-            else send ~prune:(not @@ is_leader t) t src )
+            if should_broadcast then broadcast t else send t src )
 
   let advance t e =
-    Act.run_side_effects
-      (fun () -> Exn.handle_uncaught_and_exit (fun () -> handle_event t e))
-      t
+    let is_leader_pre = is_leader t in
+    let prev_term = t.conspire.rep.state.term in
+    let prev_vterm = t.conspire.rep.state.vterm in
+    let res =
+      Act.run_side_effects
+        (fun () -> Exn.handle_uncaught_and_exit (fun () -> handle_event t e))
+        t
+    in
+    ( match (is_leader_pre, is_leader t) with
+    | true, false ->
+        Act.traceln "No longer leader for %d" t.conspire.rep.state.term
+    | false, true ->
+        Act.traceln "Now leader for %d" t.conspire.rep.state.term
+    | _ ->
+        () ) ;
+    if prev_term < t.conspire.rep.state.term then
+      Act.traceln "Conflict, term=%d" t.conspire.rep.state.term ;
+    if prev_vterm < t.conspire.rep.state.vterm then
+      Act.traceln "Recovery to %d" t.conspire.rep.state.vterm ;
+    res
 
   let create (config : config) =
     let conspire = Conspire.create config.conspire in

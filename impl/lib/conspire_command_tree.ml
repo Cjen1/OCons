@@ -30,7 +30,7 @@ module CommandTree (Value : Value) = struct
        Extensions to heads
   *)
 
-  type node = int * key * Value.t [@@deriving show, bin_io]
+  type node = int * key * Value.t [@@deriving show, bin_io, compare]
 
   type parent_ref_node =
     {node: node; parent: parent_ref_node option [@opaque]; key: key}
@@ -256,10 +256,13 @@ module CommandTree (Value : Value) = struct
       match (curr, rt) with
       | None, Some _ ->
           Fmt.invalid_arg "%a not on path to %a" Key.pp rt_vc Key.pp hd_vc
+      (* Both root*)
       | None, None ->
           acc
+      (* Both non-root and equal *)
       | Some curr, Some rt when [%equal: Key.t] curr.key rt.key ->
           acc
+      (* both Non-root and non-equal *)
       | Some curr, _ ->
           aux curr.parent (curr.node :: acc)
     in
