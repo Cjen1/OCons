@@ -27,8 +27,9 @@ module SerPrim = struct
     | NoOp ->
         ()
 
-  let command Command.{op; id; trace_start} w =
+  let command Command.{op; id; submitted; trace_start} w =
     W.BE.uint64 w (Int64.of_int id) ;
+    W.BE.double w submitted ;
     W.BE.double w trace_start ;
     sm_op op w
 
@@ -85,9 +86,10 @@ module DeserPrim = struct
 
   let command =
     let* id = R.map Int64.to_int R.BE.uint64
+    and* submitted = R.BE.double
     and* trace_start = R.BE.double
     and* op = sm_op in
-    R.return Command.{op; id; trace_start}
+    R.return Command.{op; id; submitted; trace_start}
 
   let log_entry =
     let* term = R.map Int64.to_int R.BE.uint64 and* command = command in

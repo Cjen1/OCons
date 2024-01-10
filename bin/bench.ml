@@ -24,7 +24,10 @@ let pitcher ~sw nid mclock n rate cmgr (dispatch : (int, Mtime.t) Hashtbl.t) :
         let id = i * prime in
         let cmd =
           Command.
-            {op= Write ("asdf", "asdf"); id; trace_start= Unix.gettimeofday ()}
+            { op= Write ("asdf", "asdf")
+            ; id
+            ; submitted= Unix.gettimeofday ()
+            ; trace_start= Unix.gettimeofday () }
         in
         let target = Mtime.add_span prev period |> Option.get in
         if Mtime.is_later target ~than:(MT.now mclock) then
