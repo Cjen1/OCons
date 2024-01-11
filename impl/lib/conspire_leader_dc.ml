@@ -71,10 +71,7 @@ module Types = struct
     ; broadcast_tick_interval
     ; clock= (clock :> float Eio.Time.clock_ty Eio.Time.clock) }
 
-  type message =
-    | Commands of (Command.t list * (Time.t[@printer pp_time_float_unix]))
-    | Conspire of Conspire.message
-  [@@deriving show, bin_io]
+  type message = Conspire.message [@@deriving show, bin_io]
 
   type t =
     { config: config [@opaque]
@@ -118,10 +115,10 @@ struct
     let open Rep in
     let update = get_update_to_send t.conspire.rep dst in
     if force || Option.is_some update.ctree || Option.is_some update.cons then
-      Act.send dst (Conspire (Ok update))
+      Act.send dst (Ok update)
 
   let nack t dst =
-    Act.send dst (Conspire (Error {commit= t.conspire.rep.state.commit_index}))
+    Act.send dst (Error {commit= t.conspire.rep.state.commit_index})
 
   let broadcast ?(force = false) t =
     List.iter t.config.other_replica_ids ~f:(fun nid -> send ~force t nid)
@@ -157,15 +154,12 @@ struct
           Counter.reset t.tick_count ; broadcast t ~force:true )
     | Commands ci ->
         let commands = Iter.to_list ci in
-        let now = Eio.Time.now t.clock |> Utils.float_to_time in
-        let hedged_target = Time.add now t.config.delay_interval in
         List.iter commands ~f:(fun c ->
-            Delay_buffer.add_value t.command_buffer c hedged_target ) ;
-        Act.broadcast (Commands (commands, hedged_target))
-    | Recv (Commands (cs, tar), _) ->
-        List.iter cs ~f:(fun c ->
-            Delay_buffer.add_value t.command_buffer c tar )
-    | Recv (Conspire m, src) -> (
+            Delay_buffer.add_value t.command_buffer c
+              (Time.add
+                 (c.submitted |> Utils.float_to_time)
+                 t.config.delay_interval ) )
+    | Recv (m, src) -> (
         FailureDetector.reset t.failure_detector src ;
         let update_result = Conspire.handle_update_message t.conspire src m in
         match update_result with
