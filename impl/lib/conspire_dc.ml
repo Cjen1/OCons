@@ -28,7 +28,6 @@ end
    (all the while doing the recovery and commit messages as before)
 *)
 
-
 module Counter = struct
   type t = {mutable count: int; limit: int} [@@deriving show]
 
@@ -203,8 +202,7 @@ struct
   let create (config : config) =
     let conspire = Conspire.create config.conspire in
     let command_buffer =
-      Delay_buffer.create ~compare:Command.compare
-        config.batching_interval
+      Delay_buffer.create ~compare:Command.compare config.batching_interval
         (Eio.Time.now config.clock |> Utils.float_to_time)
     in
     let tick_count = Counter.{count= 0; limit= config.tick_limit} in

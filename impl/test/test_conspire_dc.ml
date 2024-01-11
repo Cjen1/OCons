@@ -405,7 +405,9 @@ let%expect_test "e2e commit" =
                                   })
                           }))] |}] ;
   let root_clk = t0.conspire.rep.store.root in
-  let c1_clk = DC.Conspire.CTree.make_key root_clk ([c1], 1. |> Utils.float_to_time) in
+  let c1_clk =
+    DC.Conspire.CTree.make_key root_clk ([c1], 1. |> Utils.float_to_time)
+  in
   let replication_message =
     Conspire
       (Ok
@@ -956,7 +958,9 @@ let%expect_test "Conflict" =
                                   })
                           }))] |}] ;
   let root_clk = t0.conspire.rep.store.root in
-  let c0_clk = DC.Conspire.CTree.make_key root_clk ([c0], 1. |> Utils.float_to_time) in
+  let c0_clk =
+    DC.Conspire.CTree.make_key root_clk ([c0], 1. |> Utils.float_to_time)
+  in
   let update_t0 term =
     Conspire
       (Ok
@@ -1003,7 +1007,9 @@ let%expect_test "Conflict" =
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [] |}] ;
-  let c1_clk = DC.Conspire.CTree.make_key root_clk ([c1], 1. |> Utils.float_to_time) in
+  let c1_clk =
+    DC.Conspire.CTree.make_key root_clk ([c1], 1. |> Utils.float_to_time)
+  in
   let update_t1 term =
     Conspire
       (Ok

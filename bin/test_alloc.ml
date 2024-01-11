@@ -39,4 +39,6 @@ let alloc_return_struct =
   in
   Bench.Test.create_with_initialization ~name:"alloc_return_struct" test
 
-let () = Command_unix.run (Bench.make_command [alloc_test; alloc_return_tuple; alloc_return_struct])
+let () =
+  Command_unix.run
+    (Bench.make_command [alloc_test; alloc_return_tuple; alloc_return_struct])

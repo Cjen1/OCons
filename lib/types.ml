@@ -49,7 +49,8 @@ module Command = struct
     let hash_fold_t s t = hash_fold_command_id s t.id
 
     let pp_mach ppf v =
-      Fmt.pf ppf "Command(%a, %d, %.4f, %.4f)" sm_op_pp v.op v.id v.submitted v.trace_start
+      Fmt.pf ppf "Command(%a, %d, %.4f, %.4f)" sm_op_pp v.op v.id v.submitted
+        v.trace_start
 
     let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 

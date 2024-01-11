@@ -117,7 +117,8 @@ let run kind node_id node_addresses internal_port external_port tick_period
       in
       let cfg = config conspire_cfg in
       Eio.traceln "Starting Conspire-Leader" ;
-      Eio.traceln "config = %a" Impl_core.ConspireLeader.PP.config_pp conspire_cfg ;
+      Eio.traceln "config = %a" Impl_core.ConspireLeader.PP.config_pp
+        conspire_cfg ;
       ConspireLeaderMain.run env cfg
   | ConspireDC ->
       let replica_ids =
@@ -140,18 +141,20 @@ let run kind node_id node_addresses internal_port external_port tick_period
         List.map (fun (i, _) -> i) node_addresses
         |> Core.List.sort ~compare:Int.compare
       in
-      let broadcast_tick_interval = (float_of_int election_timeout) /. 10. |> Float.ceil |> Float.to_int in
+      let broadcast_tick_interval =
+        float_of_int election_timeout /. 10. |> Float.ceil |> Float.to_int
+      in
       let conspire_cfg =
-        Impl_core.ConspireLeaderDC.make_config ~node_id ~replica_ids ~max_outstanding
-          (Eio.Stdenv.clock env)
+        Impl_core.ConspireLeaderDC.make_config ~node_id ~replica_ids
+          ~max_outstanding (Eio.Stdenv.clock env)
           ~delay_interval:(Time_float_unix.Span.of_sec delay_interval)
           ~batching_interval:(Time_float_unix.Span.of_sec batching_interval)
-          ~fd_timeout:election_timeout
-          ~broadcast_tick_interval
+          ~fd_timeout:election_timeout ~broadcast_tick_interval
       in
       let cfg = config conspire_cfg in
       Eio.traceln "Starting Conspire-leader-dc" ;
-      Eio.traceln "config = %a" Impl_core.ConspireLeaderDC.PP.config_pp conspire_cfg ;
+      Eio.traceln "config = %a" Impl_core.ConspireLeaderDC.PP.config_pp
+        conspire_cfg ;
       ConspireLeaderDCMain.run env cfg
 
 open Cmdliner

@@ -40,12 +40,11 @@ let test_client_request r =
   Line_prot.External_infra.serialise_request r bw ;
   let r' = Line_prot.External_infra.parse_request br in
   (* compare *)
-  check_eq ~cmp:Command.compare ~pp:Command.pp_mach r r';
+  check_eq ~cmp:Command.compare ~pp:Command.pp_mach r r' ;
   (* hash *)
   check_eq ~pp:Command.pp_mach r r' ~cmp:(fun a b ->
-    let ha, hb = Command.hash a, Command.hash b in
-    Int.compare ha hb
-  )
+      let ha, hb = (Command.hash a, Command.hash b) in
+      Int.compare ha hb )
 
 let test_client_response r =
   let open Crowbar in

@@ -361,7 +361,8 @@ struct
           ex.@(t @> config @> election_timeout)
     | Candidate {timeout; _} when timeout <= 0 ->
         send_request_vote () ;
-        ex.@(t @> node_state @> Candidate.timeout) <- ex.@(t @> config @> election_timeout)
+        ex.@(t @> node_state @> Candidate.timeout) <-
+          ex.@(t @> config @> election_timeout)
     | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1

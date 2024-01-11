@@ -9,13 +9,17 @@ let ctree =
   fix (fun gen ->
       choose
         [ const CTree.empty
-        ; map [gen; int; list1 int] (fun ctree kid vs ->
-          let nodes = Map.keys ctree.CTree.ctree in
-          let kid = kid % List.length nodes in
-          let root = List.nth_exn nodes kid in
-          let ctree', _ =
-            CTree.addv ~node:0 ctree ~parent:root (List.iter vs |> Iter.from_labelled_iter) in
-          ctree')])
+        ; map
+            [gen; int; list1 int]
+            (fun ctree kid vs ->
+              let nodes = Map.keys ctree.CTree.ctree in
+              let kid = kid % List.length nodes in
+              let root = List.nth_exn nodes kid in
+              let ctree', _ =
+                CTree.addv ~node:0 ctree ~parent:root
+                  (List.iter vs |> Iter.from_labelled_iter)
+              in
+              ctree' ) ] )
 
 (* take ctree and random node and node in its history *)
 (* make an update of that and add it to the tree of just the path to that *)

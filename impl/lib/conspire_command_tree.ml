@@ -115,8 +115,8 @@ module CommandTree (Value : Value) = struct
     match apply_update t update with
     | Ok t ->
         t
-    | Error (`Root_of_update_not_found par) -> 
-          Fmt.failwith "Root of update not found: %a" Key.pp par
+    | Error (`Root_of_update_not_found par) ->
+        Fmt.failwith "Root of update not found: %a" Key.pp par
 
   let addv t ~node:_ ~parent vi =
     let parent_key = parent in

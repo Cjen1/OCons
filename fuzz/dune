@@ -1,4 +1,5 @@
 (test
  (name lib_line_prot)
  (libraries ocons.core crowbar mtime)
- (preprocess (pps ppx_jane)))
+ (preprocess
+  (pps ppx_jane)))

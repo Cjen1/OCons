@@ -102,7 +102,13 @@ let send_request ?(random_id = false) t op =
     if random_id then Random.int32 Int32.max_int |> Int32.to_int
     else t.next_id ()
   in
-  let command = Command.{op; id; submitted= Unix.gettimeofday (); trace_start= Unix.gettimeofday ()} in
+  let command =
+    Command.
+      { op
+      ; id
+      ; submitted= Unix.gettimeofday ()
+      ; trace_start= Unix.gettimeofday () }
+  in
   let send () = submit_request t.cmgr command in
   let res_t, res_u = Promise.create () in
   let request_state =
