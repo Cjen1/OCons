@@ -1,7 +1,9 @@
 module C = Crowbar
 
 let entries_equal (ea, la) (eb, lb) =
-  la = lb && List.equal ( = ) (Iter.to_list ea) (Iter.to_list eb)
+  la = lb
+  && List.equal [%compare.equal: Ocons_core.Types.log_entry] (Iter.to_list ea)
+       (Iter.to_list eb)
 
 module Gen = struct
   open Ocons_core.Types
@@ -17,13 +19,22 @@ module Gen = struct
       ; const NoOp ]
 
   let command =
-    map [op; int] (fun op id ->
-        Ocons_core.Types.Command.{op; id; trace_start= -1.} )
+    with_printer Command.pp
+    @@ map [op; int; float; float] (fun op id submitted trace_start ->
+           Ocons_core.Types.Command.{op; id; trace_start; submitted} )
 
-  let log_entry = map [command; int] (fun command term -> {command; term})
+  let log_entry =
+    with_printer log_entry_pp
+    @@ map [command; int] (fun command term -> {command; term})
+
+  let pp_entries ppf (v, _) =
+    Fmt.pf ppf "%a"
+      Fmt.(brackets @@ list ~sep:comma log_entry_pp_mach)
+      (Iter.to_list v)
 
   let entries =
-    map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
+    with_printer pp_entries
+    @@ map [list log_entry] (fun les -> (Iter.of_list les, List.length les))
 
   let conspire_value : Impl_core.ConspireSS.value gen = list command
 end
@@ -43,7 +54,7 @@ let test_entry_equality les =
   @@ fun bw ->
   LP.SerPrim.entries w_entries bw ;
   let r_entries = LP.DeserPrim.entries br in
-  check_eq ~eq:entries_equal w_entries r_entries
+  check_eq ~pp:Gen.pp_entries ~eq:entries_equal w_entries r_entries
 
 module Paxos = struct
   open Impl_core.Paxos

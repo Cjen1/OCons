@@ -89,15 +89,15 @@ let%expect_test "local_commit" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
-               commit_index = 34e452ffd92c22ea72ef125a33a0a593 };
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
+               commit_index = 2a593842bdac635313d582f80fb0a066 };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -118,15 +118,15 @@ let%expect_test "local_commit" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
-               commit_index = 34e452ffd92c22ea72ef125a33a0a593 };
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
+               commit_index = 2a593842bdac635313d582f80fb0a066 };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -149,20 +149,20 @@ let%expect_test "local_commit" =
          conspire =
          { rep =
            { state =
-             { vval = ccfc0ddc71cfcede53a100a51835b7ff; vterm = 0; term = 0;
-               commit_index = ccfc0ddc71cfcede53a100a51835b7ff };
+             { vval = 5cd295d17b5aa74c6eccfe593600bc73; vterm = 0; term = 0;
+               commit_index = 5cd295d17b5aa74c6eccfe593600bc73 };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
-                (ccfc0ddc71cfcede53a100a51835b7ff:
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
+                (5cd295d17b5aa74c6eccfe593600bc73:
                  { node =
-                   (2, 34e452ffd92c22ea72ef125a33a0a593,
+                   (2, 2a593842bdac635313d582f80fb0a066,
                     ([Command(Read c1, 2); Command(Read c2, 3)], 2.00000));
-                   parent = <opaque>; key = ccfc0ddc71cfcede53a100a51835b7ff });
+                   parent = <opaque>; key = 5cd295d17b5aa74c6eccfe593600bc73 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -264,15 +264,15 @@ let%expect_test "e2e commit" =
          conspire =
          { rep =
            { state =
-             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
+             { vval = 4f1688bf7767c0d49f5ce96ed21dfa21; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(c4677fbe3fa92d4246f849e282f15527:
+               [(4f1688bf7767c0d49f5ce96ed21dfa21:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 1)], 1.00000));
-                   parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
+                   parent = <opaque>; key = 4f1688bf7767c0d49f5ce96ed21dfa21 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -293,39 +293,39 @@ let%expect_test "e2e commit" =
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { new_head = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { new_head = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { new_head = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -338,15 +338,15 @@ let%expect_test "e2e commit" =
          conspire =
          { rep =
            { state =
-             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
+             { vval = 4f1688bf7767c0d49f5ce96ed21dfa21; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(c4677fbe3fa92d4246f849e282f15527:
+               [(4f1688bf7767c0d49f5ce96ed21dfa21:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 1)], 1.00000));
-                   parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
+                   parent = <opaque>; key = 4f1688bf7767c0d49f5ce96ed21dfa21 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -367,45 +367,47 @@ let%expect_test "e2e commit" =
          clock = <opaque> }
     actions: [Send(0,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { new_head = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { new_head = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { new_head = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))] |}] ;
   let root_clk = t0.conspire.rep.store.root in
-  let c1_clk = Md5.of_hex_exn "c4677fbe3fa92d4246f849e282f15527" in
+  let c1_clk =
+    DC.Conspire.CTree.make_key root_clk ([c1], 1. |> Utils.float_to_time)
+  in
   let replication_message =
     Conspire
       (Ok
@@ -424,21 +426,21 @@ let%expect_test "e2e commit" =
          conspire =
          { rep =
            { state =
-             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
+             { vval = 4f1688bf7767c0d49f5ce96ed21dfa21; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(c4677fbe3fa92d4246f849e282f15527:
+               [(4f1688bf7767c0d49f5ce96ed21dfa21:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 1)], 1.00000));
-                   parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
+                   parent = <opaque>; key = 4f1688bf7767c0d49f5ce96ed21dfa21 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state =
            [(1:
-             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
+             { vval = 4f1688bf7767c0d49f5ce96ed21dfa21; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (2:
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
@@ -460,24 +462,24 @@ let%expect_test "e2e commit" =
          conspire =
          { rep =
            { state =
-             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
-               commit_index = c4677fbe3fa92d4246f849e282f15527 };
+             { vval = 4f1688bf7767c0d49f5ce96ed21dfa21; vterm = 0; term = 0;
+               commit_index = 4f1688bf7767c0d49f5ce96ed21dfa21 };
              store =
              { ctree =
-               [(c4677fbe3fa92d4246f849e282f15527:
+               [(4f1688bf7767c0d49f5ce96ed21dfa21:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 1)], 1.00000));
-                   parent = <opaque>; key = c4677fbe3fa92d4246f849e282f15527 });
+                   parent = <opaque>; key = 4f1688bf7767c0d49f5ce96ed21dfa21 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state =
            [(1:
-             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
+             { vval = 4f1688bf7767c0d49f5ce96ed21dfa21; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (2:
-             { vval = c4677fbe3fa92d4246f849e282f15527; vterm = 0; term = 0;
+             { vval = 4f1688bf7767c0d49f5ce96ed21dfa21; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (3:
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
@@ -491,25 +493,25 @@ let%expect_test "e2e commit" =
               Send(1,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
-                                  commit_index = c4677fbe3fa92d4246f849e282f15527
+                                  commit_index = 4f1688bf7767c0d49f5ce96ed21dfa21
                                   })
                           }))
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
-                                  commit_index = c4677fbe3fa92d4246f849e282f15527
+                                  commit_index = 4f1688bf7767c0d49f5ce96ed21dfa21
                                   })
                           }))
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = c4677fbe3fa92d4246f849e282f15527;
+                          (Some { vval = 4f1688bf7767c0d49f5ce96ed21dfa21;
                                   vterm = 0; term = 0;
-                                  commit_index = c4677fbe3fa92d4246f849e282f15527
+                                  commit_index = 4f1688bf7767c0d49f5ce96ed21dfa21
                                   })
                           }))] |}]
 
@@ -632,15 +634,15 @@ let%expect_test "batching" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -663,39 +665,39 @@ let%expect_test "batching" =
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { new_head = 2a593842bdac635313d582f80fb0a066;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { new_head = 2a593842bdac635313d582f80fb0a066;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { new_head = 2a593842bdac635313d582f80fb0a066;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -712,20 +714,20 @@ let%expect_test "batching" =
          conspire =
          { rep =
            { state =
-             { vval = 4208465ea72aa1217306cdb4da303438; vterm = 0; term = 0;
+             { vval = b906b94dbc8b5fa592ad20c239ec09d6; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
-                (4208465ea72aa1217306cdb4da303438:
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
+                (b906b94dbc8b5fa592ad20c239ec09d6:
                  { node =
-                   (2, 34e452ffd92c22ea72ef125a33a0a593,
+                   (2, 2a593842bdac635313d582f80fb0a066,
                     ([Command(Read c1, 2); Command(Read c2, 3)], 3.00000));
-                   parent = <opaque>; key = 4208465ea72aa1217306cdb4da303438 });
+                   parent = <opaque>; key = b906b94dbc8b5fa592ad20c239ec09d6 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -746,45 +748,45 @@ let%expect_test "batching" =
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 4208465ea72aa1217306cdb4da303438;
+                          (Some { new_head = b906b94dbc8b5fa592ad20c239ec09d6;
                                   extension =
-                                  [(2, 34e452ffd92c22ea72ef125a33a0a593,
+                                  [(2, 2a593842bdac635313d582f80fb0a066,
                                     ([Command(Read c1, 2); Command(Read c2, 3)],
                                      3.00000))
                                     ]
                                   });
                           cons =
-                          (Some { vval = 4208465ea72aa1217306cdb4da303438;
+                          (Some { vval = b906b94dbc8b5fa592ad20c239ec09d6;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 4208465ea72aa1217306cdb4da303438;
+                          (Some { new_head = b906b94dbc8b5fa592ad20c239ec09d6;
                                   extension =
-                                  [(2, 34e452ffd92c22ea72ef125a33a0a593,
+                                  [(2, 2a593842bdac635313d582f80fb0a066,
                                     ([Command(Read c1, 2); Command(Read c2, 3)],
                                      3.00000))
                                     ]
                                   });
                           cons =
-                          (Some { vval = 4208465ea72aa1217306cdb4da303438;
+                          (Some { vval = b906b94dbc8b5fa592ad20c239ec09d6;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 4208465ea72aa1217306cdb4da303438;
+                          (Some { new_head = b906b94dbc8b5fa592ad20c239ec09d6;
                                   extension =
-                                  [(2, 34e452ffd92c22ea72ef125a33a0a593,
+                                  [(2, 2a593842bdac635313d582f80fb0a066,
                                     ([Command(Read c1, 2); Command(Read c2, 3)],
                                      3.00000))
                                     ]
                                   });
                           cons =
-                          (Some { vval = 4208465ea72aa1217306cdb4da303438;
+                          (Some { vval = b906b94dbc8b5fa592ad20c239ec09d6;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -810,15 +812,15 @@ let%expect_test "Conflict" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -839,39 +841,39 @@ let%expect_test "Conflict" =
          clock = <opaque> }
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { new_head = 2a593842bdac635313d582f80fb0a066;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { new_head = 2a593842bdac635313d582f80fb0a066;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { new_head = 2a593842bdac635313d582f80fb0a066;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c0, 1)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -889,15 +891,15 @@ let%expect_test "Conflict" =
          conspire =
          { rep =
            { state =
-             { vval = 9ddc31c480e04b8965ff34f30c37d919; vterm = 0; term = 0;
+             { vval = a27fc154024e8c9bb0ba98b71ddadd3a; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(9ddc31c480e04b8965ff34f30c37d919:
+               [(a27fc154024e8c9bb0ba98b71ddadd3a:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 2)], 1.00000));
-                   parent = <opaque>; key = 9ddc31c480e04b8965ff34f30c37d919 });
+                   parent = <opaque>; key = a27fc154024e8c9bb0ba98b71ddadd3a });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -918,45 +920,47 @@ let%expect_test "Conflict" =
          clock = <opaque> }
     actions: [Send(0,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
+                          (Some { new_head = a27fc154024e8c9bb0ba98b71ddadd3a;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 2)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
+                          (Some { vval = a27fc154024e8c9bb0ba98b71ddadd3a;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
+                          (Some { new_head = a27fc154024e8c9bb0ba98b71ddadd3a;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 2)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
+                          (Some { vval = a27fc154024e8c9bb0ba98b71ddadd3a;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree =
-                          (Some { new_head = 9ddc31c480e04b8965ff34f30c37d919;
+                          (Some { new_head = a27fc154024e8c9bb0ba98b71ddadd3a;
                                   extension =
                                   [(1, d41d8cd98f00b204e9800998ecf8427e,
                                     ([Command(Read c1, 2)], 1.00000))]
                                   });
                           cons =
-                          (Some { vval = 9ddc31c480e04b8965ff34f30c37d919;
+                          (Some { vval = a27fc154024e8c9bb0ba98b71ddadd3a;
                                   vterm = 0; term = 0;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
                           }))] |}] ;
   let root_clk = t0.conspire.rep.store.root in
-  let c0_clk = Md5.of_hex_exn "34e452ffd92c22ea72ef125a33a0a593" in
+  let c0_clk =
+    DC.Conspire.CTree.make_key root_clk ([c0], 1. |> Utils.float_to_time)
+  in
   let update_t0 term =
     Conspire
       (Ok
@@ -975,15 +979,15 @@ let%expect_test "Conflict" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
@@ -992,7 +996,7 @@ let%expect_test "Conflict" =
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (2:
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (3:
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
@@ -1003,7 +1007,9 @@ let%expect_test "Conflict" =
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [] |}] ;
-  let c1_clk = Md5.of_hex_exn "620122743bc84de6b418bd632ea0cdc2" in
+  let c1_clk =
+    DC.Conspire.CTree.make_key root_clk ([c1], 1. |> Utils.float_to_time)
+  in
   let update_t1 term =
     Conspire
       (Ok
@@ -1022,29 +1028,29 @@ let%expect_test "Conflict" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 1;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 1;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
-                (620122743bc84de6b418bd632ea0cdc2:
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
+                (a27fc154024e8c9bb0ba98b71ddadd3a:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 2)], 1.00000));
-                   parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
+                   parent = <opaque>; key = a27fc154024e8c9bb0ba98b71ddadd3a });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state =
            [(1:
-             { vval = 620122743bc84de6b418bd632ea0cdc2; vterm = 0; term = 0;
+             { vval = a27fc154024e8c9bb0ba98b71ddadd3a; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (2:
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (3:
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
@@ -1057,7 +1063,7 @@ let%expect_test "Conflict" =
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 1;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -1065,7 +1071,7 @@ let%expect_test "Conflict" =
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 1;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -1073,7 +1079,7 @@ let%expect_test "Conflict" =
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 0; term = 1;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -1086,29 +1092,29 @@ let%expect_test "Conflict" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 1;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 1;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
-                (620122743bc84de6b418bd632ea0cdc2:
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
+                (a27fc154024e8c9bb0ba98b71ddadd3a:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 2)], 1.00000));
-                   parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
+                   parent = <opaque>; key = a27fc154024e8c9bb0ba98b71ddadd3a });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state =
            [(1:
-             { vval = 620122743bc84de6b418bd632ea0cdc2; vterm = 0; term = 1;
+             { vval = a27fc154024e8c9bb0ba98b71ddadd3a; vterm = 0; term = 1;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (2:
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 0;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 0;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (3:
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
@@ -1127,29 +1133,29 @@ let%expect_test "Conflict" =
          conspire =
          { rep =
            { state =
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 1; term = 1;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 1; term = 1;
                commit_index = d41d8cd98f00b204e9800998ecf8427e };
              store =
              { ctree =
-               [(34e452ffd92c22ea72ef125a33a0a593:
+               [(2a593842bdac635313d582f80fb0a066:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c0, 1)], 1.00000));
-                   parent = <opaque>; key = 34e452ffd92c22ea72ef125a33a0a593 });
-                (620122743bc84de6b418bd632ea0cdc2:
+                   parent = <opaque>; key = 2a593842bdac635313d582f80fb0a066 });
+                (a27fc154024e8c9bb0ba98b71ddadd3a:
                  { node =
                    (1, d41d8cd98f00b204e9800998ecf8427e,
                     ([Command(Read c1, 2)], 1.00000));
-                   parent = <opaque>; key = 620122743bc84de6b418bd632ea0cdc2 });
+                   parent = <opaque>; key = a27fc154024e8c9bb0ba98b71ddadd3a });
                 (d41d8cd98f00b204e9800998ecf8427e: Root)];
                root = d41d8cd98f00b204e9800998ecf8427e };
              remotes = <opaque> };
            other_nodes_state =
            [(1:
-             { vval = 620122743bc84de6b418bd632ea0cdc2; vterm = 0; term = 1;
+             { vval = a27fc154024e8c9bb0ba98b71ddadd3a; vterm = 0; term = 1;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (2:
-             { vval = 34e452ffd92c22ea72ef125a33a0a593; vterm = 0; term = 1;
+             { vval = 2a593842bdac635313d582f80fb0a066; vterm = 0; term = 1;
                commit_index = d41d8cd98f00b204e9800998ecf8427e });
             (3:
              { vval = d41d8cd98f00b204e9800998ecf8427e; vterm = 0; term = 0;
@@ -1162,7 +1168,7 @@ let%expect_test "Conflict" =
     actions: [Send(1,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 1; term = 1;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -1170,7 +1176,7 @@ let%expect_test "Conflict" =
               Send(2,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 1; term = 1;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })
@@ -1178,7 +1184,7 @@ let%expect_test "Conflict" =
               Send(3,(Conspire_dc.Types.Conspire
                         { ctree = None;
                           cons =
-                          (Some { vval = 34e452ffd92c22ea72ef125a33a0a593;
+                          (Some { vval = 2a593842bdac635313d582f80fb0a066;
                                   vterm = 1; term = 1;
                                   commit_index = d41d8cd98f00b204e9800998ecf8427e
                                   })

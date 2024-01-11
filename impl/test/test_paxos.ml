@@ -158,7 +158,8 @@ let%expect_test "Loop" =
   let t, _ = Impl.advance t Tick in
   let t, _ = Impl.advance t Tick in
   Fmt.pr "node_state: %a\n" PP.node_state_pp (A.get node_state t) ;
-  [%expect {|
+  [%expect
+    {|
     +Follower for node 2 for term 10
     +Follower for term 10
     node_state: Follower(1) |}] ;

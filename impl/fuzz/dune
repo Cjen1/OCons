@@ -1,7 +1,7 @@
 (tests
- (names test_msgs)
+ (names test_msgs command_tree)
  (flags
   (:standard -w -27))
  (preprocess
-  (pps ppx_jane))
+  (pps ppx_jane ppx_log ppx_accessor ppx_deriving.show))
  (libraries impl_core crowbar))

@@ -40,7 +40,8 @@ let sm_op_pp ppf v =
 
 module Command = struct
   module T = struct
-    type t = {op: sm_op; id: command_id; mutable trace_start: float}
+    type t =
+      {op: sm_op; id: command_id; submitted: float; mutable trace_start: float}
     [@@deriving sexp, bin_io]
 
     let hash t = hash_command_id t.id
@@ -48,7 +49,8 @@ module Command = struct
     let hash_fold_t s t = hash_fold_command_id s t.id
 
     let pp_mach ppf v =
-      Fmt.pf ppf "Command(%a, %d, %.4f)" sm_op_pp v.op v.id v.trace_start
+      Fmt.pf ppf "Command(%a, %d, %.4f, %.4f)" sm_op_pp v.op v.id v.submitted
+        v.trace_start
 
     let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
 
@@ -67,15 +69,16 @@ let update_command_time c = c.Command.trace_start <- Core_unix.gettimeofday ()
 
 let get_command_trace_time c = c.Command.trace_start
 
-let empty_command = Command.{op= NoOp; id= -1; trace_start= -1.}
+let empty_command = Command.{op= NoOp; id= -1; submitted= -1.; trace_start= -1.}
 
 let make_command_state = ref 0
 
 let reset_make_command_state () = make_command_state := 0
 
+(* Used for tests *)
 let make_command c =
   make_command_state := !make_command_state + 1 ;
-  Command.{op= c; id= !make_command_state; trace_start= -1.}
+  Command.{op= c; id= !make_command_state; trace_start= -1.; submitted= -1.}
 
 type op_result = Success | Failure of string | ReadSuccess of key
 [@@deriving bin_io]

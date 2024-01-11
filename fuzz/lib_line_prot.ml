@@ -14,8 +14,8 @@ module Gen = struct
       ; const NoOp ]
 
   let command =
-    map [op; int; float] (fun op id trace_start ->
-        Ocons_core.Types.Command.{op; id; trace_start} )
+    map [op; int; float; float] (fun op id submitted trace_start ->
+        Ocons_core.Types.Command.{op; id; submitted; trace_start} )
 
   let log_entry = map [command; int] (fun command term -> {command; term})
 
@@ -39,7 +39,12 @@ let test_client_request r =
   @@ fun bw ->
   Line_prot.External_infra.serialise_request r bw ;
   let r' = Line_prot.External_infra.parse_request br in
-  check_eq ~cmp:Command.compare ~pp:Command.pp_mach r r'
+  (* compare *)
+  check_eq ~cmp:Command.compare ~pp:Command.pp_mach r r' ;
+  (* hash *)
+  check_eq ~pp:Command.pp_mach r r' ~cmp:(fun a b ->
+      let ha, hb = (Command.hash a, Command.hash b) in
+      Int.compare ha hb )
 
 let test_client_response r =
   let open Crowbar in

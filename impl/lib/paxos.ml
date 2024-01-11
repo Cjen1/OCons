@@ -307,7 +307,7 @@ struct
       ->
         (* This case happens if a message is lost *)
         assert (m.term = ex.@(t @> current_term)) ;
-        A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx) ;
+        A.map (t @> node_state @> Leader.rep_sent) () ~f:(IntMap.add src idx)
     (* Follower *)
     | Recv (RequestVote m, cid), Follower _ ->
         ex.@(t @> node_state @> Follower.timeout) <-
@@ -395,7 +395,8 @@ struct
         transit_candidate ()
     | Candidate {timeout; _} when timeout <= 0 ->
         send_request_vote () ;
-        ex.@(t @> node_state @> Candidate.timeout) <- ex.@(t @> config @> election_timeout)
+        ex.@(t @> node_state @> Candidate.timeout) <-
+          ex.@(t @> config @> election_timeout)
     | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1

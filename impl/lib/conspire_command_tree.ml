@@ -30,7 +30,7 @@ module CommandTree (Value : Value) = struct
        Extensions to heads
   *)
 
-  type node = int * key * Value.t [@@deriving show, bin_io]
+  type node = int * key * Value.t [@@deriving show, bin_io, compare]
 
   type parent_ref_node =
     {node: node; parent: parent_ref_node option [@opaque]; key: key}
@@ -93,7 +93,7 @@ module CommandTree (Value : Value) = struct
       | [] ->
           Fmt.failwith "All updates should be non-empty"
       | (_, par, _) :: _ when not (Map.mem t.ctree par) ->
-          Fmt.error_msg "Missing %a" Key.pp par
+          Error (`Root_of_update_not_found par)
       | (_, par, _) :: _ as extension ->
           let rec aux (ctree : parent_ref_node option Map.M(Key).t)
               (extension : node list) parent =
@@ -115,8 +115,8 @@ module CommandTree (Value : Value) = struct
     match apply_update t update with
     | Ok t ->
         t
-    | Error (`Msg s) ->
-        Fmt.failwith "%s" s
+    | Error (`Root_of_update_not_found par) ->
+        Fmt.failwith "Root of update not found: %a" Key.pp par
 
   let addv t ~node:_ ~parent vi =
     let parent_key = parent in
@@ -256,10 +256,13 @@ module CommandTree (Value : Value) = struct
       match (curr, rt) with
       | None, Some _ ->
           Fmt.invalid_arg "%a not on path to %a" Key.pp rt_vc Key.pp hd_vc
+      (* Both root*)
       | None, None ->
           acc
+      (* Both non-root and equal *)
       | Some curr, Some rt when [%equal: Key.t] curr.key rt.key ->
           acc
+      (* both Non-root and non-equal *)
       | Some curr, _ ->
           aux curr.parent (curr.node :: acc)
     in

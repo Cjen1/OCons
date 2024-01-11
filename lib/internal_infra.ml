@@ -254,11 +254,15 @@ module Test = struct
     Command.
       { op= Write (k, n)
       ; id= Core.Random.int Core.Int.max_value
-      ; trace_start= -1. }
+      ; trace_start= -1.
+      ; submitted= -1. }
 
   let r n =
     Command.
-      {op= Read n; id= Core.Random.int Core.Int.max_value; trace_start= -1.}
+      { op= Read n
+      ; id= Core.Random.int Core.Int.max_value
+      ; trace_start= -1.
+      ; submitted= -1. }
 
   module CT : Consensus_intf.S = struct
     type message = Core.String.t [@@deriving sexp]

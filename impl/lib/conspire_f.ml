@@ -94,7 +94,7 @@ module Make (Value : Value) = struct
       remote.expected_tree <-
         CTree.copy_update rep.store remote.expected_tree update.new_head
 
-    let get_update_to_send rep dst =
+    let get_update_to_send ?(prune = false) rep dst =
       let update = get_update rep dst in
       let remote = Map.find_exn rep.remotes dst in
       Option.iter update.ctree ~f:(fun update ->
@@ -103,6 +103,9 @@ module Make (Value : Value) = struct
             |> Result.ok |> Option.value_exn ) ;
       Option.iter update.cons ~f:(fun s ->
           set_state (Map.find_exn rep.remotes dst).expected_state s ) ;
+      let update =
+        {update with ctree= (if prune then None else update.ctree)}
+      in
       update
 
     let add_commands rep ~node vals =
@@ -137,41 +140,44 @@ module Make (Value : Value) = struct
   let reporter_conflict, run_c =
     Ocons_core.Utils.InternalReporter.rate_reporter "conflict"
 
-  let acceptor_reply t src =
+  let process_acceptor_state t src =
     let local = t.rep.state in
     let remote = Map.find_exn t.other_nodes_state src in
     let msg_term : term = remote.vterm in
-    match msg_term >= local.term with
-    (* overwrite *)
-    | true when msg_term > local.vterm ->
-        local.term <- msg_term ;
-        local.vterm <- msg_term ;
-        local.vval <- remote.vval
-    (* extends local *)
-    | true when msg_term = local.vterm -> (
-        let res = CTree.compare_keys t.rep.store local.vval remote.vval in
-        match res with
-        | None ->
-            reporter_conflict () ;
-            (* conflict *)
-            Utils.dtraceln "CONFLICT from %d" src ;
-            Utils.dtraceln "local %a does not prefix of remote %a"
-              (Fmt.option CTree.pp_parent_ref_node)
-              (CTree.get t.rep.store local.vval)
-              (Fmt.option CTree.pp_parent_ref_node)
-              (CTree.get t.rep.store remote.vval) ;
-            local.term <- msg_term + 1
-        | Some EQ ->
-            (* equal *)
-            ()
-        | Some GT ->
-            (* local > remote *)
-            ()
-        | Some LT ->
-            (* local < remote *)
-            local.vval <- remote.vval )
-    | _ ->
-        assert (msg_term < local.term || msg_term < local.vterm)
+    let () =
+      match msg_term >= local.term with
+      (* overwrite *)
+      | true when msg_term > local.vterm ->
+          local.term <- msg_term ;
+          local.vterm <- msg_term ;
+          local.vval <- remote.vval
+      (* extends local *)
+      | true when msg_term = local.vterm -> (
+          let res = CTree.compare_keys t.rep.store local.vval remote.vval in
+          match res with
+          | None ->
+              reporter_conflict () ;
+              (* conflict *)
+              Utils.dtraceln "CONFLICT from %d" src ;
+              Utils.dtraceln "local %a does not prefix of remote %a"
+                (Fmt.option CTree.pp_parent_ref_node)
+                (CTree.get t.rep.store local.vval)
+                (Fmt.option CTree.pp_parent_ref_node)
+                (CTree.get t.rep.store remote.vval) ;
+              local.term <- msg_term + 1
+          | Some EQ ->
+              (* equal *)
+              ()
+          | Some GT ->
+              (* local > remote *)
+              ()
+          | Some LT ->
+              (* local < remote *)
+              local.vval <- remote.vval )
+      | _ ->
+          assert (msg_term < local.term || msg_term < local.vterm)
+    in
+    if t.rep.state.term < remote.term then t.rep.state.term <- remote.term
 
   let check_commit t =
     let old_ci = t.rep.state.commit_index in
@@ -187,15 +193,16 @@ module Make (Value : Value) = struct
         t.config.quorum_size
     in
     match new_commit with
-    | None ->
-        ()
-    | Some ci ->
+    | Some ci when not ([%equal: CTree.key] old_ci ci) ->
         (* can update since once committed, never overwritten *)
         t.rep.state.commit_index <- ci ;
         let cis = CTree.path_between t.rep.store old_ci ci in
-        List.iter cis ~f:(fun (_, _, v) -> Log.add t.commit_log v)
+        List.iter cis ~f:(fun (_, _, v) -> Log.add t.commit_log v) ;
+        Some ci
+    | _ ->
+        None
 
-  let check_conflict_recovery t =
+  let conflict_recovery t =
     let votes =
       t.config.replica_ids |> Iter.of_list
       |> Iter.map (function
@@ -207,80 +214,79 @@ module Make (Value : Value) = struct
     let max_term =
       votes |> Iter.fold (fun acc (s : state) -> max acc s.term) (-1)
     in
-    if max_term > t.rep.state.vterm then
-      let num_max_term_votes =
-        votes |> Iter.filter_count (fun (s : state) -> s.term = max_term)
-      in
-      if num_max_term_votes >= t.config.quorum_size then (
-        let votes =
-          votes |> Iter.filter (fun (s : state) -> s.term = max_term)
-        in
-        let missing_votes = t.config.replica_count - Iter.length votes in
-        let max_vterm =
-          votes |> Iter.fold (fun acc (s : state) -> max acc s.vterm) (-1)
-        in
-        let vterm_votes =
-          votes |> Iter.filter (fun (s : state) -> s.vterm = max_vterm)
-        in
-        let o4_prefix =
-          CTree.greatest_sufficiently_common_prefix t.rep.store
-            (vterm_votes |> Iter.map (fun s -> s.vval) |> Iter.to_list)
-            (t.config.quorum_size - missing_votes)
-        in
-        let max_length_o4_vote =
-          vterm_votes
-          |> Iter.filter (fun s ->
-                 Option.value_map o4_prefix ~default:true ~f:(fun o4_prefix ->
-                     CTree.prefix t.rep.store o4_prefix s.vval ) )
-          |> Iter.max_exn ~lt:(fun a b ->
-                 CTree.get_idx t.rep.store a.vval
-                 < CTree.get_idx t.rep.store b.vval )
-        in
-        t.rep.state.term <- max_term ;
-        t.rep.state.vterm <- max_term ;
-        t.rep.state.vval <- max_length_o4_vote.vval )
+    let%bind.Result () =
+      Result.ok_if_true (max_term > t.rep.state.vterm) ~error:`InSteadyState
+    in
+    let num_max_term_votes =
+      votes |> Iter.filter_count (fun (s : state) -> s.term = max_term)
+    in
+    let%bind.Result () =
+      Result.ok_if_true
+        (num_max_term_votes >= t.config.quorum_size)
+        ~error:`No_quorum
+    in
+    let votes = votes |> Iter.filter (fun (s : state) -> s.term = max_term) in
+    let missing_votes = t.config.replica_count - Iter.length votes in
+    let max_vterm =
+      votes |> Iter.fold (fun acc (s : state) -> max acc s.vterm) (-1)
+    in
+    let vterm_votes =
+      votes |> Iter.filter (fun (s : state) -> s.vterm = max_vterm)
+    in
+    let o4_prefix =
+      CTree.greatest_sufficiently_common_prefix t.rep.store
+        (vterm_votes |> Iter.map (fun s -> s.vval) |> Iter.to_list)
+        (t.config.quorum_size - missing_votes)
+    in
+    let max_length_o4_vote =
+      vterm_votes
+      |> Iter.filter (fun s ->
+             Option.value_map o4_prefix ~default:true ~f:(fun o4_prefix ->
+                 CTree.prefix t.rep.store o4_prefix s.vval ) )
+      |> Iter.max_exn ~lt:(fun a b ->
+             CTree.get_idx t.rep.store a.vval < CTree.get_idx t.rep.store b.vval )
+    in
+    t.rep.state.term <- max_term ;
+    t.rep.state.vterm <- max_term ;
+    t.rep.state.vval <- max_length_o4_vote.vval ;
+    Result.return ()
 
   let add_commands t (ci : Value.t Iter.t) =
     Rep.add_commands t.rep ~node:t.config.node_id ci ;
-    check_commit t
+    let (_ : CTree.key option) = check_commit t in
+    ()
 
-  let acceptor_term_tick t term' =
-    if t.rep.state.term < term' then t.rep.state.term <- term'
-
-  let handle_steady_state t src (msg : Rep.success) =
-    let option_bind o ~f = Option.value_map o ~default:(Ok ()) ~f in
-    let%bind.Result () = option_bind msg.ctree ~f:(Rep.recv_update t.rep src) in
-    let%bind.Result () =
-      option_bind msg.cons ~f:(fun s ->
-          CTree.mem t.rep.store s.vval
-          |> Result.ok_if_true ~error:(`Msg "Invalid vval") )
-    in
-    let%bind.Result () =
-      option_bind msg.cons ~f:(fun s ->
-          CTree.mem t.rep.store s.commit_index
-          |> Result.ok_if_true ~error:(`Msg "Invalid commit index") )
-    in
-    Option.iter msg.cons ~f:(fun new_state ->
-        let remote = Map.find_exn t.other_nodes_state src in
-        set_state remote new_state ;
-        acceptor_reply t src ;
-        check_commit t ;
-        check_conflict_recovery t ;
-        acceptor_term_tick t new_state.term ) ;
-    Result.return ()
-
-  let handle_message t src (msg : Rep.message) :
-      (unit, [`MustAck | `MustNack]) result =
+  let handle_update_message t src (msg : Rep.message) =
     match msg with
-    | Ok msg ->
-        handle_steady_state t src msg
-        |> Result.map_error ~f:(function `Msg _ -> `MustNack)
     | Error _ ->
-        (* reset expected state to commit index and initial state *)
+        (* Reset optimistic tree to known tree *)
         let remote = Map.find_exn t.rep.remotes src in
-        (* commit guaranteed to exist locally otherwise rejected update :) *)
         remote.expected_tree <- remote.known_tree ;
         Error `MustAck
+    | Ok msg ->
+        let ctree_rep_result =
+          let option_bind o ~f = Option.value_map o ~default:(Ok ()) ~f in
+          let%bind.Result () =
+            option_bind msg.ctree ~f:(Rep.recv_update t.rep src)
+          in
+          let%bind.Result () =
+            option_bind msg.cons ~f:(fun s ->
+                CTree.mem t.rep.store s.vval
+                |> Result.ok_if_true ~error:`VVal_not_in_tree )
+          in
+          let%bind.Result () =
+            option_bind msg.cons ~f:(fun s ->
+                CTree.mem t.rep.store s.commit_index
+                |> Result.ok_if_true ~error:`Commit_index_not_in_tree )
+          in
+          Result.return ()
+        in
+        let%bind.Result () =
+          ctree_rep_result |> Result.map_error ~f:(fun e -> `MustNack e)
+        in
+        Option.iter msg.cons
+          ~f:(set_state (Map.find_exn t.other_nodes_state src)) ;
+        Result.return ()
 
   let create (config : config) =
     run_c := true ;
