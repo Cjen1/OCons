@@ -125,6 +125,7 @@ struct
 
   let gather_batch_from_buffer t =
     let time = Eio.Time.now t.clock |> Utils.float_to_time in
+    (*
     let batch_floor =
       CTree.get_value t.conspire.rep.store t.conspire.rep.state.vval
       |> Option.value_map ~default:Time.epoch ~f:snd
@@ -133,6 +134,8 @@ struct
       Delay_buffer.get_values t.command_buffer time
       |> Sequence.filter ~f:(fun (_, t) -> Time.(t > batch_floor))
     in
+    *)
+    let batches = Delay_buffer.get_values t.command_buffer time in
     Conspire.add_commands t.conspire
       (batches |> Sequence.iter |> Iter.from_labelled_iter)
 
