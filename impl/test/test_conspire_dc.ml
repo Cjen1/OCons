@@ -56,7 +56,7 @@ let%expect_test "local_commit" =
          tick_count = { Conspire_dc.Counter.count = 0; limit = 100 };
          clock = <opaque> }
     actions: [] |}] ;
-  let c0 = make_command (Read "c0") in
+  let c0 = make_command [|Read "c0"|] in
   let t, actions = Impl.advance t (Commands (c0 |> Iter.singleton)) in
   print t actions ;
   [%expect
@@ -108,8 +108,8 @@ let%expect_test "local_commit" =
          tick_count = { Conspire_dc.Counter.count = 1; limit = 100 };
          clock = <opaque> }
     actions: [CommitCommands(Command(Read c0, 1))] |}] ;
-  let c1 = make_command (Read "c1") in
-  let c2 = make_command (Read "c2") in
+  let c1 = make_command [|Read "c1"|] in
+  let c2 = make_command [|Read "c2"|] in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c1; c2])) in
   print t actions ;
   [%expect
@@ -185,7 +185,7 @@ let%expect_test "e2e commit" =
   let t0 = create (c4 0 clk0) in
   let clk1, ac1 = make_clock () in
   let t1 = create (c4 1 clk1) in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
   print t0 actions ;
   [%expect
@@ -520,7 +520,7 @@ let%expect_test "batching" =
   reset_make_command_state () ;
   let clk0, ac0 = make_clock () in
   let t0 = create (c4 0 clk0) in
-  let c0 = make_command (Read "c0") in
+  let c0 = make_command [|Read "c0"|] in
   let t0, actions = Impl.advance t0 (Commands (Iter.singleton c0)) in
   print t0 actions ;
   [%expect
@@ -555,7 +555,7 @@ let%expect_test "batching" =
                            ([Command(Read c0, 1)], 1.00000)))] |}] ;
   ac0 1.1 ;
   [%expect {| +mock time is now 1.1 |}] ;
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
   print t0 actions ;
   [%expect
@@ -590,7 +590,7 @@ let%expect_test "batching" =
     actions: [Broadcast((Conspire_dc.Types.Commands
                            ([Command(Read c1, 2)], 2.10000)))] |}] ;
   ac0 0.5 ;
-  let c2 = make_command (Read "c2") in
+  let c2 = make_command [|Read "c2"|] in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c2])) in
   print t0 actions ;
   [%expect
@@ -800,7 +800,7 @@ let%expect_test "Conflict" =
   let t0 = create (c4 0 clk0) in
   let t1 = create (c4 1 clk1) in
   (* add c0 to t0 *)
-  let c0 = make_command (Read "c0") in
+  let c0 = make_command [|Read "c0"|] in
   let t0, _ = Impl.advance t0 (Commands (Iter.singleton c0)) in
   ac0 2. ;
   let t0, actions = Impl.advance t0 Tick in
@@ -879,7 +879,7 @@ let%expect_test "Conflict" =
                                   })
                           }))] |}] ;
   (* add c1 to t1 *)
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t1, _ = Impl.advance t1 (Commands (Iter.singleton c1)) in
   ac1 2. ;
   let t1, actions = Impl.advance t1 Tick in

@@ -38,7 +38,7 @@ let%expect_test "local_commit" =
          failure_detector =
          { Conspire_leader.FailureDetector.state = []; timeout = 2 } }
     actions: [] |}] ;
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t, actions = Impl.advance t (Commands (c1 |> Iter.singleton)) in
   print t actions ;
   [%expect
@@ -63,7 +63,7 @@ let%expect_test "local_commit" =
          failure_detector =
          { Conspire_leader.FailureDetector.state = []; timeout = 2 } }
     actions: [CommitCommands(Command(Read c1, 1))] |}] ;
-  let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
+  let c2, c3 = (make_command [|Read "c2"|], make_command [|Read "c3"|]) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
   print t actions ;
   [%expect
@@ -101,7 +101,7 @@ let%expect_test "e2e commit" =
   let t0 = create (c4 0) in
   let root_hd = t0.conspire.rep.store.root in
   let t1 = create (c4 1) in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c1])) in
   print t0 actions ;
   [%expect
@@ -349,8 +349,8 @@ let%expect_test "e2e conflict resolution" =
   reset_make_command_state () ;
   let t0 = create (c4 0) in
   let t1 = create (c4 1) in
-  let c0 = make_command (Read "c0") in
-  let c1 = make_command (Read "c1") in
+  let c0 = make_command [|Read "c0"|] in
+  let c1 = make_command [|Read "c1"|] in
   let t1, _ = Impl.advance t1 Tick in
   let t1, _ = Impl.advance t1 Tick in
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
@@ -791,8 +791,8 @@ let%expect_test "message loss" =
   reset_make_command_state () ;
   let t0 = create (c4 0) in
   let t1 = create (c4 1) in
-  let c0 = make_command (Read "c0") in
-  let c1 = make_command (Read "c1") in
+  let c0 = make_command [|Read "c0"|] in
+  let c1 = make_command [|Read "c1"|] in
   (* this message is lost *)
   let t0, actions = Impl.advance t0 (Commands (Iter.of_list [c0])) in
   print t0 actions ;

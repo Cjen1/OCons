@@ -21,7 +21,7 @@ let%expect_test "local_commit" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t = create c1 in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t, actions = Impl.advance t (Commands (c1 |> Iter.singleton)) in
   print t actions ;
   [%expect
@@ -49,7 +49,7 @@ let%expect_test "local_commit" =
               Broadcast(Sync(idx: 0
                              term: 0
                              value: [Command(Read c1, 1)]))] |}] ;
-  let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
+  let c2, c3 = (make_command [|Read "c2"|], make_command [|Read "c3"|]) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
   print t actions ;
   [%expect
@@ -113,7 +113,7 @@ let%expect_test "e2e commit" =
   let t1 = create (c4 1) in
   let t2 = create (c4 2) in
   let t3 = create (c4 3) in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
   print t1 actions ;
   [%expect
@@ -261,7 +261,7 @@ let%expect_test "e2e conflict re-propose" =
   let t1 = create (c4 1) in
   let t2 = create (c4 2) in
   let t3 = create (c4 3) in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
   print t1 actions ;
   [%expect
@@ -333,7 +333,7 @@ let%expect_test "e2e conflict re-propose" =
          match_vote_count: correct]
        fd: state: [(0: 0); (1: 2); (2: 0); (3: 0)]
     actions: [Broadcast(Heartbeat)] |}] ;
-  let c2 = make_command (Read "c2") in
+  let c2 = make_command [|Read "c2"|] in
   let t2, actions = Impl.advance t2 (Commands (Iter.of_list [c2])) in
   print t2 actions ;
   [%expect
@@ -586,8 +586,8 @@ let%expect_test "e2e conflict merge" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t1 = create (c4 1) in
-  let c1 = make_command (Read "c1") in
-  let c2 = make_command (Read "c2") in
+  let c1 = make_command [|Read "c1"|] in
+  let c2 = make_command [|Read "c2"|] in
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
   print t1 actions ;
   [%expect
