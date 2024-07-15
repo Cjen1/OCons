@@ -8,14 +8,14 @@ module Gen = struct
   let op =
     choose
       [ map [bytes] (fun k -> Read k)
-      ; map [bytes; bytes] (fun k v -> Write (k, v))
-      ; map [bytes; bytes; bytes] (fun key value value' ->
-            CAS {key; value; value'} )
-      ; const NoOp ]
+      ; map [bytes; bytes] (fun k v -> Write (k, v)) ]
 
   let command =
-    map [op; int; float; float] (fun op id submitted trace_start ->
-        Ocons_core.Types.Command.{op; id; submitted; trace_start} )
+    map
+      [list op; int; float; float]
+      (fun op id submitted trace_start ->
+        Ocons_core.Types.Command.
+          {op= Array.of_list op; id; submitted; trace_start} )
 
   let log_entry = map [command; int] (fun command term -> {command; term})
 
@@ -24,9 +24,8 @@ module Gen = struct
 
   let op_response =
     choose
-      [ const Success
-      ; map [bytes] (fun k -> Failure k)
-      ; map [bytes] (fun k -> ReadSuccess k) ]
+      [ map [list @@ pair bytes (option bytes)] (fun resps -> Success resps)
+      ; map [bytes] (fun k -> Failure k) ]
 end
 
 let test_client_request r =

@@ -21,7 +21,7 @@ let%expect_test "local_commit" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t = create c1 in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t, actions = Impl.advance t (Commands (c1 |> Iter.singleton)) in
   print t actions ;
   [%expect
@@ -33,23 +33,23 @@ let%expect_test "local_commit" =
        commit_index: 0
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: COMMITTED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes: [(0: term: 0
                      vterm: 0
-                     vvalue: [Command(Read c1, 1)])]
+                     vvalue: [Command((Read c1), 1)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct]
        fd: state: [(0: 2)]
-    actions: [CommitCommands(Command(Read c1, 1))
+    actions: [CommitCommands(Command((Read c1), 1))
               Broadcast(Sync(idx: 0
                              term: 0
-                             value: [Command(Read c1, 1)]))] |}] ;
-  let c2, c3 = (make_command (Read "c2"), make_command (Read "c3")) in
+                             value: [Command((Read c1), 1)]))] |}] ;
+  let c2, c3 = (make_command [|Read "c2"|], make_command [|Read "c3"|]) in
   let t, actions = Impl.advance t (Commands (Iter.of_list [c2; c3])) in
   print t actions ;
   [%expect
@@ -62,50 +62,50 @@ let%expect_test "local_commit" =
        rep_log:
         [{term: 0
           vterm: 0
-          vvalue: [Command(Read c1, 1)]}
+          vvalue: [Command((Read c1), 1)]}
          {term: 0
           vterm: 0
-          vvalue: [Command(Read c2, 3)]}
+          vvalue: [Command((Read c2), 3)]}
          {term: 0
           vterm: 0
-          vvalue: [Command(Read c3, 2)]}]
+          vvalue: [Command((Read c3), 2)]}]
        prop_log:
         [state: COMMITTED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes: [(0: term: 0
                      vterm: 0
-                     vvalue: [Command(Read c1, 1)])]
+                     vvalue: [Command((Read c1), 1)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct
          state: COMMITTED
          term: 0
-         value: [Command(Read c2, 3)]
+         value: [Command((Read c2), 3)]
          votes: [(0: term: 0
                      vterm: 0
-                     vvalue: [Command(Read c2, 3)])]
+                     vvalue: [Command((Read c2), 3)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct
          state: COMMITTED
          term: 0
-         value: [Command(Read c3, 2)]
+         value: [Command((Read c3), 2)]
          votes: [(0: term: 0
                      vterm: 0
-                     vvalue: [Command(Read c3, 2)])]
+                     vvalue: [Command((Read c3), 2)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct]
        fd: state: [(0: 2)]
-    actions: [CommitCommands(Command(Read c3, 2))
-              CommitCommands(Command(Read c2, 3))
+    actions: [CommitCommands(Command((Read c3), 2))
+              CommitCommands(Command((Read c2), 3))
               Broadcast(Sync(idx: 2
                              term: 0
-                             value: [Command(Read c3, 2)]))
+                             value: [Command((Read c3), 2)]))
               Broadcast(Sync(idx: 1
                              term: 0
-                             value: [Command(Read c2, 3)]))] |}]
+                             value: [Command((Read c2), 3)]))] |}]
 
 let%expect_test "e2e commit" =
   Imp.set_is_test true ;
@@ -113,7 +113,7 @@ let%expect_test "e2e commit" =
   let t1 = create (c4 1) in
   let t2 = create (c4 2) in
   let t3 = create (c4 3) in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
   print t1 actions ;
   [%expect
@@ -125,18 +125,18 @@ let%expect_test "e2e commit" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: -1
                vterm: -1
                vvalue: []);
@@ -149,7 +149,7 @@ let%expect_test "e2e commit" =
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
-                             value: [Command(Read c1, 1)]))] |}] ;
+                             value: [Command((Read c1), 1)]))] |}] ;
   let recv_c1 = Recv (Sync (0, {term= 0; value= [c1]}), 1) in
   let t2, actions = Impl.advance t2 recv_c1 in
   print t2 actions ;
@@ -162,12 +162,12 @@ let%expect_test "e2e commit" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log: []
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Send(1,SyncResp(0,term: 0
                                 vterm: 0
-                                vvalue: [Command(Read c1, 1)]))] |}] ;
+                                vvalue: [Command((Read c1), 1)]))] |}] ;
   let t3, actions = Impl.advance t3 recv_c1 in
   print t3 actions ;
   [%expect
@@ -179,12 +179,12 @@ let%expect_test "e2e commit" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log: []
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Send(1,SyncResp(0,term: 0
                                 vterm: 0
-                                vvalue: [Command(Read c1, 1)]))] |}] ;
+                                vvalue: [Command((Read c1), 1)]))] |}] ;
   let recv i = Recv (SyncResp (0, {term= 0; vterm= 0; vvalue= [c1]}), i) in
   let t1, actions = Impl.advance t1 (recv 2) in
   print t1 actions ;
@@ -197,21 +197,21 @@ let%expect_test "e2e commit" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (3: term: -1
                vterm: -1
                vvalue: [])]
@@ -231,29 +231,29 @@ let%expect_test "e2e commit" =
        commit_index: 0
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: COMMITTED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (3: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)])]
+               vvalue: [Command((Read c1), 1)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
-    actions: [CommitCommands(Command(Read c1, 1))] |}]
+    actions: [CommitCommands(Command((Read c1), 1))] |}]
 
 let%expect_test "e2e conflict re-propose" =
   Imp.set_is_test true ;
@@ -261,7 +261,7 @@ let%expect_test "e2e conflict re-propose" =
   let t1 = create (c4 1) in
   let t2 = create (c4 2) in
   let t3 = create (c4 3) in
-  let c1 = make_command (Read "c1") in
+  let c1 = make_command [|Read "c1"|] in
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
   print t1 actions ;
   [%expect
@@ -273,18 +273,18 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: -1
                vterm: -1
                vvalue: []);
@@ -297,7 +297,7 @@ let%expect_test "e2e conflict re-propose" =
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
-                             value: [Command(Read c1, 1)]))] |}] ;
+                             value: [Command((Read c1), 1)]))] |}] ;
   let t1, _ = Impl.advance t1 Tick in
   let t1, actions = Impl.advance t1 Tick in
   print t1 actions ;
@@ -310,18 +310,18 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: -1
                vterm: -1
                vvalue: []);
@@ -333,7 +333,7 @@ let%expect_test "e2e conflict re-propose" =
          match_vote_count: correct]
        fd: state: [(0: 0); (1: 2); (2: 0); (3: 0)]
     actions: [Broadcast(Heartbeat)] |}] ;
-  let c2 = make_command (Read "c2") in
+  let c2 = make_command [|Read "c2"|] in
   let t2, actions = Impl.advance t2 (Commands (Iter.of_list [c2])) in
   print t2 actions ;
   [%expect
@@ -345,11 +345,11 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c2, 2)]}]
+                  vvalue: [Command((Read c2), 2)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c2, 2)]
+         value: [Command((Read c2), 2)]
          votes:
           [(0: term: -1
                vterm: -1
@@ -359,7 +359,7 @@ let%expect_test "e2e conflict re-propose" =
                vvalue: []);
            (2: term: 0
                vterm: 0
-               vvalue: [Command(Read c2, 2)]);
+               vvalue: [Command((Read c2), 2)]);
            (3: term: -1
                vterm: -1
                vvalue: [])]
@@ -369,7 +369,7 @@ let%expect_test "e2e conflict re-propose" =
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
-                             value: [Command(Read c2, 2)]))] |}] ;
+                             value: [Command((Read c2), 2)]))] |}] ;
   let t3, actions =
     Impl.advance t3 (Recv (Sync (0, {term= 0; value= [c1]}), 1))
   in
@@ -383,12 +383,12 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log: []
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Send(1,SyncResp(0,term: 0
                                 vterm: 0
-                                vvalue: [Command(Read c1, 1)]))] |}] ;
+                                vvalue: [Command((Read c1), 1)]))] |}] ;
   (* Conflict from t1 *)
   let t2, actions =
     Impl.advance t2 (Recv (Sync (0, {term= 0; value= [c1]}), 1))
@@ -403,11 +403,11 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 1
                   vterm: 0
-                  vvalue: [Command(Read c2, 2)]}]
+                  vvalue: [Command((Read c2), 2)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c2, 2)]
+         value: [Command((Read c2), 2)]
          votes:
           [(0: term: -1
                vterm: -1
@@ -417,7 +417,7 @@ let%expect_test "e2e conflict re-propose" =
                vvalue: []);
            (2: term: 1
                vterm: 0
-               vvalue: [Command(Read c2, 2)]);
+               vvalue: [Command((Read c2), 2)]);
            (3: term: -1
                vterm: -1
                vvalue: [])]
@@ -427,7 +427,7 @@ let%expect_test "e2e conflict re-propose" =
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(SyncResp(0,term: 1
                                    vterm: 0
-                                   vvalue: [Command(Read c2, 2)]))] |}] ;
+                                   vvalue: [Command((Read c2), 2)]))] |}] ;
   (* Conflict from t2 *)
   let t1, actions =
     Impl.advance t1 (Recv (Sync (0, {term= 0; value= [c2]}), 2))
@@ -442,18 +442,18 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 1
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: -1
                vterm: -1
                vvalue: []);
@@ -466,7 +466,7 @@ let%expect_test "e2e conflict re-propose" =
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 0)]
     actions: [Broadcast(SyncResp(0,term: 1
                                    vterm: 0
-                                   vvalue: [Command(Read c1, 1)]))] |}] ;
+                                   vvalue: [Command((Read c1), 1)]))] |}] ;
   let t3, actions =
     Impl.advance t3 (Recv (Sync (0, {term= 0; value= [c2]}), 2))
   in
@@ -480,7 +480,7 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 1
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
@@ -497,14 +497,14 @@ let%expect_test "e2e conflict re-propose" =
                vvalue: []);
            (3: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)])]
+               vvalue: [Command((Read c1), 1)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(SyncResp(0,term: 1
                                    vterm: 0
-                                   vvalue: [Command(Read c1, 1)]))] |}] ;
+                                   vvalue: [Command((Read c1), 1)]))] |}] ;
   (* Conflict result *)
   let t1, actions =
     Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c1]}), 3))
@@ -519,24 +519,24 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 1
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: -1
                vterm: -1
                vvalue: []);
            (3: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)])]
+               vvalue: [Command((Read c1), 1)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct]
@@ -555,39 +555,39 @@ let%expect_test "e2e conflict re-propose" =
        commit_index: -1
        rep_log: [{term: 1
                   vterm: 1
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 1
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 1
                vterm: 1
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: 1
                vterm: 0
-               vvalue: [Command(Read c2, 2)]);
+               vvalue: [Command((Read c2), 2)]);
            (3: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)])]
+               vvalue: [Command((Read c1), 1)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct]
        fd: state: [(0: 0); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 1
-                             value: [Command(Read c1, 1)]))] |}] ;
+                             value: [Command((Read c1), 1)]))] |}] ;
   ignore (t2, t3)
 
 let%expect_test "e2e conflict merge" =
   Imp.set_is_test true ;
   reset_make_command_state () ;
   let t1 = create (c4 1) in
-  let c1 = make_command (Read "c1") in
-  let c2 = make_command (Read "c2") in
+  let c1 = make_command [|Read "c1"|] in
+  let c2 = make_command [|Read "c2"|] in
   let t1, actions = Impl.advance t1 (Commands (Iter.of_list [c1])) in
   print t1 actions ;
   [%expect
@@ -599,18 +599,18 @@ let%expect_test "e2e conflict merge" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: -1
                vterm: -1
                vvalue: []);
            (1: term: 0
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: -1
                vterm: -1
                vvalue: []);
@@ -623,7 +623,7 @@ let%expect_test "e2e conflict merge" =
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 0
-                             value: [Command(Read c1, 1)]))] |}] ;
+                             value: [Command((Read c1), 1)]))] |}] ;
   let t1, _ =
     Impl.advance t1 (Recv (SyncResp (0, {term= 1; vterm= 0; vvalue= [c1]}), 0))
   in
@@ -643,21 +643,21 @@ let%expect_test "e2e conflict merge" =
        commit_index: -1
        rep_log: [{term: 0
                   vterm: 0
-                  vvalue: [Command(Read c1, 1)]}]
+                  vvalue: [Command((Read c1), 1)]}]
        prop_log:
         [state: UNDECIDED
          term: 0
-         value: [Command(Read c1, 1)]
+         value: [Command((Read c1), 1)]
          votes:
           [(0: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (1: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
+               vvalue: [Command((Read c1), 1)]);
            (2: term: 1
                vterm: 0
-               vvalue: [Command(Read c2, 2)]);
+               vvalue: [Command((Read c2), 2)]);
            (3: term: -1
                vterm: -1
                vvalue: [])]
@@ -680,28 +680,30 @@ let%expect_test "e2e conflict merge" =
        rep_log:
         [{term: 1
           vterm: 1
-          vvalue: [Command(Read c1, 1), Command(Read c2, 2)]}]
+          vvalue: [Command((Read c1), 1), Command((Read c2), 2)]}]
        prop_log:
         [state: UNDECIDED
          term: 1
-         value: [Command(Read c1, 1), Command(Read c2, 2)]
+         value: [Command((Read c1), 1), Command((Read c2), 2)]
          votes:
           [(0: term: 1
                vterm: 0
-               vvalue: [Command(Read c1, 1)]);
-           (1: term: 1
-               vterm: 1
-               vvalue: [Command(Read c1, 1), Command(Read c2, 2)]);
+               vvalue: [Command((Read c1), 1)]);
+           (1:
+            term: 1
+            vterm: 1
+            vvalue: [Command((Read c1), 1), Command((Read c2), 2)]);
            (2: term: 1
                vterm: 0
-               vvalue: [Command(Read c2, 2)]);
+               vvalue: [Command((Read c2), 2)]);
            (3: term: 1
                vterm: 0
-               vvalue: [Command(Read c2, 2)])]
+               vvalue: [Command((Read c2), 2)])]
          max_term: correct
          max_term_count: correct
          match_vote_count: correct]
        fd: state: [(0: 2); (1: 2); (2: 2); (3: 2)]
     actions: [Broadcast(Sync(idx: 0
                              term: 1
-                             value: [Command(Read c1, 1), Command(Read c2, 2)]))] |}]
+                             value:
+                              [Command((Read c1), 1), Command((Read c2), 2)]))] |}]

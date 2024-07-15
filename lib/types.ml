@@ -20,11 +20,7 @@ type state_machine = (key, value) Hashtbl.t
 
 type connection_creater = node_id * Ocons_conn_mgr.resolver
 
-type sm_op =
-  | Read of key
-  | Write of key * value
-  | CAS of {key: key; value: value; value': value}
-  | NoOp
+type sm_op = Read of key | Write of key * value
 [@@deriving bin_io, compare, sexp]
 
 let sm_op_pp ppf v =
@@ -33,15 +29,18 @@ let sm_op_pp ppf v =
       Fmt.pf ppf "Read %s" k
   | Write (k, v) ->
       Fmt.pf ppf "Write (%s, %s)" k v
-  | CAS s ->
-      Fmt.pf ppf "CAS(%s, %s, %s)" s.key s.value s.value'
-  | NoOp ->
-      Fmt.pf ppf "NoOp"
+
+let pp_list pp = Fmt.(parens @@ list ~sep:comma pp)
+
+let pp_array pp = Fmt.(parens @@ array ~sep:comma pp)
 
 module Command = struct
   module T = struct
     type t =
-      {op: sm_op; id: command_id; submitted: float; mutable trace_start: float}
+      { op: sm_op array
+      ; id: command_id
+      ; submitted: float
+      ; mutable trace_start: float }
     [@@deriving sexp, bin_io]
 
     let hash t = hash_command_id t.id
@@ -49,10 +48,10 @@ module Command = struct
     let hash_fold_t s t = hash_fold_command_id s t.id
 
     let pp_mach ppf v =
-      Fmt.pf ppf "Command(%a, %d, %.4f, %.4f)" sm_op_pp v.op v.id v.submitted
-        v.trace_start
+      Fmt.pf ppf "Command(%a, %d, %.4f, %.4f)" (pp_array sm_op_pp) v.op v.id
+        v.submitted v.trace_start
 
-    let pp ppf v = Fmt.pf ppf "Command(%a, %d)" sm_op_pp v.op v.id
+    let pp ppf v = Fmt.pf ppf "Command(%a, %d)" (pp_array sm_op_pp) v.op v.id
 
     let compare a b = Int.compare a.id b.id
 
@@ -69,7 +68,7 @@ let update_command_time c = c.Command.trace_start <- Core_unix.gettimeofday ()
 
 let get_command_trace_time c = c.Command.trace_start
 
-let empty_command = Command.{op= NoOp; id= -1; submitted= -1.; trace_start= -1.}
+let empty_command = Command.{op= [||]; id= -1; submitted= -1.; trace_start= -1.}
 
 let make_command_state = ref 0
 
@@ -80,17 +79,17 @@ let make_command c =
   make_command_state := !make_command_state + 1 ;
   Command.{op= c; id= !make_command_state; trace_start= -1.; submitted= -1.}
 
-type op_result = Success | Failure of string | ReadSuccess of key
+type op_result = Success of (key * value option) list | Failure of string
 [@@deriving bin_io]
 
 let op_result_pp ppf v =
   match v with
-  | Success ->
-      Fmt.pf ppf "Success"
+  | Success results ->
+      Fmt.pf ppf "Success%a"
+        Fmt.(pp_list @@ parens (pair string (option string)))
+        results
   | Failure s ->
       Fmt.pf ppf "Failure(%s)" s
-  | ReadSuccess s ->
-      Fmt.pf ppf "ReadSuccess(%s)" s
 
 let op_result_failure s = Failure s
 
@@ -99,29 +98,19 @@ let op_not_found_failure = Failure "Key not found"
 let op_cas_match_fail k v v' =
   Failure (Fmt.str "Key (%s) has value (%s) rather than (%s)" k v v')
 
-let update_state_machine : state_machine -> command -> op_result =
- fun t cmd ->
-  match cmd.op with
-  | NoOp ->
-      Success
-  | Read key -> (
-    match Hashtbl.find t key with
-    | Some v ->
-        ReadSuccess v
-    | None ->
-        op_not_found_failure )
+let apply_sm_op : state_machine -> sm_op -> (key * value option) option =
+ fun t op ->
+  match op with
+  | Read key ->
+      Some (key, Hashtbl.find t key)
   | Write (key, value) ->
       Hashtbl.set t ~key ~data:value ;
-      Success
-  | CAS {key; value; value'} -> (
-    match Hashtbl.find t key with
-    | Some v when String.(v = value) ->
-        Hashtbl.set t ~key ~data:value' ;
-        Success
-    | Some v ->
-        op_cas_match_fail key v value
-    | None ->
-        op_not_found_failure )
+      None
+
+let update_state_machine : state_machine -> command -> op_result =
+ fun t cmd ->
+  Success
+    (Iter.of_array cmd.op |> Iter.filter_map (apply_sm_op t) |> Iter.to_list)
 
 let create_state_machine () = Hashtbl.create (module String)
 

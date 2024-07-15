@@ -6,34 +6,9 @@ module DeserPrim = Ocons_core.Line_prot.DeserPrim
 module W = Eio.Buf_write
 module R = Eio.Buf_read
 
-let bin_io_read reader t =
-  let open Bin_prot.Utils in
-  let open R in
-  ensure t size_header_length ;
-  let cst = R.peek t in
-  let pos_ref = ref cst.Cstruct.off in
-  let len = bin_read_size_header cst.Cstruct.buffer ~pos_ref in
-  ensure t (len + size_header_length) ;
-  let cst = R.peek t in
-  let init_pos = cst.Cstruct.off + size_header_length in
-  pos_ref := init_pos ;
-  let x = reader cst.Cstruct.buffer ~pos_ref in
-  let len' = !pos_ref - init_pos in
-  assert (len' = len) ;
-  consume t (len + size_header_length) ;
-  x
+let bin_io_write = Ocons_core.Line_prot.bin_io_write
 
-let bin_io_write write_buf writer sizer t =
-  let open Bin_prot.Utils in
-  let open W in
-  let hlen = size_header_length in
-  let vlen = sizer t in
-  let tlen = vlen + hlen in
-  let blit x ~src_off:_ (cstbuf : Cstruct.buffer) ~dst_off:pos ~len =
-    let pos = bin_write_size_header cstbuf ~pos (len - hlen) in
-    writer cstbuf ~pos x |> ignore
-  in
-  write_gen write_buf ~blit ~off:0 ~len:tlen t
+let bin_io_read = Ocons_core.Line_prot.bin_io_read
 
 module VarLineProt
     (ST : StrategyTypes)

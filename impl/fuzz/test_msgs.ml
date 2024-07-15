@@ -13,15 +13,15 @@ module Gen = struct
     let open Ocons_core.Types in
     choose
       [ map [bytes] (fun k -> Read k)
-      ; map [bytes; bytes] (fun k v -> Write (k, v))
-      ; map [bytes; bytes; bytes] (fun key value value' ->
-            CAS {key; value; value'} )
-      ; const NoOp ]
+      ; map [bytes; bytes] (fun k v -> Write (k, v)) ]
 
   let command =
     with_printer Command.pp
-    @@ map [op; int; float; float] (fun op id submitted trace_start ->
-           Ocons_core.Types.Command.{op; id; trace_start; submitted} )
+    @@ map
+         [list op; int; float; float]
+         (fun op id submitted trace_start ->
+           Ocons_core.Types.Command.
+             {op= Array.of_list op; id; trace_start; submitted} )
 
   let log_entry =
     with_printer log_entry_pp

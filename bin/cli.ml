@@ -23,7 +23,7 @@ let run op sockaddrs id retry_timeout =
   let cli = Cli.create_rpc ~sw env con_ress id retry_timeout in
   Eio.traceln "Submitting request %a" sm_op_pp op ;
   Random.self_init () ;
-  let res = Cli.send_request ~random_id:true cli op in
+  let res = Cli.send_request ~random_id:true cli [|op|] in
   Eio.traceln "Received: %a" op_result_pp res ;
   Cli.close cli
 
@@ -107,20 +107,4 @@ let read_cmd =
   let op_t = const (fun k -> Types.Read k) $ key_t in
   const_cmd info 1 op_t
 
-let cas_cmd =
-  let open Term in
-  let info = Cmd.info "cas" in
-  let key_t = Arg.(required & pos 0 (some string) None (info ~docv:"KEY" [])) in
-  let value_t =
-    Arg.(required & pos 1 (some string) None (info ~docv:"VALUE" []))
-  in
-  let new_value_t =
-    Arg.(required & pos 2 (some string) None (info ~docv:"NEW_VALUE" []))
-  in
-  let op_t =
-    const (fun key value value' -> Types.CAS {key; value; value'})
-    $ key_t $ value_t $ new_value_t
-  in
-  const_cmd info 3 op_t
-
-let () = exit Cmd.(eval @@ group (info "cli") [write_cmd; read_cmd; cas_cmd])
+let () = exit Cmd.(eval @@ group (info "cli") [write_cmd; read_cmd])

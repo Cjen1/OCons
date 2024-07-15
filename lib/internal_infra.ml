@@ -252,14 +252,14 @@ end
 module Test = struct
   let w k n =
     Command.
-      { op= Write (k, n)
+      { op= Array.of_list [Write (k, n)]
       ; id= Core.Random.int Core.Int.max_value
       ; trace_start= -1.
       ; submitted= -1. }
 
   let r n =
     Command.
-      { op= Read n
+      { op= Array.of_list [Read n]
       ; id= Core.Random.int Core.Int.max_value
       ; trace_start= -1.
       ; submitted= -1. }

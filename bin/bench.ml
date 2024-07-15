@@ -24,7 +24,7 @@ let pitcher ~sw nid mclock n rate cmgr (dispatch : (int, Mtime.t) Hashtbl.t) :
         let id = i * prime in
         let cmd =
           Command.
-            { op= Write ("asdf", "asdf")
+            { op= [|Write ("asdf", "asdf"); Read "fdsa"|]
             ; id
             ; submitted= Unix.gettimeofday ()
             ; trace_start= Unix.gettimeofday () }
