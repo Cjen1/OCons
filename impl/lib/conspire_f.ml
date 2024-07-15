@@ -94,7 +94,7 @@ module Make (Value : Value) = struct
       remote.expected_tree <-
         CTree.copy_update rep.store remote.expected_tree update.new_head
 
-    let get_update_to_send ?(prune = false) rep dst =
+    let get_update_to_send rep dst =
       let update = get_update rep dst in
       let remote = Map.find_exn rep.remotes dst in
       Option.iter update.ctree ~f:(fun update ->
@@ -103,9 +103,6 @@ module Make (Value : Value) = struct
             |> Result.ok |> Option.value_exn ) ;
       Option.iter update.cons ~f:(fun s ->
           set_state (Map.find_exn rep.remotes dst).expected_state s ) ;
-      let update =
-        {update with ctree= (if prune then None else update.ctree)}
-      in
       update
 
     let add_commands rep ~node vals =
