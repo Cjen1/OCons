@@ -24,8 +24,8 @@ type kind =
   | ConspireLeaderDC
 
 let run kind node_id node_addresses internal_port external_port tick_period
-    election_timeout max_outstanding stream_length stat_report
-    rand_startup_delay delay_interval batching_interval tick_limit =
+    election_timeout max_outstanding max_append_entries stream_length
+    stat_report rand_startup_delay delay_interval batching_interval tick_limit =
   let other_nodes =
     node_addresses |> List.filter (fun (id, _) -> not @@ Int.equal id node_id)
   in
@@ -39,7 +39,7 @@ let run kind node_id node_addresses internal_port external_port tick_period
     ; node_id
     ; election_timeout
     ; max_outstanding
-    ; max_append_entries= 512 }
+    ; max_append_entries }
   in
   let config cons_config =
     Infra.
@@ -222,6 +222,14 @@ let max_outstanding_ot =
   in
   opt int 65536 i
 
+let max_update_size_ot =
+  let open Arg in
+  let i =
+    info ~docv:"MAX_UPDATE_SIZE" ~doc:"Maximum number of entries in an update."
+      ["max-update"]
+  in
+  opt int 512 i
+
 let stream_length_ot =
   let open Arg in
   let i =
@@ -337,10 +345,11 @@ let cmd =
     Term.(
       const run $ kind_t $ node_id_t $ node_addresses_t
       $ Arg.value internal_port_ot $ Arg.value external_port_ot
-      $ Arg.value tick_period_ot
-      $ Arg.value election_timeout_ot
+      $ Arg.value tick_period_ot $ Arg.value election_timeout_ot
       $ Arg.value max_outstanding_ot
-      $ Arg.value stream_length_ot $ Arg.value stat_report_ot
+      $ Arg.value max_update_size_ot
+      $ Arg.value stream_length_ot 
+      $ Arg.value stat_report_ot
       $ Arg.value rand_startup_delay_ot
       $ Arg.value delay_interval_ot
       $ Arg.value batching_interval_ot
