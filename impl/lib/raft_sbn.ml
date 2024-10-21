@@ -99,11 +99,11 @@ struct
     CIDHashtbl.replace ct.log_contains le.command.id () ;
     Log.set ct.log idx le
 
-  let send_append_entries ?(force = false) () =
+  let send_append_entries ?(force = false) highest =
     let ct = ex.@(t) in
     match ct.node_state with
     | Leader s ->
-        let highest = Log.highest ct.log in
+        let highest = Option.value ~default:(Log.highest ct.log) highest in
         ex.@(t @> node_state @> Leader.rep_sent) <-
           IntMap.mapi
             (fun id highest_sent ->
@@ -179,7 +179,7 @@ struct
         Log.add
           ex.@(t @> log)
           {command= empty_command; term= ex.@(t @> current_term)} ;
-        send_append_entries ~force:true ()
+        send_append_entries ~force:true (Some ct.commit_index)
     | _ ->
         assert false
 
@@ -320,7 +320,7 @@ struct
         transit_leader ()
     (* send msg if exists entries to send *)
     | Leader _ ->
-        send_append_entries ()
+        send_append_entries None
     | _ ->
         ()
 
@@ -335,7 +335,7 @@ struct
         ex.@(t @> node_state @> Candidate.timeout) <-
           ex.@(t @> config @> election_timeout)
     | Leader {heartbeat; _} when heartbeat <= 0 ->
-        send_append_entries ~force:true () ;
+        send_append_entries ~force:true None ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1
     | _ ->
         ()

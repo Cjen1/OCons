@@ -150,11 +150,11 @@ struct
     CIDHashtbl.replace ct.log_contains le.command.id () ;
     Log.set ct.log idx le
 
-  let send_append_entries ?(force = false) () =
+  let send_append_entries ?(force = false) highest =
     let ct = ex.@(t) in
     match ct.node_state with
     | Leader s ->
-        let highest = Log.highest ct.log in
+        let highest = Option.value ~default:(Log.highest ct.log) highest in
         ex.@(t @> node_state @> Leader.rep_sent) <-
           IntMap.mapi
             (fun id highest_sent ->
@@ -222,6 +222,18 @@ struct
                    || (Log.get ct.log idx).term < le.term
                  then set_le ct idx le )
         in
+        (*
+        let optimistic_match_upto =
+          quorum.Quorum.elts
+          |> IntMap.map (fun elts ->
+                 elts
+                 |> IterLabels.fold ~init:ct.commit_index
+                      ~f:(fun max_idx (idx, elt) ->
+                        if [%compare.equal: log_entry] elt (Log.get ct.log idx)
+                        then max max_idx idx
+                        else max_idx ) )
+        in
+        *)
         quorum.Quorum.elts |> IntMap.to_seq |> Seq.iter per_seq ;
         (* replace term with current term since we are re-proposing it *)
         for idx = ct.commit_index + 1 to Log.highest ct.log do
@@ -233,13 +245,10 @@ struct
           |> Seq.map (fun i -> (i, -1))
           |> IntMap.of_seq
         in
-        let rep_sent =
-          ct.config.other_nodes |> List.to_seq
-          |> Seq.map (fun i -> (i, ct.commit_index))
-          |> IntMap.of_seq
-        in
+        let rep_sent = ct.config.other_nodes |> List.to_seq |> Seq.map(fun i -> (i,ct.commit_index)) |> IntMap.of_seq in
+        let rep_sent = optimistic_match_upto in
         ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
-        send_append_entries ~force:true ()
+        send_append_entries ~force:true (Some ct.commit_index)
     | _ ->
         assert false
 
@@ -383,7 +392,7 @@ struct
         transit_leader ()
     (* send msg if exists entries to send *)
     | Leader _ ->
-        send_append_entries ()
+        send_append_entries None
     | _ ->
         ()
 
@@ -398,7 +407,7 @@ struct
         ex.@(t @> node_state @> Candidate.timeout) <-
           ex.@(t @> config @> election_timeout)
     | Leader {heartbeat; _} when heartbeat <= 0 ->
-        send_append_entries ~force:true () ;
+        send_append_entries ~force:true None ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1
     | _ ->
         ()
