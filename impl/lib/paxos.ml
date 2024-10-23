@@ -245,10 +245,14 @@ struct
           |> Seq.map (fun i -> (i, -1))
           |> IntMap.of_seq
         in
-        let rep_sent = ct.config.other_nodes |> List.to_seq |> Seq.map(fun i -> (i,ct.commit_index)) |> IntMap.of_seq in
-        let rep_sent = optimistic_match_upto in
+        let rep_sent =
+          ct.config.other_nodes |> List.to_seq
+          |> Seq.map (fun i -> (i, ct.commit_index))
+          |> IntMap.of_seq
+        in
         ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
-        send_append_entries ~force:true (Some ct.commit_index)
+        send_append_entries ~force:true (Some ct.commit_index);
+        send_append_entries None
     | _ ->
         assert false
 

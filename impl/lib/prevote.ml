@@ -225,7 +225,8 @@ struct
         Log.add
           ex.@(t @> log)
           {command= empty_command; term= ex.@(t @> current_term)} ;
-        send_append_entries ~force:true (Some ct.commit_index)
+        send_append_entries ~force:true (Some ct.commit_index);
+        send_append_entries None
     | _ ->
         assert false
 
@@ -257,10 +258,7 @@ struct
           m.lastTerm > highest_term
           || (m.lastTerm = highest_term && m.lastIndex >= highest_index)
         in
-        if m.prevote then newer_log
-        else
-          A.get_option (t @> node_state @> Follower.voted_for) () = Some None
-          && newer_log
+        newer_log && (m.prevote || A.get_option (t @> node_state @> Follower.voted_for) () = Some None)
     | _ ->
         invalid_arg "Can only act on RequestVote"
 

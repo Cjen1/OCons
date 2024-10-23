@@ -183,7 +183,8 @@ struct
         Log.add
           ex.@(t @> log)
           {command= empty_command; term= ex.@(t @> current_term)} ;
-        send_append_entries ~force:true (Some ct.commit_index)
+        send_append_entries ~force:true (Some ct.commit_index);
+        send_append_entries None
      | _ ->
         assert false
 
@@ -197,6 +198,7 @@ struct
           , _ )
       , _ )
       when term > ex.@(t @> current_term) ->
+        traceln "Follower bc new leader for term %d" term;
         transit_follower term
     | _ ->
         ()
@@ -208,8 +210,11 @@ struct
     | RequestVote m ->
         let highest_index = Log.highest ex.@(t @> log) in
         let highest_term = get_log_term ex.@(t @> log) highest_index in
-        m.lastTerm > highest_term
-        || (m.lastTerm = highest_term && m.lastIndex >= highest_index)
+        let newer_log =
+          m.lastTerm > highest_term
+          || (m.lastTerm = highest_term && m.lastIndex >= highest_index)
+        in
+        newer_log
     | _ ->
         invalid_arg "Can only act on RequestVote"
 
@@ -268,10 +273,12 @@ struct
     (* All nodes must be able to receive prevote *)
     | Recv ((RequestVote {prevote= true; term; _} as m), cid), _
       when term > ex.@(t @> current_term) && request_vote_valid m ->
+        traceln "Successful prevote from %d" cid;
         send cid @@ RequestVoteResponse {term; success= true; prevote= true}
     (* Follower *)
     | Recv (RequestVote ({prevote= false; _} as m), cid), Follower _
       when request_vote_valid (RequestVote m) ->
+        traceln "Got request vote from %d for term %d" cid m.term;
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout) ;
         send cid
@@ -338,9 +345,11 @@ struct
     match ct.node_state with
     (* candidate election complete check *)
     | Follower {prevotes= Some prevotes; _} when Quorum.satisified prevotes ->
+        traceln "Got prevotes. becomming candidate."; 
         transit_candidate ()
     (* check if can become leader *)
     | Candidate {quorum; _} when Quorum.satisified quorum ->
+        traceln "Got votes becomming leader";
         transit_leader ()
     (* send msg if exists entries to send *)
     | Leader _ ->
@@ -353,6 +362,7 @@ struct
     match ct.node_state with
     (* When should ticking result in an action? *)
     | Follower s when s.timeout <= 0 ->
+        traceln "Starting prevotes";
         let threshold = (ex.@(t @> config @> num_nodes) / 2) + 1 - 1 in
         ex.@(t @> node_state @> Follower.prevotes) <-
           Some (Quorum.empty threshold) ;
@@ -360,6 +370,7 @@ struct
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout)
     | Candidate {timeout; _} when timeout <= 0 ->
+        traceln "Resending request votes";
         send_request_vote () ;
         ex.@(t @> node_state @> Candidate.timeout) <-
           ex.@(t @> config @> election_timeout)

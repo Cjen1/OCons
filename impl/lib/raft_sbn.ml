@@ -179,7 +179,8 @@ struct
         Log.add
           ex.@(t @> log)
           {command= empty_command; term= ex.@(t @> current_term)} ;
-        send_append_entries ~force:true (Some ct.commit_index)
+        send_append_entries ~force:true (Some ct.commit_index);
+        send_append_entries None
     | _ ->
         assert false
 
