@@ -150,18 +150,16 @@ struct
     CIDHashtbl.replace ct.log_contains le.command.id () ;
     Log.set ct.log idx le
 
-  let send_append_entries ?(force = false) highest =
+  let send_append_entries ?(force = false) () =
     let ct = ex.@(t) in
     match ct.node_state with
     | Leader s ->
-        let highest = Option.value ~default:(Log.highest ct.log) highest in
+        let highest = Log.highest ct.log in
         ex.@(t @> node_state @> Leader.rep_sent) <-
           IntMap.mapi
             (fun id highest_sent ->
               let lo = highest_sent + 1 in
-              let len =
-                min (highest - lo) ex.@(t @> config @> max_append_entries)
-              in
+              let len = highest - lo in
               let hi = lo + len in
               (* so we want to send the segment [lo -> hi] inclusive *)
               ( if lo <= hi || force then
@@ -251,8 +249,7 @@ struct
           |> IntMap.of_seq
         in
         ex.@(t @> node_state) <- Leader {rep_ackd; rep_sent; heartbeat= 1} ;
-        send_append_entries ~force:true (Some ct.commit_index);
-        send_append_entries None
+        send_append_entries ~force:true () 
     | _ ->
         assert false
 
@@ -378,7 +375,7 @@ struct
               index_iter |> Iter.map fst |> Iter.fold max prev_log_index
             in
             Log.cut_after ct.log max_entry ;
-            A.map (t @> commit_index) ~f:(max leader_commit) () ;
+            A.map (t @> commit_index) ~f:(max (leader_commit)) () ;
             send lid
             @@ AppendEntriesResponse
                  { term= ct.current_term
@@ -396,7 +393,7 @@ struct
         transit_leader ()
     (* send msg if exists entries to send *)
     | Leader _ ->
-        send_append_entries None
+        send_append_entries ()
     | _ ->
         ()
 
@@ -411,7 +408,7 @@ struct
         ex.@(t @> node_state @> Candidate.timeout) <-
           ex.@(t @> config @> election_timeout)
     | Leader {heartbeat; _} when heartbeat <= 0 ->
-        send_append_entries ~force:true None ;
+        send_append_entries ~force:true () ;
         ex.@(t @> node_state @> Leader.heartbeat) <- 1
     | _ ->
         ()

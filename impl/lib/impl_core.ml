@@ -19,7 +19,10 @@ module Paxos = struct
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.log - t.commit_index in
-    assert (outstanding >= 0) ;
+    if outstanding < 0 then
+      Fmt.failwith "Outstanding invalid: {highest: %d, commit_index: %d}"
+        (Utils.SegmentLog.highest t.log)
+        t.commit_index ;
     if match t.node_state with Leader _ -> true | _ -> false then
       max (t.config.max_outstanding - outstanding) 0
     else 0
@@ -48,7 +51,10 @@ module Raft = struct
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.log - t.commit_index in
-    assert (outstanding >= 0) ;
+    if outstanding < 0 then
+      Fmt.failwith "Outstanding invalid: {highest: %d, commit_index: %d}"
+        (Utils.SegmentLog.highest t.log)
+        t.commit_index ;
     if match t.node_state with Leader _ -> true | _ -> false then
       max (t.config.max_outstanding - outstanding) 0
     else 0
@@ -77,7 +83,10 @@ module RaftSBN = struct
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.log - t.commit_index in
-    assert (outstanding >= 0) ;
+    if outstanding < 0 then
+      Fmt.failwith "Outstanding invalid: {highest: %d, commit_index: %d}"
+        (Utils.SegmentLog.highest t.log)
+        t.commit_index ;
     if match t.node_state with Leader _ -> true | _ -> false then
       max (t.config.max_outstanding - outstanding) 0
     else 0
@@ -106,7 +115,10 @@ module PrevoteRaft = struct
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.log - t.commit_index in
-    assert (outstanding >= 0) ;
+    if outstanding < 0 then
+      Fmt.failwith "Outstanding invalid: {highest: %d, commit_index: %d}"
+        (Utils.SegmentLog.highest t.log)
+        t.commit_index ;
     if match t.node_state with Leader _ -> true | _ -> false then
       max (t.config.max_outstanding - outstanding) 0
     else 0
@@ -135,7 +147,10 @@ module PrevoteRaftSBN = struct
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.log - t.commit_index in
-    assert (outstanding >= 0) ;
+    if outstanding < 0 then
+      Fmt.failwith "Outstanding invalid: {highest: %d, commit_index: %d}"
+        (Utils.SegmentLog.highest t.log)
+        t.commit_index ;
     if match t.node_state with Leader _ -> true | _ -> false then
       max (t.config.max_outstanding - outstanding) 0
     else 0
@@ -156,7 +171,10 @@ module ConspireSS = struct
 
   let available_space_for_commands t =
     let outstanding = Utils.SegmentLog.highest t.prop_log - t.commit_index in
-    assert (outstanding >= 0) ;
+    if outstanding < 0 then
+      Fmt.failwith "Outstanding invalid: {highest: %d, commit_index: %d}"
+        (Utils.SegmentLog.highest t.prop_log)
+        t.commit_index ;
     max (t.config.max_outstanding - outstanding) 0
 
   let should_ack_clients _ = true

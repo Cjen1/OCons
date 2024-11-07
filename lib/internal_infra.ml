@@ -59,10 +59,10 @@ module Make (C : Consensus_intf.S) = struct
     let f : C.message action -> unit = function
       | Send (dst, msg) ->
           CMgr.send_blit t.cmgr dst (C.serialise msg) ;
-          dtraceln "Sent to %d: %a" dst C.PP.message_pp msg
+          traceln "Sent to %d: %a" dst C.PP.message_pp msg
       | Broadcast msg ->
           CMgr.broadcast_blit t.cmgr (C.serialise msg) ;
-          dtraceln "Broadcast %a" C.PP.message_pp msg
+          traceln "Broadcast %a" C.PP.message_pp msg
       | CommitCommands citer ->
           citer (fun cmd ->
               CommandQueue.remove t.command_queue cmd.id ;
@@ -82,7 +82,7 @@ module Make (C : Consensus_intf.S) = struct
   (** If any msgs to internal port exist then read and apply them *)
   let internal_msgs t =
     let iter_msg src msg =
-      dtraceln "Receiving msg from %d: %a" src C.PP.message_pp msg ;
+      traceln "Receiving msg from %d: %a" src C.PP.message_pp msg ;
       let tcons, actions = C.advance t.cons (Recv (msg, src)) in
       t.cons <- tcons ;
       handle_actions t actions
