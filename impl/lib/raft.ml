@@ -169,10 +169,12 @@ struct
       Follower {timeout= ex.@(t @> config @> election_timeout); voted_for} ;
     ex.@(t @> current_term) <- term
 
-  let transit_candidate ?(repeat = 1) () =
+  let rdm_int rdm hi = if hi <= 0 then 0 else Random.State.full_int rdm hi
+
+  let transit_candidate ?(repeat = 0) () =
     let timeout =
       let et = ex.@(t @> config @> election_timeout) in
-      Random.State.full_int ex.@(t @> random) (max (et * repeat) 0) + 1
+      et + rdm_int ex.@(t @> random) (et * repeat)
     in
     let new_term = ex.@(t @> current_term) + 1 in
     let num_nodes = ex.@(t @> config @> num_nodes) in
@@ -273,10 +275,11 @@ struct
     (* Candidate *)
     | Recv (RequestVoteResponse m, src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
-        if m.success then
+        if m.success then (
+          traceln "Vote from %d for term %d" src m.term ;
           A.map
             A.(t @> node_state @> Candidate.quorum)
-            ~f:(Quorum.add src ()) ()
+            ~f:(Quorum.add src ()) () )
     (* Leader *)
     | Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src), Leader _ ->
         assert (m.term = ex.@(t @> current_term)) ;
@@ -365,8 +368,10 @@ struct
     match ct.node_state with
     (* When should ticking result in an action? *)
     | Follower s when s.timeout <= 0 ->
+        traceln "Timed out as follower" ;
         transit_candidate ()
     | Candidate {timeout; repeat; _} when timeout <= 0 ->
+        traceln "Timed out as candidate" ;
         transit_candidate ~repeat:(repeat + 1) ()
     | Leader {heartbeat; _} when heartbeat <= 0 ->
         send_append_entries ~force:true () ;
@@ -394,8 +399,8 @@ struct
 
   let advance_raw e =
     resolve_event e ;
-    resolve_timeouts () ;
     check_conditions () ;
+    resolve_timeouts () ;
     check_commit ()
 
   let advance t e = run_side_effects (fun () -> advance_raw e) t

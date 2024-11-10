@@ -182,7 +182,7 @@ struct
           ex.@(t @> log)
           {command= empty_command; term= ex.@(t @> current_term)} ;
         send_append_entries ~force:true ()
-     | _ ->
+    | _ ->
         assert false
 
   let if_recv_advance_term e =
@@ -192,10 +192,10 @@ struct
             | AppendEntriesResponse {term; _}
             | RequestVote {term; prevote= false; _}
             | RequestVoteResponse {term; prevote= false; _} )
-          , _ )
+          , src )
       , _ )
       when term > ex.@(t @> current_term) ->
-        traceln "Follower bc new leader for term %d" term;
+        traceln "Follower bc %d is the new leader for term %d" src term ;
         transit_follower term
     | _ ->
         ()
@@ -245,11 +245,12 @@ struct
     (* Follower *)
     | ( Recv (RequestVoteResponse ({prevote= true; term; _} as m), src)
       , Follower _ ) ->
-        if m.success && term = ex.@(t @> current_term) + 1 then
+        if m.success && term = get_next_term () then (
+          traceln "Got prevote from %d for %d" src term ;
           A.map
             A.(t @> node_state @> Follower.prevotes)
             ~f:(Option.map (Quorum.add src ()))
-            ()
+            () )
     (* Candidate *)
     | Recv (RequestVoteResponse ({prevote= false; _} as m), src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
@@ -270,12 +271,12 @@ struct
     (* All nodes must be able to receive prevote *)
     | Recv ((RequestVote {prevote= true; term; _} as m), cid), _
       when term > ex.@(t @> current_term) && request_vote_valid m ->
-        traceln "Successful prevote from %d" cid;
+        traceln "Successful prevote from %d for term %d" cid term ;
         send cid @@ RequestVoteResponse {term; success= true; prevote= true}
     (* Follower *)
     | Recv (RequestVote ({prevote= false; _} as m), cid), Follower _
       when request_vote_valid (RequestVote m) ->
-        traceln "Got request vote from %d for term %d" cid m.term;
+        traceln "Got request vote from %d for term %d" cid m.term ;
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout) ;
         send cid
@@ -342,11 +343,11 @@ struct
     match ct.node_state with
     (* candidate election complete check *)
     | Follower {prevotes= Some prevotes; _} when Quorum.satisified prevotes ->
-        traceln "Got prevotes. becomming candidate."; 
+        traceln "Got prevotes. becomming candidate." ;
         transit_candidate ()
     (* check if can become leader *)
     | Candidate {quorum; _} when Quorum.satisified quorum ->
-        traceln "Got votes becomming leader";
+        traceln "Got votes becomming leader" ;
         transit_leader ()
     (* send msg if exists entries to send *)
     | Leader _ ->
@@ -359,15 +360,17 @@ struct
     match ct.node_state with
     (* When should ticking result in an action? *)
     | Follower s when s.timeout <= 0 ->
-        traceln "Starting prevotes";
+        traceln "Starting prevotes" ;
         let threshold = (ex.@(t @> config @> num_nodes) / 2) + 1 - 1 in
-        ex.@(t @> node_state @> Follower.prevotes) <-
-          Some (Quorum.empty threshold) ;
+        A.map
+          A.(t @> node_state @> Follower.prevotes)
+          ~f:(function None -> Some (Quorum.empty threshold) | v -> v)
+          () ;
         send_request_vote ~is_prevote:true () ;
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout)
     | Candidate {timeout; _} when timeout <= 0 ->
-        traceln "Resending request votes";
+        traceln "Resending request votes" ;
         send_request_vote () ;
         ex.@(t @> node_state @> Candidate.timeout) <-
           ex.@(t @> config @> election_timeout)

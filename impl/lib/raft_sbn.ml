@@ -237,10 +237,11 @@ struct
     (* Candidate*)
     | Recv (RequestVoteResponse m, src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
-        if m.success then
+        if m.success then (
+          traceln "Vote from %d for term %d" src m.term ;
           A.map
             A.(t @> node_state @> Candidate.quorum)
-            ~f:(Quorum.add src ()) ()
+            ~f:(Quorum.add src ()) () )
     (* Leader *)
     | Recv (AppendEntriesResponse ({success= Ok idx; _} as m), src), Leader _ ->
         assert (m.term = ex.@(t @> current_term)) ;
@@ -327,8 +328,10 @@ struct
     match ct.node_state with
     (* When should ticking result in an action? *)
     | Follower s when s.timeout <= 0 ->
+        traceln "Timed out as follower" ;
         transit_candidate ()
     | Candidate {timeout; _} when timeout <= 0 ->
+        traceln "Timed out as candidate" ;
         send_request_vote () ;
         ex.@(t @> node_state @> Candidate.timeout) <-
           ex.@(t @> config @> election_timeout)
@@ -358,8 +361,8 @@ struct
 
   let advance_raw e =
     resolve_event e ;
-    resolve_timeouts () ;
     check_conditions () ;
+    resolve_timeouts () ;
     check_commit ()
 
   let advance t e = run_side_effects (fun () -> advance_raw e) t

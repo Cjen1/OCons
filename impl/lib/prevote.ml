@@ -289,11 +289,12 @@ struct
     (* Follower *)
     | ( Recv (RequestVoteResponse ({prevote= true; term; _} as m), src)
       , Follower _ ) ->
-        if m.success && term = ex.@(t @> current_term) + 1 then
+        if m.success && term = get_next_term () then (
+          traceln "Got prevote from %d for %d" src term ;
           A.map
             A.(t @> node_state @> Follower.prevotes)
             ~f:(Option.map (Quorum.add src ()))
-            ()
+            () )
     (* Candidate *)
     | Recv (RequestVoteResponse ({prevote= false; _} as m), src), Candidate _ ->
         assert (m.term = ex.@(t @> current_term)) ;
@@ -399,8 +400,10 @@ struct
     (* When should ticking result in an action? *)
     | Follower s when s.timeout <= 0 ->
         let threshold = (ex.@(t @> config @> num_nodes) / 2) + 1 - 1 in
-        ex.@(t @> node_state @> Follower.prevotes) <-
-          Some (Quorum.empty threshold) ;
+        A.map
+          A.(t @> node_state @> Follower.prevotes)
+          ~f:(function None -> Some (Quorum.empty threshold) | v -> v)
+          () ;
         send_request_vote ~is_prevote:true () ;
         ex.@(t @> node_state @> Follower.timeout) <-
           ex.@(t @> config @> election_timeout)
